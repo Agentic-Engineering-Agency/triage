@@ -15,7 +15,7 @@ graph TD
     langfuse-web --> langfuse-worker["langfuse-worker :3030"]
     langfuse-worker --> clickhouse["clickhouse :8123"]
     langfuse-worker --> redis["redis :6379"]
-    langfuse-worker --> minio["minio :9090"]
+    langfuse-worker --> minio["minio :9000"]
     langfuse-web --> langfuse-postgres["langfuse-postgres :5432"]
 ```
 
@@ -23,7 +23,7 @@ graph TD
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/triage.git
+git clone https://github.com/Agentic-Engineering-Agency/triage.git
 cd triage
 
 # 2. Configure environment

@@ -14,7 +14,7 @@ graph TD
         langfuse-worker["langfuse-worker :3030"]
         clickhouse["clickhouse :8123"]
         redis["redis :6379"]
-        minio["minio :9090"]
+        minio["minio :9000"]
         langfuse-postgres["langfuse-postgres :5432"]
     end
     frontend --> runtime

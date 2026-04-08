@@ -18,7 +18,19 @@ spec:
         - name: frontend
           image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag | default "latest" }}"
           ports:
-            - containerPort: 3001
+            - containerPort: {{ .Values.frontend.port | default 3001 }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.frontend.port | default 3001 }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.frontend.port | default 3001 }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
           resources:
             requests:
               cpu: {{ .Values.frontend.resources.requests.cpu | quote }}

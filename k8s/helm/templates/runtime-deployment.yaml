@@ -18,7 +18,19 @@ spec:
         - name: runtime
           image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag | default "latest" }}"
           ports:
-            - containerPort: 4111
+            - containerPort: {{ .Values.runtime.port | default 4111 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.runtime.port | default 4111 }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.runtime.port | default 4111 }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
           resources:
             requests:
               cpu: {{ .Values.runtime.resources.requests.cpu | quote }}

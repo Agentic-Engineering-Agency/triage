@@ -596,12 +596,16 @@ describe('REQ-D10: Langfuse Environment YAML Anchor', () => {
       expect(webEnv).toBeDefined();
       expect(workerEnv).toBeDefined();
       // Worker variables should be a subset of web variables (web has additional ones)
+      // Note: the YAML parser preserves '<<' merge keys without resolving them,
+      // so variables from the anchor may only appear in the '<<' sub-object.
       if (typeof workerEnv === 'object' && typeof webEnv === 'object') {
+        const webAnchor = webEnv['<<'] || {};
         for (const key of Object.keys(workerEnv)) {
-          if (key !== 'PORT') {
-            // PORT may differ between web and worker
+          if (key !== 'PORT' && key !== '<<') {
+            // Check direct property or merged anchor
+            const webValue = webEnv[key] ?? webAnchor[key];
             expect(
-              webEnv[key],
+              webValue,
               `langfuse-web missing shared var ${key}`
             ).toBe(workerEnv[key]);
           }

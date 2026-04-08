@@ -3,7 +3,7 @@
 ## Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/triage.git
+git clone https://github.com/Agentic-Engineering-Agency/triage.git
 cd triage
 ```
 

@@ -393,7 +393,10 @@ describe('REQ-A06: ClickHouse Password Configuration', () => {
         const hasPassword = env.some((e: string) => e.includes('CLICKHOUSE_PASSWORD'));
         expect(hasPassword, `${svc} should reference CLICKHOUSE_PASSWORD`).toBe(true);
       } else if (typeof env === 'object' && env !== null) {
-        expect(env, `${svc} should have CLICKHOUSE_PASSWORD`).toHaveProperty('CLICKHOUSE_PASSWORD');
+        // CLICKHOUSE_PASSWORD may be in the YAML anchor (<<) or directly on the env object
+        const anchor = env['<<'] || {};
+        const hasPassword = env.hasOwnProperty('CLICKHOUSE_PASSWORD') || anchor.hasOwnProperty('CLICKHOUSE_PASSWORD');
+        expect(hasPassword, `${svc} should have CLICKHOUSE_PASSWORD (direct or via anchor)`).toBe(true);
       }
     }
   });

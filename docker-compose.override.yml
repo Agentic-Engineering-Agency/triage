@@ -1,3 +1,8 @@
+# Dev mode override — auto-loaded by `docker compose up`
+# REQUIRES: ./frontend/ and ./runtime/ directories with real package.json
+# files for Vite HMR and tsx watch to work. Stubs won't support dev mode.
+# To run in production mode only: docker compose -f docker-compose.yml up
+
 services:
   vite:
     image: node:22-alpine

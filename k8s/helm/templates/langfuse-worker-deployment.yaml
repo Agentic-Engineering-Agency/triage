@@ -17,6 +17,18 @@ spec:
       containers:
         - name: langfuse-worker
           image: "{{ .Values.langfuseWorker.image.repository }}:{{ .Values.langfuseWorker.image.tag | default "3" }}"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3030
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3030
+            initialDelaySeconds: 15
+            periodSeconds: 10
           resources:
             requests:
               cpu: {{ .Values.langfuseWorker.resources.requests.cpu | quote }}

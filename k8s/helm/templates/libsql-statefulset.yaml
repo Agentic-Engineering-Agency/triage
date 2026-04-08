@@ -19,7 +19,17 @@ spec:
         - name: libsql
           image: "{{ .Values.libsql.image.repository }}:{{ .Values.libsql.image.tag | default "latest" }}"
           ports:
-            - containerPort: 8080
+            - containerPort: {{ .Values.libsql.port | default 8080 }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.libsql.port | default 8080 }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.libsql.port | default 8080 }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
           resources:
             requests:
               cpu: {{ .Values.libsql.resources.requests.cpu | quote }}

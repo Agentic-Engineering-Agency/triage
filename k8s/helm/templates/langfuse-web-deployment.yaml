@@ -18,7 +18,19 @@ spec:
         - name: langfuse-web
           image: "{{ .Values.langfuseWeb.image.repository }}:{{ .Values.langfuseWeb.image.tag | default "3" }}"
           ports:
-            - containerPort: 3000
+            - containerPort: {{ .Values.langfuseWeb.port | default 3000 }}
+          livenessProbe:
+            httpGet:
+              path: /api/public/health
+              port: {{ .Values.langfuseWeb.port | default 3000 }}
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/public/health
+              port: {{ .Values.langfuseWeb.port | default 3000 }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
           resources:
             requests:
               cpu: {{ .Values.langfuseWeb.resources.requests.cpu | quote }}
