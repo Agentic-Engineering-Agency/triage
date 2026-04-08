@@ -148,7 +148,10 @@ npx shadcn@latest init --template vite
 - `@tanstack/react-router`, `@tanstack/react-query` — file-based routing + server state
 - `@tanstack/router-plugin` (dev) — Vite plugin for file-based route generation
 - `@ai-sdk/react` — `useChat` hook for chat streaming
-- Additional shadcn/ui components as needed (Card, Badge, Separator, Skeleton, etc.)
+- `@ai-sdk/elements` — AI SDK Elements: composable chat UI components (PromptInput, Message, Tool, Confirmation, Shimmer, Reasoning, Sources) built on shadcn/ui
+- `svgl` — open-source SVG logo library (604+ logos) for service icons (Linear, GitHub, Resend, OpenRouter) in Chain of Thought pipeline and throughout the UI
+- Additional shadcn/ui components as needed (Card, Badge, Separator, Skeleton, Avatar, Tooltip, ScrollArea, etc.)
+- `Space Grotesk` + `Inter` + `JetBrains Mono` — font stack (headings, body, code). Loaded via Google Fonts or self-hosted.
 
 **Critical post-scaffold config — TanStack Router Vite plugin:**
 
@@ -246,8 +249,9 @@ All remaining architectural decisions — container networking, Caddyfile, agent
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | State management | useChat (chat), TanStack Query (server data), no global store | Three state domains, each with its own manager. No Redux/Zustand. |
-| Generative UI registry | Static `Record<string, ComponentType>` map | 2-3 tool types. displayTicket → TicketCard, displayDuplicate → DuplicatePrompt. No dynamic registry. |
-| Route lazy loading | `/board` route lazy-loaded via TanStack Router `lazy()` | Reduces initial bundle from ~300KB to ~180-200KB gzipped. /board loads on-demand. |
+| Generative UI | AI SDK Elements `Tool` component with `message.parts` `tool-{toolKey}` types | Elements handles tool state lifecycle (`input-available` → `output-available` → `output-error`). Custom components (TriageCard, DuplicateCard) render inside `ToolOutput`. `Confirmation` component for approval gate. No manual tool registry needed. |
+| Visual style | Hybrid Neumorphism (Soft UI) on shadcn/ui base | Raised neumorphic shadows on cards/containers, inset on inputs, flat/solid on severity badges and CTAs. CSS-only layer via Tailwind custom shadow utilities (`neu-raised`, `neu-inset`, `neu-sm`). Brand palette: Deep Navy `#1F337A`, Orange `#F28B0D`, Steel Blue `#6A81C7`, Coral `#F06B50`. |
+| Route lazy loading | `/board` and `/settings` routes lazy-loaded via TanStack Router `lazy()` | Reduces initial bundle from ~300KB to ~180-200KB gzipped. /board and /settings load on-demand. |
 | Ticket card rendering | Card renders only after Linear ticket confirmed created | If Linear API fails → error card, not an orphan card. Approve/Create button flow. |
 
 ### Infrastructure & Deployment
@@ -319,7 +323,7 @@ All remaining architectural decisions — container networking, Caddyfile, agent
 - Zod schemas: `camelCase` with `Schema` suffix — `triageOutputSchema`, `ticketCreateSchema`
 - Constants: `UPPER_SNAKE_CASE` — `MAX_FILE_SIZE`, `PROMPT_INJECTION_THRESHOLD`
 - Files: `kebab-case` everywhere — `triage-agent.ts`, `wiki-query.ts`, `ticket-card.tsx`
-- React components: `kebab-case` files, `PascalCase` exports — file `ticket-card.tsx` exports `TicketCard` (follows shadcn/ui convention)
+- React components: `kebab-case` files, `PascalCase` exports — file `triage-card.tsx` exports `TriageCard` (follows shadcn/ui convention)
 - Directories: `kebab-case`
 - Mastra agents: named exports — `export const triageAgent = new Agent({...})`
 - Mastra tools: named exports — `export const queryWikiTool = createTool({...})`
@@ -364,22 +368,20 @@ src/
 ```
 src/
 ├── routes/
-│   ├── __root.tsx            ← layout, auth guard
-│   ├── chat.tsx              ← /chat route
-│   └── board.lazy.tsx        ← /board route (lazy loaded)
+│   ├── __root.tsx            ← layout, auth guard, sidebar
+│   ├── chat.tsx              ← /chat route (default)
+│   ├── board.lazy.tsx        ← /board route (lazy loaded)
+│   └── settings.lazy.tsx     ← /settings route (lazy loaded)
 ├── components/
 │   ├── ui/                   ← shadcn/ui primitives (auto-generated, kebab-case)
-│   ├── chat/
-│   │   ├── chat-input.tsx
-│   │   ├── message-list.tsx
-│   │   └── file-preview.tsx
-│   ├── ticket/
-│   │   ├── ticket-card.tsx
-│   │   └── duplicate-prompt.tsx
-│   └── board/
-│       └── kanban-board.tsx
+│   ├── triage-card.tsx       ← structured triage output card (wraps Elements Tool)
+│   ├── severity-badge.tsx    ← color-coded severity indicator
+│   ├── confidence-score.tsx  ← visual confidence bar + percentage
+│   ├── file-reference.tsx    ← clickable file path chip (monospace)
+│   ├── chain-of-thought-step.tsx ← pipeline step with service logo (svgl) + status
+│   ├── kanban-column.tsx     ← single Kanban column (Linear sync)
+│   └── kanban-ticket-card.tsx ← compact ticket card for board view
 ├── lib/
-│   ├── tool-registry.ts      ← static Record<string, ComponentType>
 │   ├── api.ts                ← TanStack Query functions
 │   └── config.ts             ← fetch /config.json on boot
 └── hooks/
@@ -454,7 +456,7 @@ export const createLinearTicket = createTool({
 | Mastra tools | Tool-level try/catch → return error object | `return { success: false, error: "Linear API timeout" }` |
 | Workflow steps | Check tool result, log failure, continue or fail step | Email fails → log, continue. Ticket creation fails → fail step, retry once. |
 | API endpoints | Try/catch → `{ success: false, error: { code, message } }` | Webhook handler catches errors, returns 500 with structured error |
-| Frontend API calls | TanStack Query `onError` → toast notification | Failed Linear fetch → "Could not load board data" toast |
+| Frontend API calls | TanStack Query `onError` → inline error state in component | Failed Linear fetch → Kanban shows error state with retry button. No toasts — all feedback is inline. |
 | Frontend chat | AI SDK error handling → error card in chat stream | Triage failure → retry once → error card with "Try again" button |
 
 **Loading States:**
@@ -554,22 +556,20 @@ triage/
 │   └── src/
 │       ├── main.tsx              ← app entry, router init
 │       ├── routes/
-│       │   ├── __root.tsx        ← layout shell, auth guard, config fetch
-│       │   ├── chat.tsx          ← /chat — primary route
-│       │   └── board.lazy.tsx    ← /board — lazy loaded kanban
+│       │   ├── __root.tsx        ← layout shell, auth guard, sidebar, config fetch
+│       │   ├── chat.tsx          ← /chat — primary route (default after auth)
+│       │   ├── board.lazy.tsx    ← /board — lazy loaded kanban
+│       │   └── settings.lazy.tsx ← /settings — lazy loaded project config
 │       ├── components/
 │       │   ├── ui/               ← shadcn/ui primitives (auto-generated)
-│       │   ├── chat/
-│       │   │   ├── chat-input.tsx       ← text + paste + file upload + send
-│       │   │   ├── message-list.tsx     ← message.parts rendering + tool components
-│       │   │   └── file-preview.tsx     ← removable thumbnails, size badges
-│       │   ├── ticket/
-│       │   │   ├── ticket-card.tsx      ← triage output card (severity, confidence, link)
-│       │   │   └── duplicate-prompt.tsx ← "update existing or create new?"
-│       │   └── board/
-│       │       └── kanban-board.tsx     ← columns from Linear, read-only
+│       │   ├── triage-card.tsx         ← structured triage output (wraps Elements Tool)
+│       │   ├── severity-badge.tsx      ← color-coded severity (Critical/High/Medium/Low)
+│       │   ├── confidence-score.tsx    ← visual confidence bar + percentage
+│       │   ├── file-reference.tsx      ← clickable file path chip (monospace)
+│       │   ├── chain-of-thought-step.tsx ← pipeline step with svgl logo + status
+│       │   ├── kanban-column.tsx       ← single board column (Linear sync)
+│       │   └── kanban-ticket-card.tsx  ← compact ticket card for board view
 │       ├── lib/
-│       │   ├── tool-registry.ts  ← Record<string, ComponentType> map
 │       │   ├── api.ts            ← TanStack Query queryFn wrappers
 │       │   └── config.ts         ← fetch /config.json, export typed config
 │       └── hooks/
@@ -630,9 +630,9 @@ Host ──→ LibSQL (:8080)                  [exposed port for drizzle-kit stu
 ### Requirements → Structure Mapping
 
 **FR1-FR7 (Incident Intake):**
-- `frontend/src/components/chat/chat-input.tsx` — text, paste, file upload
-- `frontend/src/components/chat/file-preview.tsx` — thumbnails, validation
-- `frontend/src/components/chat/message-list.tsx` — message rendering
+- AI SDK Elements `PromptInput` + `Attachments` — text, clipboard paste, file upload, drag-drop (from `@ai-sdk/elements`)
+- AI SDK Elements `Message` + `Conversation` — message rendering and chat container
+- `frontend/src/components/triage-card.tsx` — structured triage output card
 - `runtime/src/mastra/agents/orchestrator.ts` — batch detection, routing
 
 **FR8-FR12 (Codebase Intelligence):**
@@ -650,9 +650,8 @@ Host ──→ LibSQL (:8080)                  [exposed port for drizzle-kit stu
 - `runtime/src/mastra/tools/linear.ts` — create/read/update issues
 - `runtime/src/lib/schemas/ticket.ts` — ticket creation schema
 - `runtime/src/mastra/workflows/triage-workflow.ts` — dedup step, approval gate
-- `frontend/src/components/ticket/ticket-card.tsx` — generative UI card
-- `frontend/src/components/ticket/duplicate-prompt.tsx` — dedup UX
-- `frontend/src/components/board/kanban-board.tsx` — Linear sync view
+- `frontend/src/components/triage-card.tsx` — triage output card (wraps AI SDK Elements `Tool` + `Confirmation`)
+- `frontend/src/components/kanban-column.tsx` + `kanban-ticket-card.tsx` — board view
 
 **FR28-FR31 (Notifications):**
 - `runtime/src/mastra/tools/resend.ts` — email tools
@@ -698,13 +697,13 @@ Runtime: triage-workflow step 2 — Triage Agent produces TriageOutput (Zod vali
     ↓
 Runtime: triage-workflow step 3 — Dedup check (linear tool → listIssues → semantic compare)
     ↓ (if duplicate found → ask user via chat, suspend for response)
-Runtime: triage-workflow step 4 — displayTicket tool call → SSE to frontend (PREVIEW state)
+Runtime: triage-workflow step 4 — triage tool call → SSE to frontend (PENDING state via `tool-{toolKey}` part)
     ↓
-Frontend: ticket-card.tsx renders triage output in PREVIEW state with "Create Ticket" button
-    ↓ (user reviews and approves)
+Frontend: triage-card.tsx renders via AI SDK Elements Tool component in PENDING state with "Create Ticket" button (Confirmation component)
+    ↓ (user reviews and approves via Confirmation → addToolApprovalResponse)
 Runtime: triage-workflow step 5 — Create Linear ticket (linear tool)
     ↓ (on success)
-Frontend: ticket-card.tsx updates to CONFIRMED state — shows Linear link, confirmed badge
+Frontend: triage-card.tsx transitions to CONFIRMED state — shows Linear link, solid border
     ↓ (on failure → error card, no orphan ticket card)
 Runtime: triage-workflow step 6 — Send email (resend tool, non-blocking)
     ↓
