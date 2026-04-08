@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-langfuse-web
+  labels:
+    app: langfuse-web
+spec:
+  replicas: {{ .Values.langfuseWeb.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: langfuse-web
+  template:
+    metadata:
+      labels:
+        app: langfuse-web
+    spec:
+      containers:
+        - name: langfuse-web
+          image: "{{ .Values.langfuseWeb.image.repository }}:{{ .Values.langfuseWeb.image.tag | default "3" }}"
+          ports:
+            - containerPort: 3000
+          resources:
+            requests:
+              cpu: {{ .Values.langfuseWeb.resources.requests.cpu | quote }}
+              memory: {{ .Values.langfuseWeb.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.langfuseWeb.resources.limits.cpu | quote }}
+              memory: {{ .Values.langfuseWeb.resources.limits.memory | quote }}

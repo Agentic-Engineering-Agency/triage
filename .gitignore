@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+.mastra/
+dist/
+*.tgz
+k8s/helm/charts/
+.playwright-mcp/

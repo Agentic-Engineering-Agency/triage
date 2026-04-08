@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-langfuse-worker
+  labels:
+    app: langfuse-worker
+spec:
+  replicas: {{ .Values.langfuseWorker.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: langfuse-worker
+  template:
+    metadata:
+      labels:
+        app: langfuse-worker
+    spec:
+      containers:
+        - name: langfuse-worker
+          image: "{{ .Values.langfuseWorker.image.repository }}:{{ .Values.langfuseWorker.image.tag | default "3" }}"
+          resources:
+            requests:
+              cpu: {{ .Values.langfuseWorker.resources.requests.cpu | quote }}
+              memory: {{ .Values.langfuseWorker.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.langfuseWorker.resources.limits.cpu | quote }}
+              memory: {{ .Values.langfuseWorker.resources.limits.memory | quote }}

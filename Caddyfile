@@ -1,0 +1,33 @@
+:3001 {
+    # Compression
+    encode gzip zstd
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # API reverse proxy (with SSE support)
+    handle /api/* {
+        reverse_proxy runtime:4111 {
+            flush_interval -1
+        }
+    }
+
+    # Auth reverse proxy
+    handle /auth/* {
+        reverse_proxy runtime:4111 {
+            flush_interval -1
+        }
+    }
+
+    # SPA static files with client-side routing fallback
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}

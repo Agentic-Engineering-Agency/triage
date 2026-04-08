@@ -6,7 +6,7 @@
 
 | ID | Name | Stage | Created | Description |
 |----|------|-------|---------|-------------|
-| SPEC-20260407-001 | infra-docker-k8s-init | SPEC | 2026-04-07 | Infrastructure: Docker Compose (9 containers), K8s scaffolding, documentation templates |
+| SPEC-20260407-001 | infra-docker-k8s-init | CODE | 2026-04-07 | Infrastructure: Docker Compose (9 containers), K8s scaffolding, documentation templates |
 
 ## Completed Specs
 
