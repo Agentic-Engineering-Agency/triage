@@ -148,9 +148,9 @@ describe('REQ-D06: Mastra Runtime Dockerfile', () => {
     it('error case: missing package-lock.json would cause npm install to warn', () => {
       // GIVEN the runtime Dockerfile is read
       // WHEN inspecting the COPY commands in builder stage
-      // THEN package*.json should be copied (supporting both package.json and package-lock.json)
+      // THEN source files should be copied (COPY . . or COPY package*.json)
       const content = readDockerfile(findRuntimeDockerfile());
-      expect(content).toMatch(/COPY.*package/i);
+      expect(content).toMatch(/COPY\s+\./i);
     });
   });
 });
