@@ -7,9 +7,12 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
+import { execSync } from 'child_process';
 import { resolve } from 'path';
 
 const PROJECT_ROOT = resolve(__dirname, '../../');
+const runManualInfraTests = process.env.RUN_MANUAL_INFRA_TESTS === '1';
+const liveInfraIt = runManualInfraTests ? it : it.skip;
 
 /**
  * Find the runtime Dockerfile — could be Dockerfile.runtime or runtime/Dockerfile
@@ -253,7 +256,37 @@ describe('REQ-D07: Frontend Dockerfile', () => {
 // ---------------------------------------------------------------------------
 describe('REQ-D14: Docker Image Size Constraint', () => {
   describe('T-D18: Total image size <= 2GB', () => {
-    it.todo('[MANUAL/CI] total docker image size should not exceed 2GB');
+    liveInfraIt('[MANUAL/CI] total docker image size should not exceed 2GB', () => {
+      // GIVEN docker images have been built for the project
+      // WHEN we sum the sizes of all images used by docker-compose.yml services
+      // THEN the total should not exceed 2GB (2147483648 bytes)
+      // First get the image names used by compose services
+      const imagesRaw = execSync(
+        `docker compose -f docker-compose.yml images --format '{{.Repository}}:{{.Tag}} {{.Size}}' 2>&1`,
+        { cwd: PROJECT_ROOT, timeout: 30_000, encoding: 'utf-8' }
+      );
+      // Deduplicate images (same image may be used by multiple services)
+      const seen = new Set<string>();
+      const lines = imagesRaw.trim().split('\n').filter((l: string) => l.trim());
+      let totalMB = 0;
+      for (const line of lines) {
+        const parts = line.trim().split(/\s+/);
+        const imageKey = parts[0]; // e.g. "redis:7.4-alpine"
+        const sizeStr = parts.slice(1).join(' ');
+        if (seen.has(imageKey)) continue;
+        seen.add(imageKey);
+        const match = sizeStr.match(/([\d.]+)\s*(GB|MB|KB|B)/i);
+        if (match) {
+          const val = parseFloat(match[1]);
+          const unit = match[2].toUpperCase();
+          if (unit === 'GB') totalMB += val * 1024;
+          else if (unit === 'MB') totalMB += val;
+          else if (unit === 'KB') totalMB += val / 1024;
+        }
+      }
+      // Total should be under 2GB = 2048MB
+      expect(totalMB).toBeLessThanOrEqual(2048);
+    });
 
     it('[MANUAL/CI] custom images should use Alpine base images', () => {
       // GIVEN the runtime and frontend Dockerfiles

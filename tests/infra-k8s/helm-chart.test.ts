@@ -25,6 +25,8 @@ import * as yaml from 'yaml';
 
 const HELM_CHART_DIR = path.resolve(__dirname, '../../k8s/helm');
 const TEMPLATES_DIR = path.join(HELM_CHART_DIR, 'templates');
+const runManualInfraTests = process.env.RUN_MANUAL_INFRA_TESTS === '1';
+const networkedInfraIt = runManualInfraTests ? it : it.skip;
 
 // Ensure Helm dependencies are built before any test calls helm template.
 // Without this, tests that call helmTemplate() before the dependency-build
@@ -206,7 +208,7 @@ describe('REQ-K02: Helm Chart Dependencies', () => {
     }
   });
 
-  it('T-K02-dep-edge: helm dependency build downloads all dependency charts', { timeout: 60000 }, () => {
+  networkedInfraIt('T-K02-dep-edge: helm dependency build downloads all dependency charts', { timeout: 60000 }, () => {
     // GIVEN the chart directory
     // WHEN helm dependency build k8s/helm/ is run
     // THEN it SHALL download all dependency charts without errors

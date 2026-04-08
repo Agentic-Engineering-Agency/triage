@@ -295,8 +295,8 @@ export const ticketResponseSchema = z.object({
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
-| `LINEAR_API_KEY` | `REDACTED` | Linear personal API key |
-| `RESEND_API_KEY` | `REDACTED` | Resend email API key |
+| `LINEAR_API_KEY` | `CHANGEME` | Linear personal API key |
+| `RESEND_API_KEY` | `CHANGEME` | Resend email API key |
 | `RESEND_FROM_EMAIL` | `triage@agenticengineering.lat` | Sender address for notifications |
 
 All added to `.env` on integration branch. `RESEND_FROM_EMAIL` added to `.env.example`.

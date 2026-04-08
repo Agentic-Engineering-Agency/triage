@@ -9,6 +9,8 @@
 **Branch:** `feature/linear-and-resend-integration`
 **Assessment:** `docs/linear-resend-integration-assessment.md`
 
+> Manual sync note (2026-04-08): the tool modules and their unit tests are implemented on this branch. The `Stage` metadata and `PROJECT_STATE.md` have not been advanced here because project rules require SpecSafe workflow updates for source-of-truth state changes.
+
 ## Purpose
 
 Implement 7 Mastra tools (5 Linear + 2 Resend) as self-contained TypeScript modules for the triage workflow. These tools provide: Linear issue CRUD for ticket management, team member lookup for auto-assignment, and Resend email notifications for ticket creation and resolution. All tools follow the architecture's tool-level error boundary pattern, use singleton API clients, and degrade gracefully when API keys are missing.

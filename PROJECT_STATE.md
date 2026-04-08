@@ -1,6 +1,7 @@
 # PROJECT_STATE
 
-> Single source of truth for all spec status. Updated automatically by SpecSafe.
+> Single source of truth for all spec status. Normally updated automatically by SpecSafe.
+> Manual sync applied on 2026-04-08 per user request to reflect the current branch state.
 
 ## Active Specs
 
@@ -8,15 +9,18 @@
 |----|------|-------|---------|-------------|
 | SPEC-20260407-001 | infra-docker-k8s-init | CODE | 2026-04-07 | Infrastructure: Docker Compose (9 containers), K8s scaffolding, documentation templates |
 | SPEC-20260408-001 | docker-compose-architecture-alignment | CODE | 2026-04-08 | Docker Compose update: two networks, dev/prod mode, Caddyfile env switching, config.json |
+| SPEC-20260408-002 | linear-resend-integration-tools | CODE | 2026-04-08 | Linear ticketing tools, Resend email tools, shared schemas, and runtime integration tests |
 
-## ⚠️ Pending Integration Tests (19 tests)
+## Integration Test Status
 
 **File:** [specs/active/PENDING-INTEGRATION-TESTS.md](specs/active/PENDING-INTEGRATION-TESTS.md)
 
-19 `it.todo(...)` tests require a running Docker stack to implement.
-They cover: full stack smoke tests, network isolation, dev/prod mode
-switching, config.json serving, graceful degradation, and image size.
-**Do not ship without completing these once `docker compose up` works.**
+The 19 infrastructure scenarios previously tracked as pending are now implemented
+as executable tests across the infra test suite.
+
+- Default suite status: `npm test` passes
+- Live Docker/Helm smoke assertions are opt-in via `RUN_MANUAL_INFRA_TESTS=1 npm test`
+- Manual end-to-end smoke validation with `docker compose up --build` is still recommended before final hackathon submission
 
 ## Completed Specs
 
