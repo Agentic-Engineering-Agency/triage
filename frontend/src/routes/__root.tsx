@@ -34,21 +34,24 @@ function RootLayout() {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
-      {/* Sidebar */}
-      <aside className="flex w-60 flex-col border-r border-sidebar-border bg-sidebar">
+    <div className="flex h-screen w-screen overflow-hidden bg-background">
+      {/* Sidebar — neumorphic raised panel */}
+      <aside className="flex w-60 flex-col m-3 mr-0 rounded-2xl bg-card shadow-neu-raised">
         {/* Logo */}
-        <div className="flex h-14 items-center gap-2 border-b border-sidebar-border px-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground font-heading font-bold text-sm">
+        <div className="flex h-14 items-center gap-2.5 px-5 mt-1">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground font-heading font-bold text-sm shadow-neu-sm">
             T
           </div>
-          <span className="font-heading text-lg font-semibold text-sidebar-foreground">
+          <span className="font-heading text-lg font-semibold text-foreground">
             Triage
           </span>
         </div>
 
+        {/* Divider */}
+        <div className="mx-4 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+
         {/* Navigation */}
-        <nav className="flex flex-1 flex-col gap-1 p-3">
+        <nav className="flex flex-1 flex-col gap-1.5 p-3 pt-4">
           <NavLink to="/chat" icon={<MessageSquare className="h-4 w-4" />}>
             Chat
           </NavLink>
@@ -59,11 +62,27 @@ function RootLayout() {
             Settings
           </NavLink>
         </nav>
+
+        {/* Footer accent */}
+        <div className="mx-4 mb-4 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+        <div className="px-4 pb-4">
+          <div className="flex items-center gap-2.5 rounded-xl bg-muted/40 px-3 py-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-secondary/30 text-xs font-bold text-secondary">
+              K
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-foreground truncate">Koki</p>
+              <p className="text-[10px] text-muted-foreground truncate">Developer</p>
+            </div>
+          </div>
+        </div>
       </aside>
 
       {/* Main content area */}
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <Outlet />
+      <main className="flex flex-1 flex-col overflow-hidden p-3">
+        <div className="flex flex-1 flex-col overflow-hidden rounded-2xl bg-navy-light/40">
+          <Outlet />
+        </div>
       </main>
 
       {import.meta.env.DEV && (
@@ -85,10 +104,10 @@ function NavLink({
   return (
     <Link
       to={to}
-      className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+      className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-all hover:text-foreground hover:bg-muted/30"
       activeProps={{
         className:
-          "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium bg-sidebar-accent text-sidebar-accent-foreground border-l-2 border-sidebar-primary",
+          "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-foreground bg-muted/50 shadow-neu-sm",
       }}
     >
       {icon}

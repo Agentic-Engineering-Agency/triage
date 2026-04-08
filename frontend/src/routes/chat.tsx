@@ -347,7 +347,7 @@ function ChatPage() {
       )}
 
       {/* Composer */}
-      <div className="border-t border-border p-4">
+      <div className="p-4">
         <div className="mx-auto max-w-3xl">
           {/* File error */}
           {fileError && (
