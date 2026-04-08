@@ -179,10 +179,36 @@ describe('REQ-D08: Environment Variable Configuration', () => {
     it('should contain Integration variables (Linear, Resend)', () => {
       // GIVEN the .env.example file is read
       // WHEN searching for integration variables
-      // THEN LINEAR_API_KEY and RESEND_API_KEY should be present
+      // THEN LINEAR_API_KEY, RESEND_API_KEY, and RESEND_FROM_EMAIL should be present
       const content = readEnvExample();
       expect(content).toMatch(/LINEAR_API_KEY/);
       expect(content).toMatch(/RESEND_API_KEY/);
+      expect(content).toMatch(/RESEND_FROM_EMAIL/);
+    });
+
+    it('RESEND_FROM_EMAIL should be set to triage@agenticengineering.lat', () => {
+      // GIVEN the .env.example file is read
+      // WHEN searching for RESEND_FROM_EMAIL
+      // THEN it should have the correct sender address
+      const content = readEnvExample();
+      expect(content).toMatch(/RESEND_FROM_EMAIL=triage@agenticengineering\.lat/);
+    });
+
+    it('RESEND_FROM_EMAIL should have an explanatory comment', () => {
+      // GIVEN the .env.example file is read
+      // WHEN inspecting the RESEND_FROM_EMAIL line
+      // THEN it should have a comment explaining it is the sender address
+      const content = readEnvExample();
+      const lines = content.split('\n');
+      const fromEmailLine = lines.find((l) => l.includes('RESEND_FROM_EMAIL'));
+      expect(fromEmailLine).toBeDefined();
+      const hasInlineComment = fromEmailLine!.includes('#');
+      const lineIdx = lines.indexOf(fromEmailLine!);
+      const hasCommentBefore = lineIdx > 0 && lines[lineIdx - 1].trim().startsWith('#');
+      expect(
+        hasInlineComment || hasCommentBefore,
+        'RESEND_FROM_EMAIL should have an explanatory comment'
+      ).toBe(true);
     });
 
     it('should contain Langfuse Core variables', () => {

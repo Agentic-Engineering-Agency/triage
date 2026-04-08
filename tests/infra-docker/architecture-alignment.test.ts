@@ -507,4 +507,65 @@ describe('REQ-A09: Environment Variable Updates', () => {
     const envFile = readEnvExample();
     expect(envFile).toMatch(/CLICKHOUSE_PASSWORD=CHANGEME/);
   });
+
+  it('T-A33: .env.example contains RESEND_FROM_EMAIL with correct domain', () => {
+    // GIVEN .env.example
+    // WHEN inspected
+    // THEN it contains RESEND_FROM_EMAIL set to triage@agenticengineering.lat
+    const envFile = readEnvExample();
+    expect(envFile).toMatch(/RESEND_FROM_EMAIL=triage@agenticengineering\.lat/);
+  });
+});
+
+// =============================================================================
+// REQ-A10: Runtime Service Integration Configuration
+// =============================================================================
+describe('REQ-A10: Runtime Service Integration Configuration', () => {
+  it('T-A34: runtime service depends on libsql with service_healthy', () => {
+    // GIVEN the docker-compose.yml
+    // WHEN the runtime service depends_on is inspected
+    // THEN libsql is listed with condition: service_healthy
+    const compose = loadCompose();
+    const deps = compose.services.runtime?.depends_on;
+    expect(deps).toBeDefined();
+    expect(deps?.libsql?.condition).toBe('service_healthy');
+  });
+
+  it('T-A35: runtime service uses env_file to load .env', () => {
+    // GIVEN the docker-compose.yml
+    // WHEN the runtime service env_file is inspected
+    // THEN it references .env (which contains LINEAR_API_KEY, RESEND_API_KEY, etc.)
+    const compose = loadCompose();
+    const envFile = compose.services.runtime?.env_file;
+    expect(envFile).toBeDefined();
+    const envFileStr = Array.isArray(envFile) ? envFile.join(' ') : String(envFile);
+    expect(envFileStr).toContain('.env');
+  });
+
+  it('T-A36: runtime service does not hardcode integration API keys in compose', () => {
+    // GIVEN the docker-compose.yml
+    // WHEN the runtime service environment is inspected
+    // THEN LINEAR_API_KEY and RESEND_API_KEY are NOT hardcoded (they come via env_file)
+    const compose = loadCompose();
+    const env = compose.services.runtime?.environment;
+    if (env && typeof env === 'object') {
+      expect(env).not.toHaveProperty('LINEAR_API_KEY');
+      expect(env).not.toHaveProperty('RESEND_API_KEY');
+      expect(env).not.toHaveProperty('RESEND_FROM_EMAIL');
+    }
+    // If env is undefined, that's fine — keys come from env_file
+  });
+
+  it('T-A37: .env.example has LINEAR_API_KEY and RESEND_API_KEY under Integrations section', () => {
+    // GIVEN .env.example
+    // WHEN the Integrations section is inspected
+    // THEN LINEAR_API_KEY and RESEND_API_KEY appear after the Integrations header
+    const envFile = readEnvExample();
+    const integrationsIdx = envFile.indexOf('# === Integrations ===');
+    expect(integrationsIdx).toBeGreaterThanOrEqual(0);
+    const afterIntegrations = envFile.substring(integrationsIdx);
+    expect(afterIntegrations).toMatch(/LINEAR_API_KEY/);
+    expect(afterIntegrations).toMatch(/RESEND_API_KEY/);
+    expect(afterIntegrations).toMatch(/RESEND_FROM_EMAIL/);
+  });
 });
