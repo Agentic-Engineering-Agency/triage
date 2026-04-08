@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { useChat } from "@ai-sdk/react"
 import { DefaultChatTransport } from "ai"
 import { useRef, useState, useCallback, useEffect } from "react"
-import { Send, Paperclip, X } from "lucide-react"
+import { Send, Paperclip, X, ZoomIn, FileText, FileCode, File as FileIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { toolComponents } from "@/components/tool-registry"
 
@@ -19,14 +19,24 @@ const ACCEPTED_TYPES = [
   "image/webp",
   "text/plain",
   "text/x-log",
+  "text/markdown",
   "application/json",
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "video/mp4",
   "video/webm",
 ]
 
+// File extensions that may not have correct MIME types
+const ACCEPTED_EXTENSIONS = [".md", ".log", ".txt", ".json", ".pdf", ".docx"]
+
+const LARGE_PASTE_THRESHOLD = 500 // chars — above this, treat as attachment
+
 interface Attachment {
   file: File
   preview?: string
+  /** For pasted text attachments — shows as chip instead of image */
+  pastedText?: string
 }
 
 const transport = new DefaultChatTransport({
@@ -42,6 +52,7 @@ function ChatPage() {
   const [input, setInput] = useState("")
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [fileError, setFileError] = useState<string | null>(null)
+  const [expandedImage, setExpandedImage] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -67,10 +78,11 @@ function ChatPage() {
     (file: File) => {
       setFileError(null)
 
-      if (!ACCEPTED_TYPES.includes(file.type)) {
-        setFileError(`Unsupported file type: ${file.type}`)
-        return
-      }
+    const ext = "." + file.name.split(".").pop()?.toLowerCase()
+    if (!ACCEPTED_TYPES.includes(file.type) && !ACCEPTED_EXTENSIONS.includes(ext)) {
+      setFileError(`Unsupported file type: ${file.name}`)
+      return
+    }
       if (file.size > MAX_FILE_SIZE) {
         setFileError(
           `File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB (max 10MB)`,
@@ -95,17 +107,31 @@ function ChatPage() {
     [attachments],
   )
 
-  // Handle clipboard paste
+  // Handle clipboard paste — images and large text
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
       const items = e.clipboardData.items
+
+      // Check for images first
       for (const item of items) {
         if (item.type.startsWith("image/")) {
           e.preventDefault()
           const file = item.getAsFile()
           if (file) addFile(file)
-          break
+          return
         }
+      }
+
+      // Check for large text paste → convert to attachment chip
+      const pastedText = e.clipboardData.getData("text/plain")
+      if (pastedText && pastedText.length >= LARGE_PASTE_THRESHOLD) {
+        e.preventDefault()
+        const blob = new Blob([pastedText], { type: "text/plain" })
+        const lines = pastedText.split("\n").length
+        const fileName = `pasted-text-${lines}-lines.txt`
+        const file = new File([blob], fileName, { type: "text/plain" })
+        const attachment: Attachment = { file, pastedText }
+        setAttachments((prev) => [...prev, attachment])
       }
     },
     [addFile],
@@ -299,6 +325,27 @@ function ChatPage() {
         )}
       </div>
 
+      {/* Image lightbox */}
+      {expandedImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-zoom-out"
+          onClick={() => setExpandedImage(null)}
+        >
+          <button
+            onClick={() => setExpandedImage(null)}
+            className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          <img
+            src={expandedImage}
+            alt="Expanded preview"
+            className="max-h-[85vh] max-w-[90vw] rounded-xl object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+
       {/* Composer */}
       <div className="border-t border-border p-4">
         <div className="mx-auto max-w-3xl">
@@ -313,19 +360,49 @@ function ChatPage() {
               {attachments.map((attachment, i) => (
                 <div
                   key={i}
-                  className="group relative rounded-lg bg-muted p-1"
+                  className="group relative"
                 >
+                  {/* Image preview */}
                   {attachment.preview ? (
-                    <img
-                      src={attachment.preview}
-                      alt={attachment.file.name}
-                      className="h-16 w-16 rounded object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-16 w-16 items-center justify-center rounded bg-muted">
-                      <span className="text-[10px] text-muted-foreground text-center px-1 truncate">
-                        {attachment.file.name}
+                    <button
+                      type="button"
+                      onClick={() => setExpandedImage(attachment.preview!)}
+                      className="relative cursor-zoom-in rounded-xl bg-muted/80 border border-border overflow-hidden h-14 w-14"
+                    >
+                      <img
+                        src={attachment.preview}
+                        alt={attachment.file.name}
+                        className="h-full w-full object-cover"
+                      />
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover:bg-black/30 group-hover:opacity-100">
+                        <ZoomIn className="h-4 w-4 text-white" />
                       </span>
+                    </button>
+                  ) : attachment.pastedText ? (
+                    /* Pasted text chip — like Claude/ChatGPT style */
+                    <div className="flex items-center gap-2.5 rounded-xl bg-muted/80 border border-border px-3 h-14 max-w-56">
+                      <FileText className="h-5 w-5 shrink-0 text-secondary" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-foreground truncate">
+                          Pasted text
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {attachment.pastedText.split("\n").length} lines · {(attachment.file.size / 1024).toFixed(1)}KB
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Document file chip */
+                    <div className="flex items-center gap-2.5 rounded-xl bg-muted/80 border border-border px-3 h-14 max-w-56">
+                      <AttachmentIcon fileName={attachment.file.name} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-foreground truncate">
+                          {attachment.file.name}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {(attachment.file.size / 1024).toFixed(1)}KB
+                        </p>
+                      </div>
                     </div>
                   )}
                   <button
@@ -341,7 +418,7 @@ function ChatPage() {
 
           {/* Input area */}
           <form onSubmit={handleSubmit}>
-            <div className="flex items-end gap-2 rounded-xl bg-card p-3 shadow-neu-inset">
+            <div className="flex items-center gap-2 rounded-xl bg-card p-3 shadow-neu-inset">
               {/* File upload button */}
               <button
                 type="button"
@@ -355,7 +432,7 @@ function ChatPage() {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept={ACCEPTED_TYPES.join(",")}
+                accept={[...ACCEPTED_TYPES, ".md", ".log", ".pdf", ".docx"].join(",")}
                 onChange={handleFileSelect}
                 className="hidden"
               />
@@ -390,4 +467,27 @@ function ChatPage() {
       </div>
     </div>
   )
+}
+
+/** Icon picker for document attachments based on file extension */
+function AttachmentIcon({ fileName }: { fileName: string }) {
+  const ext = fileName.split(".").pop()?.toLowerCase()
+  switch (ext) {
+    case "md":
+    case "txt":
+    case "log":
+      return <FileText className="h-4 w-4 shrink-0 text-secondary" />
+    case "json":
+    case "ts":
+    case "tsx":
+    case "js":
+      return <FileCode className="h-4 w-4 shrink-0 text-orange" />
+    case "pdf":
+      return <FileText className="h-4 w-4 shrink-0 text-coral" />
+    case "docx":
+    case "doc":
+      return <FileText className="h-4 w-4 shrink-0 text-steel-blue" />
+    default:
+      return <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+  }
 }
