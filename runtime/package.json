@@ -1,0 +1,20 @@
+{
+  "name": "triage-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@linear/sdk": "^81.0.0",
+    "resend": "^6.10.0",
+    "@mastra/core": "^0.1.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.1.1",
+    "typescript": "^5.8.3"
+  }
+}
