@@ -1,0 +1,14 @@
+{
+  "name": "triage",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^3.1.1",
+    "yaml": "^2.7.1",
+    "typescript": "^5.8.3",
+    "@types/node": "^22.14.1"
+  }
+}

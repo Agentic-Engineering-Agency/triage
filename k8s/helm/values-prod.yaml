@@ -1,0 +1,12 @@
+# Production environment overrides
+frontend:
+  replicaCount: 2
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 10
+
+runtime:
+  replicaCount: 2
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 10

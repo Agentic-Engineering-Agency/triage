@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-runtime
+  labels:
+    app: runtime
+spec:
+  replicas: {{ .Values.runtime.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: runtime
+  template:
+    metadata:
+      labels:
+        app: runtime
+    spec:
+      containers:
+        - name: runtime
+          image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag | default "latest" }}"
+          ports:
+            - containerPort: {{ .Values.runtime.port | default 4111 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.runtime.port | default 4111 }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.runtime.port | default 4111 }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: {{ .Values.runtime.resources.requests.cpu | quote }}
+              memory: {{ .Values.runtime.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.runtime.resources.limits.cpu | quote }}
+              memory: {{ .Values.runtime.resources.limits.memory | quote }}

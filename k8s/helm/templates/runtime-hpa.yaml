@@ -1,0 +1,25 @@
+{{- if .Values.runtime.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-runtime
+  labels:
+    app: runtime
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-runtime
+  minReplicas: {{ .Values.runtime.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.runtime.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+{{- end }}

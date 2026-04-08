@@ -1,0 +1,21 @@
+# Stage 1: Builder
+FROM node:22-alpine AS builder
+WORKDIR /app
+COPY . .
+RUN if [ -f runtime/package.json ]; then \
+      cd runtime && npm ci && npx mastra build && \
+      cp -r .mastra/output /app/output; \
+    else \
+      mkdir -p /app/output && \
+      cp stubs/runtime/index.mjs /app/output/ && \
+      cp stubs/runtime/package.json /app/output/; \
+    fi
+
+# Stage 2: Production
+FROM node:22-alpine
+WORKDIR /app
+COPY --from=builder /app/output/ ./
+EXPOSE 4111
+ENV PORT=4111 NODE_ENV=production
+USER node
+CMD ["node", "index.mjs"]

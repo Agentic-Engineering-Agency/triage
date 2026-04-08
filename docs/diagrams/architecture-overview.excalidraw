@@ -1,0 +1,261 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "claude-code",
+  "elements": [
+    {
+      "id": "title",
+      "type": "text",
+      "x": 400,
+      "y": 20,
+      "width": 400,
+      "height": 30,
+      "text": "Triage — System Architecture",
+      "fontSize": 20,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "transparent"
+    },
+    {
+      "id": "frontend-box",
+      "type": "rectangle",
+      "x": 100,
+      "y": 100,
+      "width": 160,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#a5d8ff",
+      "boundElements": [{"type": "text", "id": "frontend-label"}]
+    },
+    {
+      "id": "frontend-label",
+      "type": "text",
+      "x": 120,
+      "y": 115,
+      "width": 120,
+      "height": 30,
+      "text": "frontend :3001",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "frontend-box"
+    },
+    {
+      "id": "runtime-box",
+      "type": "rectangle",
+      "x": 400,
+      "y": 100,
+      "width": 160,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#a5d8ff",
+      "boundElements": [{"type": "text", "id": "runtime-label"}]
+    },
+    {
+      "id": "runtime-label",
+      "type": "text",
+      "x": 420,
+      "y": 115,
+      "width": 120,
+      "height": 30,
+      "text": "runtime :4111",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "runtime-box"
+    },
+    {
+      "id": "libsql-box",
+      "type": "rectangle",
+      "x": 400,
+      "y": 250,
+      "width": 160,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#b2f2bb",
+      "boundElements": [{"type": "text", "id": "libsql-label"}]
+    },
+    {
+      "id": "libsql-label",
+      "type": "text",
+      "x": 420,
+      "y": 265,
+      "width": 120,
+      "height": 30,
+      "text": "libsql :8080",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "libsql-box"
+    },
+    {
+      "id": "langfuse-web-box",
+      "type": "rectangle",
+      "x": 700,
+      "y": 100,
+      "width": 180,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#ffd8a8",
+      "boundElements": [{"type": "text", "id": "langfuse-web-label"}]
+    },
+    {
+      "id": "langfuse-web-label",
+      "type": "text",
+      "x": 720,
+      "y": 115,
+      "width": 140,
+      "height": 30,
+      "text": "langfuse-web :3000",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "langfuse-web-box"
+    },
+    {
+      "id": "langfuse-worker-box",
+      "type": "rectangle",
+      "x": 700,
+      "y": 250,
+      "width": 180,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#ffd8a8",
+      "boundElements": [{"type": "text", "id": "langfuse-worker-label"}]
+    },
+    {
+      "id": "langfuse-worker-label",
+      "type": "text",
+      "x": 720,
+      "y": 265,
+      "width": 160,
+      "height": 30,
+      "text": "langfuse-worker :3030",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "langfuse-worker-box"
+    },
+    {
+      "id": "clickhouse-box",
+      "type": "rectangle",
+      "x": 600,
+      "y": 400,
+      "width": 160,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#b2f2bb",
+      "boundElements": [{"type": "text", "id": "clickhouse-label"}]
+    },
+    {
+      "id": "clickhouse-label",
+      "type": "text",
+      "x": 620,
+      "y": 415,
+      "width": 120,
+      "height": 30,
+      "text": "clickhouse :8123",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "clickhouse-box"
+    },
+    {
+      "id": "redis-box",
+      "type": "rectangle",
+      "x": 800,
+      "y": 400,
+      "width": 160,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#d0bfff",
+      "boundElements": [{"type": "text", "id": "redis-label"}]
+    },
+    {
+      "id": "redis-label",
+      "type": "text",
+      "x": 820,
+      "y": 415,
+      "width": 120,
+      "height": 30,
+      "text": "redis :6379",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "redis-box"
+    },
+    {
+      "id": "minio-box",
+      "type": "rectangle",
+      "x": 1000,
+      "y": 400,
+      "width": 160,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#b2f2bb",
+      "boundElements": [{"type": "text", "id": "minio-label"}]
+    },
+    {
+      "id": "minio-label",
+      "type": "text",
+      "x": 1020,
+      "y": 415,
+      "width": 120,
+      "height": 30,
+      "text": "minio :9090",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "minio-box"
+    },
+    {
+      "id": "langfuse-postgres-box",
+      "type": "rectangle",
+      "x": 950,
+      "y": 250,
+      "width": 200,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#b2f2bb",
+      "boundElements": [{"type": "text", "id": "langfuse-postgres-label"}]
+    },
+    {
+      "id": "langfuse-postgres-label",
+      "type": "text",
+      "x": 970,
+      "y": 265,
+      "width": 180,
+      "height": 30,
+      "text": "langfuse-postgres :5432",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "langfuse-postgres-box"
+    },
+    {
+      "id": "arrow-fe-rt",
+      "type": "arrow",
+      "x": 260,
+      "y": 130,
+      "width": 140,
+      "height": 0,
+      "points": [[0, 0], [140, 0]],
+      "strokeColor": "#1e1e1e"
+    },
+    {
+      "id": "arrow-rt-db",
+      "type": "arrow",
+      "x": 480,
+      "y": 160,
+      "width": 0,
+      "height": 90,
+      "points": [[0, 0], [0, 90]],
+      "strokeColor": "#1e1e1e"
+    },
+    {
+      "id": "arrow-rt-lf",
+      "type": "arrow",
+      "x": 560,
+      "y": 130,
+      "width": 140,
+      "height": 0,
+      "points": [[0, 0], [140, 0]],
+      "strokeColor": "#1e1e1e"
+    }
+  ],
+  "appState": {
+    "viewBackgroundColor": "#ffffff"
+  }
+}
