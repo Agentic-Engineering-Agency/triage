@@ -13,10 +13,10 @@
     --font-sans: 'Inter Variable', sans-serif;
     --font-mono: 'JetBrains Mono Variable', monospace;
 
-    /* Neumorphic shadows */
-    --shadow-neu-raised: 6px 6px 12px #141d52, -6px -6px 12px #2a49a2;
-    --shadow-neu-inset: inset 4px 4px 8px #141d52, inset -4px -4px 8px #2a49a2;
-    --shadow-neu-sm: 3px 3px 6px #141d52, -3px -3px 6px #2a49a2;
+    /* Neumorphic shadows — soft, subtle depth */
+    --shadow-neu-raised: 3px 3px 8px #141d52, -3px -3px 8px #2a49a2;
+    --shadow-neu-inset: inset 2px 2px 6px #141d52, inset -2px -2px 6px #2a49a2;
+    --shadow-neu-sm: 2px 2px 5px #141d52, -2px -2px 5px #2a49a2;
 
     /* Brand colors */
     --color-navy: #1F337A;
