@@ -1,7 +1,8 @@
 import { createRootRoute, Link, Outlet, useLocation } from "@tanstack/react-router"
 import { TanStackRouterDevtools } from "@tanstack/router-devtools"
-import { MessageSquare, LayoutGrid, Settings } from "lucide-react"
+import { MessageSquare, LayoutGrid, Settings, Sun, Moon } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
+import { useTheme } from "@/components/theme-provider"
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -9,6 +10,7 @@ export const Route = createRootRoute({
 
 function RootLayout() {
   const { /* isAuthenticated, isLoading */ } = useAuth()
+  const { resolvedTheme, setTheme } = useTheme()
   const location = useLocation()
 
   // Auth pages bypass the guard
@@ -63,8 +65,21 @@ function RootLayout() {
           </NavLink>
         </nav>
 
-        {/* Footer accent */}
-        <div className="mx-4 mb-4 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+        {/* Theme toggle + footer */}
+        <div className="mx-4 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+        <div className="flex justify-center py-2">
+          <button
+            onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+            className="flex h-8 w-8 items-center justify-center rounded-xl text-muted-foreground hover:text-foreground transition-colors hover:bg-muted/50"
+            title={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {resolvedTheme === "dark" ? (
+              <Sun className="h-4 w-4" />
+            ) : (
+              <Moon className="h-4 w-4" />
+            )}
+          </button>
+        </div>
         <div className="px-4 pb-4">
           <div className="flex items-center gap-2.5 rounded-xl bg-muted/40 px-3 py-2">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-secondary/30 text-xs font-bold text-secondary">
@@ -80,7 +95,7 @@ function RootLayout() {
 
       {/* Main content area */}
       <main className="flex flex-1 flex-col overflow-hidden p-3">
-        <div className="flex flex-1 flex-col overflow-hidden rounded-2xl bg-navy-light/40">
+        <div className="flex flex-1 flex-col overflow-hidden rounded-2xl bg-card/50">
           <Outlet />
         </div>
       </main>
