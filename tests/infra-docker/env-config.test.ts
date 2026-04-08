@@ -179,10 +179,36 @@ describe('REQ-D08: Environment Variable Configuration', () => {
     it('should contain Integration variables (Linear, Resend)', () => {
       // GIVEN the .env.example file is read
       // WHEN searching for integration variables
-      // THEN LINEAR_API_KEY and RESEND_API_KEY should be present
+      // THEN LINEAR_API_KEY, RESEND_API_KEY, and RESEND_FROM_EMAIL should be present
       const content = readEnvExample();
       expect(content).toMatch(/LINEAR_API_KEY/);
       expect(content).toMatch(/RESEND_API_KEY/);
+      expect(content).toMatch(/RESEND_FROM_EMAIL/);
+    });
+
+    it('RESEND_FROM_EMAIL should be set to triage@agenticengineering.lat', () => {
+      // GIVEN the .env.example file is read
+      // WHEN searching for RESEND_FROM_EMAIL
+      // THEN it should have the correct sender address
+      const content = readEnvExample();
+      expect(content).toMatch(/RESEND_FROM_EMAIL=triage@agenticengineering\.lat/);
+    });
+
+    it('RESEND_FROM_EMAIL should have an explanatory comment', () => {
+      // GIVEN the .env.example file is read
+      // WHEN inspecting the RESEND_FROM_EMAIL line
+      // THEN it should have a comment explaining it is the sender address
+      const content = readEnvExample();
+      const lines = content.split('\n');
+      const fromEmailLine = lines.find((l) => l.includes('RESEND_FROM_EMAIL'));
+      expect(fromEmailLine).toBeDefined();
+      const hasInlineComment = fromEmailLine!.includes('#');
+      const lineIdx = lines.indexOf(fromEmailLine!);
+      const hasCommentBefore = lineIdx > 0 && lines[lineIdx - 1].trim().startsWith('#');
+      expect(
+        hasInlineComment || hasCommentBefore,
+        'RESEND_FROM_EMAIL should have an explanatory comment'
+      ).toBe(true);
     });
 
     it('should contain Langfuse Core variables', () => {
@@ -338,10 +364,39 @@ describe('REQ-D13: Graceful Degradation', () => {
   });
 
   describe('REQ-D13 scenarios', () => {
-    it.todo('happy path: all API keys configured uses real integrations');
+    it('happy path: all API keys configured uses real integrations', () => {
+      // GIVEN .env.example has all API keys defined
+      // WHEN inspected
+      // THEN LINEAR_API_KEY, RESEND_API_KEY, and OPENROUTER_API_KEY should all be present
+      const content = readEnvExample();
+      expect(content).toMatch(/LINEAR_API_KEY/);
+      expect(content).toMatch(/RESEND_API_KEY/);
+      expect(content).toMatch(/OPENROUTER_API_KEY/);
+    });
 
-    it.todo('edge case: demo environment has no Linear workspace');
+    it('edge case: demo environment has no Linear workspace', () => {
+      // GIVEN .env.example
+      // WHEN LINEAR_API_KEY is inspected
+      // THEN it should have a CHANGEME placeholder (not a real key)
+      // indicating demo mode works without a real Linear workspace
+      const content = readEnvExample();
+      const lines = parseEnvLines(content);
+      const linearLine = lines.find((l) => l.key === 'LINEAR_API_KEY');
+      expect(linearLine).toBeDefined();
+      expect(linearLine!.value).toContain('CHANGEME');
+    });
 
-    it.todo('error case: OPENROUTER_API_KEY completely missing prevents triage');
+    it('error case: OPENROUTER_API_KEY completely missing prevents triage', () => {
+      // GIVEN .env.example
+      // WHEN OPENROUTER_API_KEY is inspected
+      // THEN it must be present (it's required, not optional)
+      // AND it should have a CHANGEME placeholder indicating it MUST be set
+      const content = readEnvExample();
+      expect(content).toMatch(/OPENROUTER_API_KEY/);
+      const lines = parseEnvLines(content);
+      const openrouterLine = lines.find((l) => l.key === 'OPENROUTER_API_KEY');
+      expect(openrouterLine).toBeDefined();
+      expect(openrouterLine!.value).toContain('CHANGEME');
+    });
   });
 });

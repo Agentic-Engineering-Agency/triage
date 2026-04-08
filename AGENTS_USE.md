@@ -1,5 +1,25 @@
 # AGENTS_USE.md — How We Use AI Agents in Triage
 
+> Current branch status (2026-04-08): this repository currently contains the infrastructure, test, and integration-tooling foundation for the hackathon build. The executable agent runtime, frontend chat app, and webhook-driven resolution loop described below are target architecture and are not all committed on this branch yet.
+
+## Current Branch Scope
+
+Implemented on this branch:
+
+- 9-container Docker Compose stack with `app` and `langfuse` network separation
+- stub frontend and runtime containers for clean-clone startup
+- 5 Linear Mastra tools and 2 Resend Mastra tools
+- shared Zod schemas and env/config handling
+- runtime unit tests plus infrastructure validation tests
+
+Still pending for the full hackathon deliverable:
+
+- frontend chat experience
+- durable workflow entrypoint and agent orchestration
+- RAG/wiki pipeline wiring
+- webhook-driven resolution verification loop
+- final observability screenshots and demo evidence
+
 # Agent #1 — Orchestrator
 
 ## 1. Agent Overview
@@ -10,12 +30,13 @@
 
 ---
 
-## 2. Agents & Capabilities
+## 2. Target Agents & Capabilities
 
 ### Agent: Orchestrator
 
 | Field | Description |
 |-------|-------------|
+| **Implementation Status** | Planned. This branch does not yet include the committed frontend chat app or workflow runtime that executes this agent. |
 | **Role** | User-facing conversational agent. Receives incident reports, detects batch vs single incidents, invokes the triage workflow, and streams structured results back to the user. |
 | **Type** | Semi-autonomous — human-in-the-loop for ticket creation approval |
 | **LLM** | OpenRouter (Qwen 3.6 Plus multimodal for default, Mercury for demo) |
@@ -27,6 +48,7 @@
 
 | Field | Description |
 |-------|-------------|
+| **Implementation Status** | Planned. The repo currently contains the Linear/Resend tool layer this agent will call, but not the committed RAG or workflow wiring. |
 | **Role** | Core intelligence agent. Analyzes incidents against the codebase knowledge base (wiki), identifies root cause down to specific files/functions, scores severity and confidence, and produces a structured triage output. |
 | **Type** | Autonomous — runs as a step within the triage workflow |
 | **LLM** | OpenRouter (same model as Orchestrator) |
@@ -38,6 +60,7 @@
 
 | Field | Description |
 |-------|-------------|
+| **Implementation Status** | Planned. Resolution webhook handling and workflow resume logic are not committed on this branch yet. |
 | **Role** | Verifies that resolved tickets have actual code changes (PRs/commits) that address the original issue. Prevents false resolutions where tickets are marked "done" without evidence of a fix. |
 | **Type** | Autonomous — triggered by Linear webhook when ticket status changes to "Done" |
 | **LLM** | OpenRouter (same model) |
@@ -47,9 +70,9 @@
 
 ---
 
-## 3. Architecture & Orchestration
+## 3. Target Architecture & Orchestration
 
-- **Architecture diagram:**
+- **Architecture diagram (target):**
 
 ```mermaid
 graph TD
@@ -100,17 +123,21 @@ graph TD
     LF_WEB --> PG
 ```
 
-- **Orchestration approach:** Sequential pipeline orchestrated by Mastra durable workflows. The Orchestrator agent invokes the `triageWorkflow` as a tool. The workflow progresses through ordered steps: intake → triage → dedup → approval gate (suspend) → ticket creation → notification → suspend for resolution → verify → notify reporter.
+- **Current implemented foundation:** Docker Compose infrastructure, Langfuse services, stub frontend/runtime containers, and the Linear/Resend tool layer are committed now.
 
-- **State management:** Mastra workflows persist state to LibSQL. Workflow state survives container restarts. Suspend/resume pattern enables the workflow to pause waiting for user approval (ticket creation) or external events (Linear webhook for resolution). Chat state managed by AI SDK `useChat` on the frontend.
+- **Orchestration approach (target):** Sequential pipeline orchestrated by Mastra durable workflows. The Orchestrator agent invokes the `triageWorkflow` as a tool. The workflow progresses through ordered steps: intake → triage → dedup → approval gate (suspend) → ticket creation → notification → suspend for resolution → verify → notify reporter.
 
-- **Error handling:** Tool-level error boundaries — each tool wraps its logic in try/catch and returns `{ success: false, error: "..." }`. Workflow steps check tool results and either retry once or enter error state. Email failures never block triage. Linear API failure triggers local fallback ticket storage in LibSQL.
+- **State management (target):** Mastra workflows persist state to LibSQL. Workflow state survives container restarts. Suspend/resume pattern enables the workflow to pause waiting for user approval (ticket creation) or external events (Linear webhook for resolution). Chat state is planned to be managed by AI SDK `useChat` on the frontend.
 
-- **Handoff logic:** Orchestrator → triageWorkflow (tool invocation) → Triage Agent (workflow step) → Resolution Reviewer (webhook-triggered workflow resume). Each handoff passes typed data validated by Zod schemas.
+- **Error handling:** Implemented today: tool-level error boundaries, shared Zod schemas, sanitized Linear/Resend logging, graceful degradation when API keys are missing, and approval gating on ticket creation. Planned in the workflow layer: step retries, suspend/resume handling, and local ticket fallback orchestration.
+
+- **Handoff logic (target):** Orchestrator → triageWorkflow (tool invocation) → Triage Agent (workflow step) → Resolution Reviewer (webhook-triggered workflow resume). Each handoff passes typed data validated by Zod schemas.
 
 ---
 
 ## 4. Context Engineering
+
+> The context model below is the intended design for the full hackathon deliverable. The current branch does not yet contain the committed RAG/wiki runtime wiring.
 
 - **Context sources:**
   - User input: text descriptions, images (screenshots, UI mockups), log files
@@ -130,7 +157,7 @@ graph TD
 
 ---
 
-## 5. Use Cases
+## 5. Target Use Cases
 
 ### Use Case 1: Single Incident Triage
 
@@ -173,65 +200,56 @@ graph TD
 
 ## 6. Observability
 
-- **Logging:** Structured console logging in runtime. All log messages include correlation ID when available. Security events (injection blocked, PII redacted) logged at `warn` level. Secrets and PII never logged.
+- **Logging:** Implemented today: structured console output from the stub runtime and sanitized error logging inside the Linear and Resend tools. Secrets are expected to stay in environment variables and are not required by the test suite.
 
-- **Tracing:** End-to-end Langfuse traces with correlation IDs spanning the full lifecycle: intake → security check → triage → dedup → ticket creation → notification → resolution verification → reporter notification. Each agent call, tool invocation, and workflow step is a span in the trace. `LangfuseExporter` configured in Mastra instance.
+- **Tracing:** Implemented today: Langfuse infrastructure is part of the Docker Compose stack and is health-checked by the infrastructure test suite. Target behavior: once the runtime workflow layer is committed, agent calls and workflow steps will emit end-to-end traces into Langfuse.
 
 - **Metrics:**
-  - Latency: time-to-first-token, total triage time, per-step durations
-  - Token usage: input/output tokens per agent call, cost per triage
-  - Success/failure rates: triage completion rate, ticket creation success, email delivery
-  - Security: prompt injection attempts blocked, PII redaction events
+  - Implemented today: service health, compose/config validation, image-size checks, and environment/config assertions
+  - Target once runtime lands: time-to-first-token, total triage time, per-step durations, token usage, and ticket/email success rates
 
-- **Dashboards:** Langfuse web dashboard at `http://localhost:3000` provides trace timeline views, token cost analytics, and latency distributions.
+- **Dashboards:** Langfuse web dashboard at `http://localhost:3000` is available in the Docker stack today. It is ready to receive real workflow traces once the runtime entrypoint is added.
 
 ### Evidence
 
-<!-- EVIDENCE: Add Langfuse trace screenshots showing:
-  1. Full E2E trace from intake to ticket creation (with correlation ID)
-  2. Token usage breakdown per agent call
-  3. Latency timeline for a complete triage
-  4. Security event log showing blocked injection attempt
-  Add screenshots here once the agent pipeline is operational.
--->
+<!-- EVIDENCE: Add Langfuse screenshots, trace IDs, and demo captures from a real end-to-end triage run once the workflow runtime is committed. -->
 
-> **Status:** Evidence pending — requires operational agent pipeline. Langfuse infrastructure is deployed and verified healthy (v3.22.0). Trace collection will be captured during demo recording.
+- Current automated evidence:
+  - `tests/infra-docker/architecture-alignment.test.ts` validates the Langfuse-related services, network segmentation, and Caddy/runtime integration points.
+  - `tests/infra-docker/docker-compose.test.ts` validates compose parsing and failure behavior for bad env setup.
+  - `tests/infra-docker/dockerfiles.test.ts` enforces the image-size constraint for the hackathon stack.
+- Remaining evidence to capture before final submission:
+  - real Langfuse traces from an end-to-end triage run
+  - screenshots for the demo and `AGENTS_USE.md`
 
 ---
 
 ## 7. Security & Guardrails
 
-- **Prompt injection defense:** Mastra security processor pipeline runs on ALL user input before it reaches any agent:
-  1. **Prompt injection detector** (block strategy, threshold 0.7) — rejects malicious input with generic message, logged to Langfuse
-  2. **PII redactor** (redact strategy) — strips emails and API keys before LLM context
-  3. **System prompt scrubber** (filter strategy) — prevents prompt extraction from agent outputs
+- **Implemented on this branch:**
+  - Tool-level error boundaries with typed success/error responses validated by Zod schemas
+  - `createLinearIssue` uses `requireApproval: true`, preserving a human approval gate for ticket creation
+  - Linear and Resend error logs are sanitized to messages instead of dumping raw objects
+  - Secrets stay in env vars, and `.env.example` documents placeholders instead of checked-in live values
+  - Compose-level isolation separates app traffic from the Langfuse infrastructure network
 
-- **Input validation:**
-  - File type whitelist: png, jpg, gif, log, txt, mp4, webm
-  - File size limits: 10MB per file, 25MB per message
-  - Client-side validation in composer (pre-send) + server-side validation in runtime
-  - Image resizing via Canvas API before upload
-
-- **Tool use safety:** Tool-level error boundaries prevent unintended cascading. Each tool returns typed success/error responses validated by Zod schemas. Linear ticket creation requires explicit user approval (Confirmation component) — no autonomous ticket creation without human-in-the-loop gate.
-
-- **Data handling:**
-  - All secrets via environment variables (`.env` file, never committed)
-  - 17 secrets documented in `.env.example` with CHANGEME placeholders
-  - Caddy security headers: HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff, CSP, Referrer-Policy
-  - Better Auth with HttpOnly, SameSite=Lax cookies
-  - DOMPurify for XSS prevention on rendered content
+- **Planned before final demo:**
+  - prompt-injection filtering on user input
+  - PII redaction before LLM context assembly
+  - attachment-type and size validation in the real frontend/runtime path
+  - auth/session handling for the real UI
 
 ### Evidence
 
-<!-- EVIDENCE: Add evidence showing:
-  1. Prompt injection attempt blocked (input + agent response + Langfuse trace)
-  2. PII redaction in action (before/after in trace)
-  3. File validation rejecting oversized/wrong-type upload
-  4. Security headers visible in browser DevTools
-  Add screenshots here once the agent pipeline is operational.
--->
+<!-- EVIDENCE: Add screenshots or trace captures for the final prompt-injection, PII-redaction, browser header, and file-validation flows once the real UI/runtime exists. -->
 
-> **Status:** Evidence pending — requires operational agent pipeline. Security infrastructure is in place: Caddy security headers verified, `.env.example` with 17 secrets documented, `scripts/check-env.sh` validates no CHANGEME values remain.
+- Current automated evidence:
+  - `runtime/src/mastra/tools/linear.test.ts` verifies approval gating, singleton clients, and structured error handling.
+  - `runtime/src/mastra/tools/resend.test.ts` verifies graceful degradation and idempotency-key usage.
+  - `tests/infra-docker/env-config.test.ts` verifies the documented integration env vars and missing-key behavior.
+- Remaining evidence to capture before final submission:
+  - prompt-injection and PII-redaction proof once the real agent runtime exists
+  - browser-visible header and file-validation screenshots from the final UI
 
 ---
 
@@ -239,7 +257,7 @@ graph TD
 
 Triage is designed to scale from a single Docker Compose deployment to a production Kubernetes cluster. See [`SCALING.md`](./SCALING.md) for the full analysis.
 
-- **Current capacity:** 9-container Docker Compose stack runs on a single machine. Suitable for development and small team usage (1-10 concurrent users). All images pull in <2GB total.
+- **Current capacity:** 9-container Docker Compose stack runs on a single machine. Suitable for development and small team usage (1-10 concurrent users). All images pull in <2GB total, and on this branch the frontend and runtime containers are stubs unless the full app code is added.
 
 - **Scaling approach:**
   - **Horizontal:** Frontend (Caddy) and Runtime (Mastra) are stateless — scale with replicas behind a load balancer. Langfuse worker scales as queue consumers.
