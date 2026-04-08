@@ -1,8 +1,13 @@
 import { createTool } from '@mastra/core/tools';
-import { z } from 'zod';
 import { LinearClient } from '@linear/sdk';
 import { config } from '../../lib/config';
-import { ticketCreateSchema, ticketUpdateSchema, issueSearchSchema } from '../../lib/schemas/ticket';
+import {
+  ticketCreateSchema,
+  ticketUpdateSchema,
+  issueSearchSchema,
+  issueIdInputSchema,
+  teamIdInputSchema,
+} from '../../lib/schemas/ticket';
 
 // Module-level singleton (REQ-5)
 const linearClient: InstanceType<typeof LinearClient> | null = config.LINEAR_API_KEY
@@ -18,20 +23,20 @@ export const createLinearIssue = createTool({
   description: 'Create a new Linear issue with title, description, priority, and optional assignee/labels.',
   inputSchema: ticketCreateSchema,
   requireApproval: true,
-  execute: async (input: any) => {
-    const ctx = input?.context ?? input;
+  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+    const ctx = (input as Record<string, unknown>)?.context ?? input;
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
     try {
       const result = await linearClient.createIssue({
-        teamId: ctx.teamId,
-        title: ctx.title,
-        description: ctx.description,
-        priority: ctx.priority,
-        assigneeId: ctx.assigneeId,
-        labelIds: ctx.labelIds,
-        stateId: ctx.stateId,
+        teamId: (ctx as Record<string, unknown>).teamId as string,
+        title: (ctx as Record<string, unknown>).title as string,
+        description: (ctx as Record<string, unknown>).description as string,
+        priority: (ctx as Record<string, unknown>).priority as number,
+        assigneeId: (ctx as Record<string, unknown>).assigneeId as string | undefined,
+        labelIds: (ctx as Record<string, unknown>).labelIds as string[] | undefined,
+        stateId: (ctx as Record<string, unknown>).stateId as string | undefined,
       });
       const issue = await result.issue;
       if (!issue) {
@@ -46,9 +51,9 @@ export const createLinearIssue = createTool({
           title: issue.title,
         },
       };
-    } catch (error: any) {
-      console.error('[Linear] API error:', error);
-      return { success: false, error: `Linear API error: ${error.message}` };
+    } catch (error: unknown) {
+      console.error('[Linear] API error:', error instanceof Error ? error.message : String(error));
+      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message : String(error)}` };
     }
   },
 });
@@ -58,18 +63,18 @@ export const updateLinearIssue = createTool({
   id: 'update-linear-issue',
   description: 'Update fields on an existing Linear issue (status, assignee, priority, labels).',
   inputSchema: ticketUpdateSchema,
-  execute: async (input: any) => {
-    const ctx = input?.context ?? input;
+  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+    const ctx = (input as Record<string, unknown>)?.context ?? input;
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
     try {
-      const { issueId } = ctx;
+      const { issueId } = ctx as Record<string, unknown>;
       const cleanFields: Record<string, unknown> = {};
       for (const key of ALLOWED_UPDATE_FIELDS) {
-        if (ctx[key] !== undefined) cleanFields[key] = ctx[key];
+        if ((ctx as Record<string, unknown>)[key] !== undefined) cleanFields[key] = (ctx as Record<string, unknown>)[key];
       }
-      const result = await linearClient.updateIssue(issueId, cleanFields);
+      const result = await linearClient.updateIssue(issueId as string, cleanFields);
       const issue = await result.issue;
       if (!issue) {
         return { success: false, error: 'Linear API returned no issue data' };
@@ -82,9 +87,9 @@ export const updateLinearIssue = createTool({
           url: issue.url,
         },
       };
-    } catch (error: any) {
-      console.error('[Linear] API error:', error);
-      return { success: false, error: `Linear API error: ${error.message}` };
+    } catch (error: unknown) {
+      console.error('[Linear] API error:', error instanceof Error ? error.message : String(error));
+      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message : String(error)}` };
     }
   },
 });
@@ -93,18 +98,18 @@ export const updateLinearIssue = createTool({
 export const getLinearIssue = createTool({
   id: 'get-linear-issue',
   description: 'Get a Linear issue by ID or shorthand identifier (e.g. TRI-123).',
-  inputSchema: z.object({ issueId: z.string().min(1) }),
-  execute: async (input: any) => {
-    const ctx = input?.context ?? input;
+  inputSchema: issueIdInputSchema,
+  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+    const ctx = (input as Record<string, unknown>)?.context ?? input;
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
     try {
-      const issue = await linearClient.issue(ctx.issueId);
+      const issue = await linearClient.issue((ctx as Record<string, unknown>).issueId as string);
       const state = await issue.state;
       const assignee = await issue.assignee;
       const labelsResult = await issue.labels();
-      const labels = labelsResult.nodes.map((l: any) => ({ id: l.id, name: l.name }));
+      const labels = labelsResult.nodes.map((l: { id: string; name: string }) => ({ id: l.id, name: l.name }));
 
       return {
         success: true,
@@ -113,7 +118,7 @@ export const getLinearIssue = createTool({
           identifier: issue.identifier,
           title: issue.title,
           description: issue.description,
-          state: state ? { id: state.id, name: state.name, type: (state as any).type } : null,
+          state: state ? { id: state.id, name: state.name, type: (state as { id: string; name: string; type?: string }).type } : null,
           assignee: assignee ? { id: assignee.id, name: assignee.name, email: assignee.email } : null,
           labels,
           priority: issue.priority,
@@ -122,9 +127,9 @@ export const getLinearIssue = createTool({
           updatedAt: issue.updatedAt,
         },
       };
-    } catch (error: any) {
-      console.error('[Linear] API error:', error);
-      return { success: false, error: `Linear API error: ${error.message}` };
+    } catch (error: unknown) {
+      console.error('[Linear] API error:', error instanceof Error ? error.message : String(error));
+      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message : String(error)}` };
     }
   },
 });
@@ -134,25 +139,25 @@ export const searchLinearIssues = createTool({
   id: 'search-linear-issues',
   description: 'Search Linear issues by title, status, assignee, or labels. Use for duplicate detection.',
   inputSchema: issueSearchSchema,
-  execute: async (input: any) => {
-    const ctx = input?.context ?? input;
+  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+    const ctx = (input as Record<string, unknown>)?.context ?? input;
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
     try {
       const filter: Record<string, unknown> = {};
-      if (ctx.query) filter.title = { containsIgnoreCase: ctx.query };
-      if (ctx.teamId) filter.team = { id: { eq: ctx.teamId } };
-      if (ctx.assigneeId) filter.assignee = { id: { eq: ctx.assigneeId } };
-      if (ctx.priority !== undefined) filter.priority = { eq: ctx.priority };
-      if (ctx.status) filter.state = { name: { eq: ctx.status } };
-      if (ctx.labels) filter.labels = { name: { in: ctx.labels } };
+      if ((ctx as Record<string, unknown>).query) filter.title = { containsIgnoreCase: (ctx as Record<string, unknown>).query };
+      if ((ctx as Record<string, unknown>).teamId) filter.team = { id: { eq: (ctx as Record<string, unknown>).teamId } };
+      if ((ctx as Record<string, unknown>).assigneeId) filter.assignee = { id: { eq: (ctx as Record<string, unknown>).assigneeId } };
+      if ((ctx as Record<string, unknown>).priority !== undefined) filter.priority = { eq: (ctx as Record<string, unknown>).priority };
+      if ((ctx as Record<string, unknown>).status) filter.state = { name: { eq: (ctx as Record<string, unknown>).status } };
+      if ((ctx as Record<string, unknown>).labels) filter.labels = { name: { in: (ctx as Record<string, unknown>).labels } };
 
-      const limit = Math.min(ctx.limit ?? 10, 50);
+      const limit = Math.min(((ctx as Record<string, unknown>).limit as number) ?? 10, 50);
       const result = await linearClient.issues({ filter, first: limit });
 
       const issues = await Promise.all(
-        result.nodes.map(async (issue: any) => {
+        result.nodes.map(async (issue: { id: string; identifier: string; title: string; state: Promise<{ id: string; name: string } | undefined>; priority: number; url: string }) => {
           const state = await issue.state;
           return {
             id: issue.id,
@@ -173,9 +178,9 @@ export const searchLinearIssues = createTool({
           hasNextPage: result.pageInfo?.hasNextPage ?? false,
         },
       };
-    } catch (error: any) {
-      console.error('[Linear] API error:', error);
-      return { success: false, error: `Linear API error: ${error.message}` };
+    } catch (error: unknown) {
+      console.error('[Linear] API error:', error instanceof Error ? error.message : String(error));
+      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message : String(error)}` };
     }
   },
 });
@@ -184,17 +189,17 @@ export const searchLinearIssues = createTool({
 export const getLinearTeamMembers = createTool({
   id: 'get-linear-team-members',
   description: 'Get all members of a Linear team. Use for auto-assignment decisions.',
-  inputSchema: z.object({ teamId: z.string().min(1) }),
-  execute: async (input: any) => {
-    const ctx = input?.context ?? input;
+  inputSchema: teamIdInputSchema,
+  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+    const ctx = (input as Record<string, unknown>)?.context ?? input;
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
     try {
-      const team = await linearClient.team(ctx.teamId);
+      const team = await linearClient.team((ctx as Record<string, unknown>).teamId as string);
       const members = await team.members();
 
-      const humanMembers = members.nodes.filter((m: any) => {
+      const humanMembers = members.nodes.filter((m: { id: string; name: string; email: string; displayName: string; isBot?: boolean }) => {
         if (m.isBot) return false;
         if (!m.email) return false;
         if (m.email.includes('@linear.linear.app')) return false;
@@ -205,7 +210,7 @@ export const getLinearTeamMembers = createTool({
       return {
         success: true,
         data: {
-          members: humanMembers.map((m: any) => ({
+          members: humanMembers.map((m: { id: string; name: string; email: string; displayName: string }) => ({
             id: m.id,
             name: m.name,
             email: m.email,
@@ -213,9 +218,9 @@ export const getLinearTeamMembers = createTool({
           })),
         },
       };
-    } catch (error: any) {
-      console.error('[Linear] API error:', error);
-      return { success: false, error: `Linear API error: ${error.message}` };
+    } catch (error: unknown) {
+      console.error('[Linear] API error:', error instanceof Error ? error.message : String(error));
+      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message : String(error)}` };
     }
   },
 });

@@ -151,6 +151,12 @@ export const resolutionNotificationSchema = z.object({
   linearIssueId: z.string(),
 });
 
+// Input schema for fetching a single issue by ID
+export const issueIdInputSchema = z.object({ issueId: z.string().min(1) });
+
+// Input schema for fetching team members by team ID
+export const teamIdInputSchema = z.object({ teamId: z.string().min(1) });
+
 // Email send response
 export const emailResponseSchema = z.object({
   success: z.boolean(),
