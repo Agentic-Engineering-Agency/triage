@@ -256,17 +256,7 @@ describe('REQ-D07: Frontend Dockerfile', () => {
 // ---------------------------------------------------------------------------
 describe('REQ-D14: Docker Image Size Constraint', () => {
   describe('T-D18: Total image size <= 2GB', () => {
-    it('[MANUAL/CI] total docker image size should not exceed 2GB', () => {
-      // GIVEN a fresh Docker environment
-      // WHEN running `docker compose pull && docker compose build`
-      // THEN the total image size (sum of all unique layers) should be <= 2GB
-      //
-      // Manual verification:
-      //   docker compose build
-      //   docker images --format "{{.Repository}}:{{.Tag}} {{.Size}}" | grep -E "(frontend|runtime|libsql|langfuse|clickhouse|redis|minio)"
-      //   Sum all sizes — should be <= 2GB
-      expect(true).toBe(true); // Placeholder — run manually
-    });
+    it.todo('[MANUAL/CI] total docker image size should not exceed 2GB');
 
     it('[MANUAL/CI] custom images should use Alpine base images', () => {
       // GIVEN the runtime and frontend Dockerfiles

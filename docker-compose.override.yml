@@ -1,0 +1,21 @@
+services:
+  vite:
+    image: node:22-alpine
+    working_dir: /app
+    command: npx vite --host 0.0.0.0
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - app
+
+  frontend:
+    environment:
+      FRONTEND_MODE: dev
+
+  runtime:
+    command: npx tsx watch src/index.ts
+    volumes:
+      - ./runtime/src:/app/src

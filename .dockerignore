@@ -10,3 +10,7 @@ docs
 specs
 *.md
 !README.md
+_bmad-output/
+HACKATHON_BRAINSTORM_OUTPUT/
+docker-compose*.yml
+Caddyfile

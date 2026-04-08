@@ -341,29 +341,10 @@ describe('REQ-D13: Graceful Degradation', () => {
   });
 
   describe('REQ-D13 scenarios', () => {
-    it('happy path: all API keys configured uses real integrations', () => {
-      // GIVEN all API keys are set in .env
-      // WHEN triage completes
-      // THEN tickets are created in Linear and emails sent via Resend
-      // (Manual integration test)
-      expect(true).toBe(true);
-    });
+    it.todo('happy path: all API keys configured uses real integrations');
 
-    it('edge case: demo environment has no Linear workspace', () => {
-      // GIVEN LINEAR_API_KEY is empty
-      // WHEN a full triage flow completes
-      // THEN local tickets are created and displayed in the UI
-      // THEN judges can evaluate the full flow without a Linear account
-      // (Manual integration test)
-      expect(true).toBe(true);
-    });
+    it.todo('edge case: demo environment has no Linear workspace');
 
-    it('error case: OPENROUTER_API_KEY completely missing prevents triage', () => {
-      // GIVEN OPENROUTER_API_KEY is not set at all
-      // WHEN a triage is attempted
-      // THEN the system shows "LLM API key required" error
-      // (Manual integration test)
-      expect(true).toBe(true);
-    });
+    it.todo('error case: OPENROUTER_API_KEY completely missing prevents triage');
   });
 });

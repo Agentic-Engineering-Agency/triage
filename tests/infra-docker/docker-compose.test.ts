@@ -444,37 +444,40 @@ describe('REQ-D05: Network and Port Exposure', () => {
       expect(portsStr).not.toMatch(/127\.0\.0\.1:3001/);
     });
 
-    it('langfuse-web should expose port 3000 publicly', () => {
+    it('langfuse-web should expose port 3000 bound to 127.0.0.1', () => {
       // GIVEN docker-compose.yml is parsed
       // WHEN inspecting langfuse-web ports
-      // THEN port 3000 should be published publicly
+      // THEN port 3000 should be bound to 127.0.0.1 (internal service)
       const compose = loadCompose();
       const ports = compose.services['langfuse-web']?.ports;
       expect(ports).toBeDefined();
       const portsStr = JSON.stringify(ports);
       expect(portsStr).toContain('3000');
+      expect(portsStr).toMatch(/127\.0\.0\.1:3000/);
     });
 
-    it('minio should expose port 9090 publicly (S3 API)', () => {
+    it('minio should expose port 9090 bound to 127.0.0.1 (S3 API)', () => {
       // GIVEN docker-compose.yml is parsed
       // WHEN inspecting minio ports
-      // THEN port 9090 should be published publicly
+      // THEN port 9090 should be bound to 127.0.0.1 (internal service)
       const compose = loadCompose();
       const ports = compose.services.minio?.ports;
       expect(ports).toBeDefined();
       const portsStr = JSON.stringify(ports);
       expect(portsStr).toContain('9090');
+      expect(portsStr).toMatch(/127\.0\.0\.1:9090/);
     });
 
-    it('libsql should expose port 8080 publicly', () => {
+    it('libsql should expose port 8080 bound to 127.0.0.1', () => {
       // GIVEN docker-compose.yml is parsed
       // WHEN inspecting libsql ports
-      // THEN port 8080 should be published publicly
+      // THEN port 8080 should be bound to 127.0.0.1 (internal service)
       const compose = loadCompose();
       const ports = compose.services.libsql?.ports;
       expect(ports).toBeDefined();
       const portsStr = JSON.stringify(ports);
       expect(portsStr).toContain('8080');
+      expect(portsStr).toMatch(/127\.0\.0\.1:8080/);
     });
 
     it('internal services should bind to 127.0.0.1', () => {
@@ -627,27 +630,9 @@ describe('REQ-D10: Langfuse Environment YAML Anchor', () => {
 // REQ-D01 + Integration: docker compose up (manual/CI)
 // ---------------------------------------------------------------------------
 describe('T-D14: Integration test — docker compose up', () => {
-  it('[MANUAL/CI] all 9 containers should start and become healthy within 120s', () => {
-    // GIVEN a clean Docker environment with a populated .env file
-    // WHEN running `docker compose up --build`
-    // THEN all 9 containers should reach healthy state within 120 seconds
-    //
-    // This test requires Docker daemon and is marked for CI/manual execution.
-    // Verify with: docker compose ps --format json | jq '.[] | .State'
-    expect(true).toBe(true); // Placeholder — run manually
-  });
+  it.todo('[MANUAL/CI] all 9 containers should start and become healthy within 120s');
 
-  it('[MANUAL/CI] docker compose config should validate without errors', () => {
-    // GIVEN docker-compose.yml and a valid .env file
-    // WHEN running `docker compose config`
-    // THEN it should exit with code 0 and produce valid merged YAML
-    expect(true).toBe(true); // Placeholder — run manually
-  });
+  it.todo('[MANUAL/CI] docker compose config should validate without errors');
 
-  it('[MANUAL/CI] error case: missing .env variable causes clear startup error', () => {
-    // GIVEN docker-compose.yml with a required variable not set
-    // WHEN running `docker compose up`
-    // THEN the compose process should fail with a clear error indicating the missing variable
-    expect(true).toBe(true); // Placeholder — run manually
-  });
+  it.todo('[MANUAL/CI] error case: missing .env variable causes clear startup error');
 });
