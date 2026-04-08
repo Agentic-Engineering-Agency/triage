@@ -625,5 +625,37 @@ describe('Linear Tools', () => {
       // integration tests with empty env vars.
       expect(expectedError).toBe('LINEAR_API_KEY not configured');
     });
+
+    it('S2: returns graceful error when LINEAR_API_KEY is undefined (dynamic re-import)', async () => {
+      // Reset module registry so dynamic import creates a fresh module
+      vi.resetModules();
+
+      // Use vi.doMock to mock the config module to return undefined for LINEAR_API_KEY
+      vi.doMock('../../lib/config', () => ({
+        config: {
+          LINEAR_API_KEY: undefined,
+          RESEND_API_KEY: undefined,
+          RESEND_FROM_EMAIL: 'triage@agenticengineering.lat',
+        },
+      }));
+      // Mock @linear/sdk so LinearClient constructor is available but client won't be created
+      vi.doMock('@linear/sdk', () => ({
+        LinearClient: vi.fn().mockImplementation(() => ({})),
+      }));
+
+      // Dynamic import to pick up the mocked config (fresh module)
+      const linearModule = await import('./linear');
+
+      const result = await linearModule.createLinearIssue.execute({
+        title: 'Test',
+        description: 'Test',
+        teamId: '645a639b-39e2-4abe-8ded-3346d2f79f9f',
+        priority: 1,
+      });
+
+      expect(result).toBeDefined();
+      expect((result as Record<string, unknown>).success).toBe(false);
+      expect((result as Record<string, unknown>).error).toContain('not configured');
+    });
   });
 });

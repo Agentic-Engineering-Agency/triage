@@ -35,6 +35,8 @@ import {
   ticketNotificationSchema,
   resolutionNotificationSchema,
   emailResponseSchema,
+  toolSuccessSchema,
+  toolErrorSchema,
 } from './ticket';
 
 // ---- Test data ----
@@ -608,6 +610,8 @@ describe('Zod Schemas — ticket.ts', () => {
         ticketNotificationSchema,
         resolutionNotificationSchema,
         emailResponseSchema,
+        toolSuccessSchema,
+        toolErrorSchema,
       ];
 
       schemas.forEach((schema) => {
@@ -615,6 +619,68 @@ describe('Zod Schemas — ticket.ts', () => {
         expect(typeof schema.parse).toBe('function');
         expect(typeof schema.safeParse).toBe('function');
       });
+    });
+  });
+
+  // =====================================================================
+  // toolSuccessSchema
+  // =====================================================================
+  describe('toolSuccessSchema', () => {
+    it('accepts success response with data', () => {
+      const result = toolSuccessSchema.parse({
+        success: true,
+        data: { id: 'issue-1', identifier: 'TRI-42' },
+      });
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ id: 'issue-1', identifier: 'TRI-42' });
+    });
+
+    it('accepts success response without data', () => {
+      const result = toolSuccessSchema.parse({ success: true });
+      expect(result.success).toBe(true);
+      expect(result.data).toBeUndefined();
+    });
+
+    it('rejects success: false', () => {
+      expect(() => toolSuccessSchema.parse({ success: false })).toThrow();
+    });
+
+    it('rejects missing success field', () => {
+      expect(() => toolSuccessSchema.parse({ data: {} })).toThrow();
+    });
+
+    it('rejects non-boolean success', () => {
+      expect(() => toolSuccessSchema.parse({ success: 'true' })).toThrow();
+    });
+  });
+
+  // =====================================================================
+  // toolErrorSchema
+  // =====================================================================
+  describe('toolErrorSchema', () => {
+    it('accepts error response with message', () => {
+      const result = toolErrorSchema.parse({
+        success: false,
+        error: 'LINEAR_API_KEY not configured',
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('LINEAR_API_KEY not configured');
+    });
+
+    it('rejects success: true', () => {
+      expect(() => toolErrorSchema.parse({ success: true, error: 'oops' })).toThrow();
+    });
+
+    it('rejects missing error field', () => {
+      expect(() => toolErrorSchema.parse({ success: false })).toThrow();
+    });
+
+    it('rejects non-string error', () => {
+      expect(() => toolErrorSchema.parse({ success: false, error: 123 })).toThrow();
+    });
+
+    it('rejects missing success field', () => {
+      expect(() => toolErrorSchema.parse({ error: 'oops' })).toThrow();
     });
   });
 });
