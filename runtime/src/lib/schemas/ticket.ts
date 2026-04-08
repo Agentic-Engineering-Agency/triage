@@ -1,14 +1,14 @@
 import { z } from 'zod';
 
 // Priority: 0 (No priority) through 4 (Low)
-export const prioritySchema = z.number().min(0).max(4);
+export const prioritySchema = z.number().int().min(0).max(4);
 
 // Create a new Linear ticket
 export const ticketCreateSchema = z.object({
   title: z.string().min(1),
   description: z.string(),
   teamId: z.string().uuid(),
-  priority: z.number().min(0).max(4),
+  priority: prioritySchema,
   assigneeId: z.string().uuid().optional(),
   labelIds: z.array(z.string().uuid()).optional(),
   stateId: z.string().uuid().optional(),
@@ -31,9 +31,9 @@ export const ticketResponseSchema = z.object({
 // Update an existing ticket
 export const ticketUpdateSchema = z.object({
   issueId: z.string().min(1),
-  title: z.string().optional(),
-  description: z.string().optional(),
-  priority: z.number().min(0).max(4).optional(),
+  title: z.string().max(500).optional(),
+  description: z.string().max(50000).optional(),
+  priority: prioritySchema.optional(),
   assigneeId: z.string().uuid().optional(),
   stateId: z.string().uuid().optional(),
   labelIds: z.array(z.string().uuid()).optional(),
@@ -77,10 +77,10 @@ export const issueDetailSchema = z.object({
 
 // Search query parameters
 export const issueSearchSchema = z.object({
-  query: z.string().optional(),
-  teamId: z.string().optional(),
+  query: z.string().min(1).max(1000).optional(),
+  teamId: z.string().uuid().optional(),
   status: z.string().optional(),
-  assigneeId: z.string().optional(),
+  assigneeId: z.string().uuid().optional(),
   labels: z.array(z.string()).optional(),
   priority: z.number().optional(),
   limit: z.number().min(1).max(50).default(10),
@@ -134,8 +134,8 @@ export const ticketNotificationSchema = z.object({
   to: z.string().email(),
   ticketTitle: z.string(),
   severity: z.enum(['Critical', 'High', 'Medium', 'Low']),
-  priority: z.number(),
-  summary: z.string(),
+  priority: prioritySchema,
+  summary: z.string().max(10000),
   linearUrl: z.string().url(),
   assigneeName: z.string(),
   linearIssueId: z.string(),
@@ -145,7 +145,7 @@ export const ticketNotificationSchema = z.object({
 export const resolutionNotificationSchema = z.object({
   to: z.union([z.string().email(), z.array(z.string().email())]),
   originalTitle: z.string(),
-  resolutionSummary: z.string(),
+  resolutionSummary: z.string().max(10000),
   prLink: z.string().url().optional(),
   linearUrl: z.string().url(),
   linearIssueId: z.string(),
@@ -162,4 +162,16 @@ export const emailResponseSchema = z.object({
   success: z.boolean(),
   emailId: z.string().optional(),
   error: z.string().optional(),
+});
+
+// Generic tool success response
+export const toolSuccessSchema = z.object({
+  success: z.literal(true),
+  data: z.record(z.unknown()).optional(),
+});
+
+// Generic tool error response
+export const toolErrorSchema = z.object({
+  success: z.literal(false),
+  error: z.string(),
 });

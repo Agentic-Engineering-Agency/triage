@@ -52,8 +52,8 @@ export const createLinearIssue = createTool({
         },
       };
     } catch (error: unknown) {
-      console.error('[Linear] API error:', error instanceof Error ? error.message : String(error));
-      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message : String(error)}` };
+      console.error('[Linear] API error:', error instanceof Error ? error.message.slice(0, 200) : 'Unknown error');
+      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message.slice(0, 200) : 'Unknown error'}` };
     }
   },
 });
@@ -88,8 +88,8 @@ export const updateLinearIssue = createTool({
         },
       };
     } catch (error: unknown) {
-      console.error('[Linear] API error:', error instanceof Error ? error.message : String(error));
-      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message : String(error)}` };
+      console.error('[Linear] API error:', error instanceof Error ? error.message.slice(0, 200) : 'Unknown error');
+      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message.slice(0, 200) : 'Unknown error'}` };
     }
   },
 });
@@ -118,18 +118,18 @@ export const getLinearIssue = createTool({
           identifier: issue.identifier,
           title: issue.title,
           description: issue.description,
-          state: state ? { id: state.id, name: state.name, type: (state as { id: string; name: string; type?: string }).type } : null,
+          state: state ? { id: state.id, name: state.name, type: ((state as Record<string, unknown>).type as string) ?? 'unknown' } : null,
           assignee: assignee ? { id: assignee.id, name: assignee.name, email: assignee.email } : null,
           labels,
           priority: issue.priority,
           url: issue.url,
-          createdAt: issue.createdAt,
-          updatedAt: issue.updatedAt,
+          createdAt: issue.createdAt instanceof Date ? issue.createdAt.toISOString() : String(issue.createdAt ?? ''),
+          updatedAt: issue.updatedAt instanceof Date ? issue.updatedAt.toISOString() : String(issue.updatedAt ?? ''),
         },
       };
     } catch (error: unknown) {
-      console.error('[Linear] API error:', error instanceof Error ? error.message : String(error));
-      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message : String(error)}` };
+      console.error('[Linear] API error:', error instanceof Error ? error.message.slice(0, 200) : 'Unknown error');
+      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message.slice(0, 200) : 'Unknown error'}` };
     }
   },
 });
@@ -179,8 +179,8 @@ export const searchLinearIssues = createTool({
         },
       };
     } catch (error: unknown) {
-      console.error('[Linear] API error:', error instanceof Error ? error.message : String(error));
-      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message : String(error)}` };
+      console.error('[Linear] API error:', error instanceof Error ? error.message.slice(0, 200) : 'Unknown error');
+      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message.slice(0, 200) : 'Unknown error'}` };
     }
   },
 });
@@ -219,8 +219,8 @@ export const getLinearTeamMembers = createTool({
         },
       };
     } catch (error: unknown) {
-      console.error('[Linear] API error:', error instanceof Error ? error.message : String(error));
-      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message : String(error)}` };
+      console.error('[Linear] API error:', error instanceof Error ? error.message.slice(0, 200) : 'Unknown error');
+      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message.slice(0, 200) : 'Unknown error'}` };
     }
   },
 });

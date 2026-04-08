@@ -268,6 +268,62 @@ describe('Resend Tools', () => {
 
       consoleSpy.mockRestore();
     });
+
+    it('S9: returns success with skip when RESEND_API_KEY is undefined (dynamic re-import)', async () => {
+      // Reset modules to get a fresh import with mocked config
+      vi.resetModules();
+
+      // Use vi.doMock to mock the config module to return undefined for RESEND_API_KEY
+      vi.doMock('../../lib/config', () => ({
+        config: {
+          LINEAR_API_KEY: undefined,
+          RESEND_API_KEY: undefined,
+          RESEND_FROM_EMAIL: 'triage@agenticengineering.lat',
+        },
+      }));
+      // Mock resend so it doesn't create a real client
+      vi.doMock('resend', () => ({
+        Resend: vi.fn().mockImplementation(() => ({
+          emails: { send: vi.fn() },
+        })),
+      }));
+      // Re-mock @mastra/core/tools so createTool is available
+      vi.doMock('@mastra/core/tools', async () => {
+        return await vi.importActual('@mastra/core/tools');
+      });
+
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      // Dynamic import to pick up the mocked config (fresh module)
+      const resendModule = await import('./resend');
+
+      const result = await resendModule.sendTicketNotification.execute({
+        to: 'eng@example.com',
+        ticketTitle: 'API Crash',
+        severity: 'Critical',
+        priority: 1,
+        summary: 'Crash details',
+        linearUrl: 'https://linear.app/agentic/issue/TRI-42',
+        assigneeName: 'Koki',
+        linearIssueId: 'test-skip-id',
+      });
+
+      expect(result).toBeDefined();
+      expect((result as Record<string, unknown>).success).toBe(true);
+
+      consoleSpy.mockRestore();
+
+      // Restore the module registry for subsequent tests
+      vi.resetModules();
+      // Re-register the resend mock for subsequent tests
+      vi.doMock('resend', () => ({
+        Resend: vi.fn().mockImplementation(() => ({
+          emails: {
+            send: mockEmailsSend,
+          },
+        })),
+      }));
+    });
   });
 
   // =====================================================================
