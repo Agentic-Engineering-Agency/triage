@@ -25,6 +25,8 @@ import * as yaml from 'yaml';
 
 const HELM_CHART_DIR = path.resolve(__dirname, '../../k8s/helm');
 const TEMPLATES_DIR = path.join(HELM_CHART_DIR, 'templates');
+const runManualInfraTests = process.env.RUN_MANUAL_INFRA_TESTS === '1';
+const networkedInfraIt = runManualInfraTests ? it : it.skip;
 
 // Ensure Helm dependencies are built before any test calls helm template.
 // Without this, tests that call helmTemplate() before the dependency-build
@@ -51,10 +53,20 @@ function readYaml(filePath: string): any {
   return yaml.parse(content);
 }
 
+// Test-only secret values so `helm template` succeeds with `required()` guards.
+const TEST_SECRETS = [
+  'betterAuthSecret', 'openrouterApiKey', 'linearApiKey', 'resendApiKey',
+  'encryptionKey', 'salt', 'nextauthSecret', 'langfuseSecretKey',
+  'clickhousePassword', 'redisAuth', 'minioRootPassword',
+  'langfuseS3EventUploadSecretAccessKey', 'langfuseS3MediaUploadSecretAccessKey',
+  'langfuseS3BatchExportSecretAccessKey', 'postgresPassword',
+  'langfuseInitUserPassword', 'langfuseInitProjectSecretKey',
+].map((k) => `--set secrets.${k}=test-value`).join(' ');
+
 function helmTemplate(valueFile?: string): string {
   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, valueFile)}` : '';
   return execSync(
-    `helm template triage ${HELM_CHART_DIR} ${valuesFlag}`,
+    `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRETS}`,
     { encoding: 'utf-8' }
   );
 }
@@ -206,7 +218,7 @@ describe('REQ-K02: Helm Chart Dependencies', () => {
     }
   });
 
-  it('T-K02-dep-edge: helm dependency build downloads all dependency charts', { timeout: 60000 }, () => {
+  networkedInfraIt('T-K02-dep-edge: helm dependency build downloads all dependency charts', { timeout: 60000 }, () => {
     // GIVEN the chart directory
     // WHEN helm dependency build k8s/helm/ is run
     // THEN it SHALL download all dependency charts without errors

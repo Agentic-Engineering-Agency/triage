@@ -1,5 +1,7 @@
 # SCALING — From Docker Compose to Production
 
+> Assumption: the current branch can run stub frontend/runtime containers when the full app code is not present yet. The scaling plan below describes the intended production topology once the real frontend and workflow runtime replace those stubs.
+
 ## Current Architecture: Docker Compose
 
 All 9 services run as containers orchestrated by Docker Compose.
