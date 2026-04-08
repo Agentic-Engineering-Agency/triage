@@ -1,12 +1,38 @@
-import { createRootRoute, Link, Outlet } from "@tanstack/react-router"
+import { createRootRoute, Link, Outlet, useLocation } from "@tanstack/react-router"
 import { TanStackRouterDevtools } from "@tanstack/router-devtools"
 import { MessageSquare, LayoutGrid, Settings } from "lucide-react"
+import { useAuth } from "@/hooks/use-auth"
 
 export const Route = createRootRoute({
   component: RootLayout,
 })
 
 function RootLayout() {
+  const { /* isAuthenticated, isLoading */ } = useAuth()
+  const location = useLocation()
+
+  // Auth pages bypass the guard
+  const isAuthPage =
+    location.pathname === "/login" || location.pathname === "/register"
+
+  // TODO: Uncomment when Better Auth is connected (TRI-4 + TRI-21)
+  // if (isLoading) {
+  //   return (
+  //     <div className="flex h-screen items-center justify-center bg-background">
+  //       <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+  //     </div>
+  //   )
+  // }
+  //
+  // if (!isAuthenticated && !isAuthPage) {
+  //   return <Navigate to="/login" />
+  // }
+
+  // Auth pages render without sidebar
+  if (isAuthPage) {
+    return <Outlet />
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       {/* Sidebar */}
