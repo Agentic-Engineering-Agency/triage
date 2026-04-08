@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-libsql
+  labels:
+    app: libsql
+spec:
+  serviceName: {{ .Release.Name }}-libsql
+  replicas: {{ .Values.libsql.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: libsql
+  template:
+    metadata:
+      labels:
+        app: libsql
+    spec:
+      containers:
+        - name: libsql
+          image: "{{ .Values.libsql.image.repository }}:{{ .Values.libsql.image.tag | default "latest" }}"
+          ports:
+            - containerPort: {{ .Values.libsql.port | default 8080 }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.libsql.port | default 8080 }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.libsql.port | default 8080 }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: {{ .Values.libsql.resources.requests.cpu | quote }}
+              memory: {{ .Values.libsql.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.libsql.resources.limits.cpu | quote }}
+              memory: {{ .Values.libsql.resources.limits.memory | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/sqld
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi

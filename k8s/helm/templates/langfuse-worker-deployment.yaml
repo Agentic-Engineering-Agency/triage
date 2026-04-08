@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-langfuse-worker
+  labels:
+    app: langfuse-worker
+spec:
+  replicas: {{ .Values.langfuseWorker.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: langfuse-worker
+  template:
+    metadata:
+      labels:
+        app: langfuse-worker
+    spec:
+      containers:
+        - name: langfuse-worker
+          image: "{{ .Values.langfuseWorker.image.repository }}:{{ .Values.langfuseWorker.image.tag | default "3" }}"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3030
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3030
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: {{ .Values.langfuseWorker.resources.requests.cpu | quote }}
+              memory: {{ .Values.langfuseWorker.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.langfuseWorker.resources.limits.cpu | quote }}
+              memory: {{ .Values.langfuseWorker.resources.limits.memory | quote }}

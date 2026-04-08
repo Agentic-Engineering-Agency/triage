@@ -1,0 +1,126 @@
+frontend:
+  replicaCount: 1
+  port: 3001
+  image:
+    repository: triage-frontend
+    tag: latest
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 5
+
+runtime:
+  replicaCount: 1
+  port: 4111
+  image:
+    repository: triage-runtime
+    tag: latest
+  resources:
+    requests:
+      cpu: "1"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 5
+
+langfuseWeb:
+  replicaCount: 1
+  port: 3000
+  image:
+    repository: langfuse/langfuse
+    tag: "3.22.0"
+  resources:
+    requests:
+      cpu: "2"
+      memory: "4Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+langfuseWorker:
+  replicaCount: 1
+  image:
+    repository: langfuse/langfuse-worker
+    tag: "3.22.0"
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+libsql:
+  replicaCount: 1
+  port: 8080
+  image:
+    repository: ghcr.io/tursodatabase/libsql-server
+    tag: v0.24.32
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: triage.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service: frontend
+        - path: /api
+          pathType: Prefix
+          service: runtime
+        - path: /langfuse
+          pathType: Prefix
+          service: langfuse-web
+
+# Bitnami subchart overrides
+postgresql:
+  enabled: true
+clickhouse:
+  enabled: true
+redis:
+  enabled: true
+minio:
+  enabled: true
+
+# Secret values — override in values-prod.yaml or via --set
+secrets:
+  # App secrets
+  betterAuthSecret: ""      # BETTER_AUTH_SECRET
+  openrouterApiKey: ""      # OPENROUTER_API_KEY
+  linearApiKey: ""          # LINEAR_API_KEY
+  resendApiKey: ""          # RESEND_API_KEY
+  encryptionKey: ""         # ENCRYPTION_KEY
+  salt: ""                  # SALT
+  # Langfuse secrets
+  nextauthSecret: ""        # NEXTAUTH_SECRET
+  langfuseSecretKey: ""     # LANGFUSE_SECRET_KEY
+  # Infrastructure secrets
+  clickhousePassword: ""    # CLICKHOUSE_PASSWORD
+  redisAuth: ""             # REDIS_AUTH
+  minioRootPassword: ""     # MINIO_ROOT_PASSWORD
+  langfuseS3EventUploadSecretAccessKey: ""   # LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
+  langfuseS3MediaUploadSecretAccessKey: ""   # LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY
+  langfuseS3BatchExportSecretAccessKey: ""   # LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY
+  postgresPassword: ""      # POSTGRES_PASSWORD
+  langfuseInitUserPassword: ""               # LANGFUSE_INIT_USER_PASSWORD
+  langfuseInitProjectSecretKey: ""           # LANGFUSE_INIT_PROJECT_SECRET_KEY

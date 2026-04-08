@@ -1,0 +1,25 @@
+name: CI
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: latest
+      - name: Add Helm repos and build dependencies
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build k8s/helm
+      - run: npm ci
+      - run: npm test

@@ -1,0 +1,18 @@
+.env
+.env.*
+!.env.example
+node_modules
+.git
+.mastra
+k8s
+tests
+docs
+specs
+*.md
+!README.md
+_bmad-output/
+HACKATHON_BRAINSTORM_OUTPUT/
+docker-compose*.yml
+
+# Caddyfile is needed by frontend Dockerfile - NOT ignored
+!Caddyfile
