@@ -5,6 +5,7 @@ import { useRef, useState, useCallback, useEffect } from "react"
 import { Send, Paperclip, X, ZoomIn, FileText, FileCode, File as FileIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { toolComponents } from "@/components/tool-registry"
+import { getDraft, saveDraft, clearDraft } from "@/lib/chat-draft"
 
 export const Route = createFileRoute("/chat")({
   component: ChatPage,
@@ -49,10 +50,21 @@ function ChatPage() {
     transport,
   })
 
-  const [input, setInput] = useState("")
-  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const initialDraft = getDraft()
+  const [input, setInput] = useState(initialDraft.input)
+  const [attachments, setAttachments] = useState<Attachment[]>(initialDraft.attachments)
   const [fileError, setFileError] = useState<string | null>(null)
-  const [expandedImage, setExpandedImage] = useState<string | null>(null)
+  const [expandedFile, setExpandedFile] = useState<{
+    type: "image" | "text"
+    url?: string
+    content?: string
+    name: string
+  } | null>(null)
+
+  // Persist draft when input or attachments change
+  useEffect(() => {
+    saveDraft(input, attachments)
+  }, [input, attachments])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -149,6 +161,31 @@ function ChatPage() {
     [addFile],
   )
 
+  // Expand file preview
+  const expandFile = useCallback((attachment: Attachment) => {
+    if (attachment.preview) {
+      setExpandedFile({ type: "image", url: attachment.preview, name: attachment.file.name })
+      return
+    }
+    // Text-based files: read content
+    const ext = attachment.file.name.split(".").pop()?.toLowerCase()
+    const textExts = ["md", "txt", "log", "json", "ts", "tsx", "js", "csv"]
+    if (attachment.pastedText) {
+      setExpandedFile({ type: "text", content: attachment.pastedText, name: "Pasted text" })
+    } else if (textExts.includes(ext || "")) {
+      attachment.file.text().then((content) => {
+        setExpandedFile({ type: "text", content, name: attachment.file.name })
+      })
+    } else {
+      // PDF, docx — can't preview inline, just show info
+      setExpandedFile({
+        type: "text",
+        content: `File: ${attachment.file.name}\nType: ${attachment.file.type || ext}\nSize: ${(attachment.file.size / 1024).toFixed(1)} KB\n\nPreview not available for this file type.`,
+        name: attachment.file.name,
+      })
+    }
+  }, [])
+
   // Remove attachment
   const removeAttachment = useCallback((index: number) => {
     setAttachments((prev) => {
@@ -185,6 +222,7 @@ function ChatPage() {
 
       setInput("")
       setAttachments([])
+      clearDraft()
     },
     [input, attachments, isLoading, sendMessage],
   )
@@ -235,7 +273,7 @@ function ChatPage() {
                 <div
                   className={
                     message.role === "user"
-                      ? "max-w-[80%] rounded-xl bg-primary/20 px-4 py-2.5 text-sm"
+                      ? "max-w-[80%] rounded-xl bg-primary/10 px-4 py-2.5 text-sm"
                       : "max-w-[80%] rounded-xl bg-card px-4 py-2.5 text-sm shadow-neu-sm"
                   }
                 >
@@ -305,7 +343,7 @@ function ChatPage() {
             {/* Error state */}
             {error && (
               <div className="flex justify-start">
-                <div className="max-w-[80%] rounded-xl border border-coral bg-card px-4 py-2.5 text-sm shadow-neu-sm">
+                <div className="max-w-[80%] rounded-xl border border-destructive bg-card px-4 py-2.5 text-sm shadow-neu-sm">
                   <p className="text-destructive mb-2">
                     {error.message || "Something went wrong"}
                   </p>
@@ -325,24 +363,49 @@ function ChatPage() {
         )}
       </div>
 
-      {/* Image lightbox */}
-      {expandedImage && (
+      {/* File preview lightbox */}
+      {expandedFile && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-zoom-out"
-          onClick={() => setExpandedImage(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          onClick={() => setExpandedFile(null)}
         >
           <button
-            onClick={() => setExpandedImage(null)}
-            className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+            onClick={() => setExpandedFile(null)}
+            className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors z-10"
           >
             <X className="h-5 w-5" />
           </button>
-          <img
-            src={expandedImage}
-            alt="Expanded preview"
-            className="max-h-[85vh] max-w-[90vw] rounded-xl object-contain shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
+
+          {expandedFile.type === "image" && expandedFile.url && (
+            <img
+              src={expandedFile.url}
+              alt={expandedFile.name}
+              className="max-h-[85vh] max-w-[90vw] rounded-xl object-contain shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+          )}
+
+          {expandedFile.type === "text" && expandedFile.content && (
+            <div
+              className="max-h-[85vh] max-w-[90vw] w-full sm:w-[700px] rounded-xl bg-card shadow-2xl flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                <div className="flex items-center gap-2">
+                  <AttachmentIcon fileName={expandedFile.name} />
+                  <span className="text-sm font-medium text-foreground">
+                    {expandedFile.name}
+                  </span>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {expandedFile.content.split("\n").length} lines
+                </span>
+              </div>
+              <pre className="flex-1 overflow-auto p-4 text-xs font-mono text-foreground leading-relaxed whitespace-pre-wrap">
+                {expandedFile.content}
+              </pre>
+            </div>
+          )}
         </div>
       )}
 
@@ -366,7 +429,7 @@ function ChatPage() {
                   {attachment.preview ? (
                     <button
                       type="button"
-                      onClick={() => setExpandedImage(attachment.preview!)}
+                      onClick={() => expandFile(attachment)}
                       className="relative cursor-zoom-in rounded-xl bg-muted/80 border border-border overflow-hidden h-14 w-14"
                     >
                       <img
@@ -379,8 +442,12 @@ function ChatPage() {
                       </span>
                     </button>
                   ) : attachment.pastedText ? (
-                    /* Pasted text chip — like Claude/ChatGPT style */
-                    <div className="flex items-center gap-2.5 rounded-xl bg-muted/80 border border-border px-3 h-14 max-w-56">
+                    /* Pasted text chip — clickable to expand */
+                    <button
+                      type="button"
+                      onClick={() => expandFile(attachment)}
+                      className="flex items-center gap-2.5 rounded-xl bg-muted/80 border border-border px-3 h-14 max-w-56 cursor-pointer hover:bg-muted transition-colors text-left"
+                    >
                       <FileText className="h-5 w-5 shrink-0 text-secondary" />
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-medium text-foreground truncate">
@@ -390,10 +457,14 @@ function ChatPage() {
                           {attachment.pastedText.split("\n").length} lines · {(attachment.file.size / 1024).toFixed(1)}KB
                         </p>
                       </div>
-                    </div>
+                    </button>
                   ) : (
-                    /* Document file chip */
-                    <div className="flex items-center gap-2.5 rounded-xl bg-muted/80 border border-border px-3 h-14 max-w-56">
+                    /* Document file chip — clickable to expand */
+                    <button
+                      type="button"
+                      onClick={() => expandFile(attachment)}
+                      className="flex items-center gap-2.5 rounded-xl bg-muted/80 border border-border px-3 h-14 max-w-56 cursor-pointer hover:bg-muted transition-colors text-left"
+                    >
                       <AttachmentIcon fileName={attachment.file.name} />
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-medium text-foreground truncate">
@@ -403,7 +474,7 @@ function ChatPage() {
                           {(attachment.file.size / 1024).toFixed(1)}KB
                         </p>
                       </div>
-                    </div>
+                    </button>
                   )}
                   <button
                     onClick={() => removeAttachment(i)}
