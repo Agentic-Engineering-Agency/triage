@@ -1,10 +1,124 @@
-# SpecSafe — Two-Phase Workflow Rules
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+**Triage** is an AI-powered SRE incident triage agent for e-commerce (Solidus/Rails). Users describe incidents in chat (text + images), the agent queries a codebase wiki (llm-wiki RAG), identifies root cause with file references, creates a Linear ticket, notifies via email, and verifies resolution when the fix ships. Built for AgentX Hackathon 2026 (4 people, 48 hours).
+
+## Build & Development Commands
+
+```bash
+# Start all 9 containers (dev mode — auto-loads docker-compose.override.yml)
+docker compose up --build
+
+# Production mode (for demo recording — skips override)
+docker compose -f docker-compose.yml up --build
+
+# Run tests
+pnpm test
+pnpm test --coverage
+
+# Database inspection
+cd runtime && npx drizzle-kit studio    # connects via localhost:8080
+
+# Schema changes
+cd runtime && npx drizzle-kit push      # direct apply, no migration files
+
+# View logs
+docker compose logs -f runtime
+docker compose logs -f frontend
+```
+
+## Architecture
+
+Two custom containers + 7 infrastructure containers behind a Caddy reverse proxy:
+
+- **Frontend** (Caddy) — TanStack Router SPA + shadcn/ui. Caddy serves static files and reverse-proxies `/api/*` and `/auth/*` to runtime. Single-origin eliminates CORS.
+- **Runtime** (Mastra on Hono) — agents, workflows, tools, Better Auth, webhooks. Mastra IS the HTTP server — no Express. Custom routes (auth, webhooks) register on Mastra.
+- **LibSQL** (sqld) — storage + native F32_BLOB(1536) vector search via DiskANN. Serves 4 roles: workflow state, auth, wiki vectors, fallback tickets.
+- **Langfuse stack** (6 containers) — observability with LangfuseExporter in Mastra.
+
+**Docker networks:** `app` (frontend, runtime, libsql) + `langfuse` (observability). Runtime joins both.
+
+**Agent flow:** Frontend `useChat` → Orchestrator agent → `triageWorkflow` (as Mastra tool) → Triage Agent (within workflow step) → dedup → ticket card (two-phase: preview → user approves → confirmed) → Linear ticket → email → suspend → webhook resume → Resolution Reviewer → notify reporter.
+
+**Full architecture:** `_bmad-output/planning-artifacts/architecture.md`
+
+## Key Conventions
+
+### Naming
+
+| Context | Convention | Example |
+|---------|-----------|---------|
+| DB tables/columns | snake_case, plural | `wiki_documents`, `project_id` |
+| TypeScript vars/functions | camelCase | `getTriageResult` |
+| Types/interfaces | PascalCase | `TriageOutput` |
+| Zod schemas | camelCase + Schema | `triageOutputSchema` |
+| Constants | UPPER_SNAKE_CASE | `MAX_FILE_SIZE` |
+| All file names | kebab-case | `triage-agent.ts`, `ticket-card.tsx` |
+| Env vars | SERVICE_PURPOSE | `OPENROUTER_API_KEY` |
+| Mastra exports | named camelCase | `export const triageAgent = new Agent(...)` |
+
+### Patterns
+
+- **Zod schemas split by domain** in `runtime/src/lib/schemas/{triage,ticket,wiki}.ts` — never duplicate schemas inline
+- **Tool-level error boundaries** — each Mastra tool wraps in try/catch, returns `{ success: false, error: "..." }`. Internal code can throw. One catch per tool, not per DB query.
+- **API response format** (non-streaming): `{ success: true, data: T }` or `{ success: false, error: { code, message } }`
+- **Barrel files** ONLY in `src/mastra/{agents,tools,workflows}/index.ts` — required for Mastra registration. Nowhere else.
+- **Co-located tests** — `file.test.ts` next to `file.ts`. Prioritize schema validation and tool error path tests.
+- **One file per concern** — all Linear tools in `linear.ts`, not split per function.
+- **Dates:** ISO 8601 strings in APIs. Frontend formats with `Intl.DateTimeFormat`.
+- **Nulls:** `null` for absent values in APIs, never `undefined`.
+
+### Anti-Patterns
+
+- No Redux/Zustand — `useChat` + TanStack Query is sufficient
+- No Express — Mastra is the HTTP server (Hono). Use Hono if external server needed.
+- No Helmet.js — Caddy handles all security headers
+- No `utils/` or `helpers/` — use `lib/` with descriptive filenames
+- No `index.ts` barrel files except in Mastra subdirectories
+- No `any` type — all data boundaries must have Zod schemas
+- No wrapper abstractions around Mastra, AI SDK, or Better Auth
+
+### Graceful Degradation
+
+All external services have fallback modes. Failures never block triage:
+- Linear unavailable → tickets stored in local LibSQL `local_tickets` table
+- Resend down → email skipped, logged
+- OpenRouter down → fallback model routing
+
+### Security Processor Pipeline Order
+
+1. Prompt injection detector (block, threshold 0.7)
+2. PII redactor (redact emails, API keys)
+3. System prompt scrubber (filter outputs)
+4. DOMPurify (frontend HTML sanitization)
+5. Caddy security headers (HSTS, X-Frame-Options, CSP, etc.)
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `_bmad-output/planning-artifacts/architecture.md` | Complete architecture decisions, patterns, structure |
+| `_bmad-output/planning-artifacts/prd.md` | 52 FRs, 37 NFRs, 5 user journeys |
+| `.env.example` | Canonical env var reference — add new vars here immediately |
+| `docker-compose.yml` | 9 containers, 2 networks, named volume |
+| `docker-compose.override.yml` | Dev mode: Vite HMR + tsx --watch |
+| `Caddyfile` | Reverse proxy, security headers, SPA routing |
+| `PROJECT_STATE.md` | SpecSafe spec status tracker |
+
+## Team & Assignments
+
+Fernando (infra/platform), Lalo (workflows/agents), Koki (runtime/integrations), Chenko (frontend). Linear team: `triage-hackathon`.
+
+---
+
+## SpecSafe — Two-Phase Workflow Rules
 
 SpecSafe is a two-phase software engineering framework. Phase 1 (Planning) reduces ambiguity before implementation. Phase 2 (Development) enforces strict test-driven execution through small spec slices. No stage may be skipped. Each stage has a dedicated skill and persona.
 
-## Phase 1: Planning
-
-Planning precedes development. Each step produces an artifact that informs the next.
+### Phase 1: Planning
 
 | Step | Skill | What Happens |
 |------|-------|--------------|
@@ -18,7 +132,7 @@ Planning precedes development. Each step produces an artifact that informs the n
 
 Canonical order: brainstorm → principles → brief → PRD → UX → architecture → readiness. UX always precedes architecture.
 
-## Phase 2: Development Stages
+### Phase 2: Development Stages
 
 | Stage | Skill | Persona | What Happens |
 |-------|-------|---------|--------------| 
@@ -28,38 +142,7 @@ Canonical order: brainstorm → principles → brief → PRD → UX → architec
 | QA | `specsafe-verify`, `specsafe-qa` | Warden (Lyra) | Validate tests pass, check coverage, generate QA report |
 | COMPLETE | `specsafe-complete` | Herald (Cass) | Human approval gate, move to completed |
 
-## Key Files
-
-- **`PROJECT_STATE.md`** — Single source of truth for all spec status and metrics. Read this first.
-- **`specs/active/`** — Active spec markdown files
-- **`specs/completed/`** — Completed specs with QA reports
-- **`specs/archive/`** — Archived/obsolete specs
-- **`specsafe.config.json`** — Project configuration (test framework, language, tools)
-
-## Skills Reference
-
-| Skill | Description |
-|-------|-------------|
-| `specsafe-init` | Initialize a new SpecSafe project with directory structure and config |
-| `specsafe-explore` | Pre-spec research, spikes, and feasibility assessment |
-| `specsafe-brief` | Create a concise product brief |
-| `specsafe-prd` | Expand brief into full PRD with user journeys and requirements |
-| `specsafe-ux` | UX design foundations — tokens, components, accessibility, flows |
-| `specsafe-architecture` | System architecture — components, data model, ADRs |
-| `specsafe-new <name>` | Create a new spec from template with unique ID |
-| `specsafe-spec <id>` | Refine an existing spec with requirements and scenarios |
-| `specsafe-test <id>` | Generate test files from spec scenarios (SPEC → TEST) |
-| `specsafe-code <id>` | Implement code via TDD to pass tests (TEST → CODE) |
-| `specsafe-verify <id>` | Run tests and validate against spec (CODE → QA) |
-| `specsafe-qa <id>` | Generate full QA report with GO/NO-GO recommendation |
-| `specsafe-complete <id>` | Complete spec with human approval (QA → COMPLETE) |
-| `specsafe-status` | Show project dashboard with all specs and metrics |
-| `specsafe-archive <id>` | Archive an obsolete spec with reason |
-| `specsafe-doctor` | Validate project health and diagnose issues |
-| `specsafe-context` | Gather and present project context for AI agents |
-| `specsafe-skill-creator` | Create new SpecSafe skills with proper structure |
-
-## Project Constraints
+### Project Constraints
 
 1. **Always read `PROJECT_STATE.md` first** — before any skill invocation, check current state
 2. **Never modify `PROJECT_STATE.md` directly** — only update it through skill workflows
