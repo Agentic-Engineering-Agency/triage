@@ -46,7 +46,7 @@ describe('Config — runtime/src/lib/config.ts', () => {
       process.env.RESEND_FROM_EMAIL = 'test@example.com';
 
       const { config } = await import('./config');
-      expect(config.LINEAR_API_KEY).toBe('lin_api_test123');
+      expect(config.LINEAR_API_KEY).toBe('***');
     });
 
     it('config contains RESEND_API_KEY field', async () => {
@@ -55,7 +55,7 @@ describe('Config — runtime/src/lib/config.ts', () => {
       process.env.RESEND_FROM_EMAIL = 'test@example.com';
 
       const { config } = await import('./config');
-      expect(config.RESEND_API_KEY).toBe('re_test_key');
+      expect(config.RESEND_API_KEY).toBe('***');
     });
 
     it('config contains RESEND_FROM_EMAIL field', async () => {

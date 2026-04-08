@@ -651,7 +651,7 @@ describe('T-D14: Integration test — docker compose up', () => {
     expect(healthyCount).toBeGreaterThanOrEqual(5);
   }, 120_000);
 
-  it('[MANUAL/CI] docker compose config should validate without errors', () => {
+  liveInfraIt('[MANUAL/CI] docker compose config should validate without errors', () => {
     // GIVEN docker-compose.yml exists
     // WHEN `docker compose -f docker-compose.yml config` is run
     // THEN it should exit with code 0 (valid config)
@@ -663,7 +663,7 @@ describe('T-D14: Integration test — docker compose up', () => {
     expect(result).toContain('services');
   });
 
-  it('[MANUAL/CI] error case: missing .env variable causes clear startup error', () => {
+  liveInfraIt('[MANUAL/CI] error case: missing .env variable causes clear startup error', () => {
     // GIVEN docker-compose.yml references .env variables
     // WHEN we validate config with a non-existent env file
     // THEN it should produce a warning or error about missing variables
