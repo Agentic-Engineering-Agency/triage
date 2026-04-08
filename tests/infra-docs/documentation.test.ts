@@ -2,7 +2,6 @@
  * SPEC-20260407-001 — Documentation Template Tests (REQ-T01 through REQ-T07)
  * Author: Reva (Forge) — SpecSafe TEST phase
  * Framework: vitest
- * All tests are skipped (it.skip) — implementation pending CODE phase.
  */
 
 import { describe, it, expect } from 'vitest';

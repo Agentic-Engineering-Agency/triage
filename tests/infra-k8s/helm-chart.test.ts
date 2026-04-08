@@ -4,7 +4,6 @@
  * Author: Reva (Test Engineer)
  * Generated: 2026-04-07
  *
- * ALL tests are SKIPPED (it.skip) — implementation does not yet exist.
  * Tests cover: T-K01 (lint), T-K02 (template render), T-K03 (HPA),
  *              T-K04 (resource limits), T-K05 (LibSQL StatefulSet),
  *              plus REQ-K02 (dependencies) and REQ-K06 (ingress).
@@ -16,6 +15,8 @@
  *   - content assertions on rendered YAML
  */
 
+// WARNING: These tests may produce side effects (e.g., writes to k8s/helm/charts/).
+// They should ideally run in isolation or in a clean working copy.
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
 import * as fs from 'fs';

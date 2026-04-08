@@ -7,3 +7,4 @@ dist/
 *.tgz
 k8s/helm/charts/
 .playwright-mcp/
+frontend/.vite/

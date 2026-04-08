@@ -13,4 +13,6 @@ specs
 _bmad-output/
 HACKATHON_BRAINSTORM_OUTPUT/
 docker-compose*.yml
-Caddyfile
+
+# Caddyfile is needed by frontend Dockerfile - NOT ignored
+!Caddyfile

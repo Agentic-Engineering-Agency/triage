@@ -272,9 +272,17 @@ describe('REQ-A04: Caddyfile Environment Variable Switching', () => {
     // WHEN its content is inspected
     // THEN it contains root, try_files, and file_server directives
     const caddy = readCaddyfile();
-    // Extract the static-frontend snippet block (heuristic: from snippet def to next snippet or closing brace)
-    const staticMatch = caddy.match(/\(static-frontend\)[\s\S]*?\{([\s\S]*?)\}/);
-    const snippet = staticMatch ? staticMatch[1] : '';
+    // Extract the full static-frontend snippet block (greedy enough to capture nested blocks)
+    const staticStart = caddy.indexOf('(static-frontend)');
+    const braceStart = caddy.indexOf('{', staticStart);
+    let depth = 0;
+    let braceEnd = braceStart;
+    for (let i = braceStart; i < caddy.length; i++) {
+      if (caddy[i] === '{') depth++;
+      if (caddy[i] === '}') depth--;
+      if (depth === 0) { braceEnd = i; break; }
+    }
+    const snippet = caddy.substring(braceStart + 1, braceEnd);
     expect(snippet).toMatch(/root/);
     expect(snippet).toMatch(/try_files/);
     expect(snippet).toMatch(/file_server/);

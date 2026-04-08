@@ -3,9 +3,6 @@
  * Spec: SPEC-20260407-001
  * Requirements: REQ-D06, REQ-D07, REQ-D14
  * Author: Reva (Test Engineer)
- *
- * All tests are skipped (it.skip) per SpecSafe TEST stage convention.
- * Tests will be unskipped during CODE stage as implementation proceeds.
  */
 
 import { describe, it, expect } from 'vitest';

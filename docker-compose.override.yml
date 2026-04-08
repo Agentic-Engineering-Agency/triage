@@ -16,6 +16,10 @@ services:
       FRONTEND_MODE: dev
 
   runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+      target: builder
     command: npx tsx watch src/index.ts
     volumes:
       - ./runtime/src:/app/src

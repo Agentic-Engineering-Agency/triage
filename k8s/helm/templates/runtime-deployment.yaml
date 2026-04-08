@@ -18,7 +18,7 @@ spec:
         - name: runtime
           image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag | default "latest" }}"
           ports:
-            - containerPort: 8080
+            - containerPort: 4111
           resources:
             requests:
               cpu: {{ .Values.runtime.resources.requests.cpu | quote }}

@@ -1,11 +1,16 @@
 # Snippets for frontend mode switching
-# config.json is served before SPA fallback in the server block
+# In static mode, config.json is served from /srv before SPA fallback
+# In dev mode, config.json is proxied to Vite along with all other frontend requests
 
 (dev-frontend) {
     reverse_proxy vite:5173
 }
 
 (static-frontend) {
+    handle /config.json {
+        root * /srv
+        file_server
+    }
     root * /srv
     file_server
     try_files {path} /index.html
@@ -22,12 +27,6 @@
         X-Frame-Options "DENY"
         Referrer-Policy "strict-origin-when-cross-origin"
         Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'"
-    }
-
-    # Serve config.json before SPA fallback
-    handle /config.json {
-        root * /srv
-        file_server
     }
 
     # API reverse proxy (with SSE support)
