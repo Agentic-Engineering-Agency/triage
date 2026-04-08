@@ -5,7 +5,7 @@ const fromEmail = process.env.RESEND_FROM_EMAIL;
 if (fromEmail !== undefined && fromEmail !== '') {
   const result = z.string().email().safeParse(fromEmail);
   if (!result.success) {
-    console.warn(`[Config] Invalid RESEND_FROM_EMAIL: "${fromEmail}" — using default`);
+    console.warn(`[Config] Invalid RESEND_FROM_EMAIL value provided — using default`);
   }
 }
 

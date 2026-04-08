@@ -53,10 +53,20 @@ function readYaml(filePath: string): any {
   return yaml.parse(content);
 }
 
+// Test-only secret values so `helm template` succeeds with `required()` guards.
+const TEST_SECRETS = [
+  'betterAuthSecret', 'openrouterApiKey', 'linearApiKey', 'resendApiKey',
+  'encryptionKey', 'salt', 'nextauthSecret', 'langfuseSecretKey',
+  'clickhousePassword', 'redisAuth', 'minioRootPassword',
+  'langfuseS3EventUploadSecretAccessKey', 'langfuseS3MediaUploadSecretAccessKey',
+  'langfuseS3BatchExportSecretAccessKey', 'postgresPassword',
+  'langfuseInitUserPassword', 'langfuseInitProjectSecretKey',
+].map((k) => `--set secrets.${k}=test-value`).join(' ');
+
 function helmTemplate(valueFile?: string): string {
   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, valueFile)}` : '';
   return execSync(
-    `helm template triage ${HELM_CHART_DIR} ${valuesFlag}`,
+    `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRETS}`,
     { encoding: 'utf-8' }
   );
 }

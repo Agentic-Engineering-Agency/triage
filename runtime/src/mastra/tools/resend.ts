@@ -15,6 +15,9 @@ function safeHref(url: string): string {
   return '#';
 }
 
+// PII masking helper – prevents logging raw email addresses
+const maskEmail = (e: string) => e.replace(/^(.)(.*)(@.*)$/, '$1***$3');
+
 // Module-level singleton (REQ-6)
 // Only instantiate if API key is configured (M5)
 const resendClient = config.RESEND_API_KEY ? new Resend(config.RESEND_API_KEY) : null;
@@ -29,7 +32,7 @@ export const sendTicketNotification = createTool({
   execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
     const ctx = (input?.context ?? input) as Record<string, unknown>;
     if (!resendClient) {
-      console.log(`[Resend] Skipping ticket notification to ${ctx.to}: "${ctx.ticketTitle}" (RESEND_API_KEY not configured)`);
+      console.log(`[Resend] Skipping ticket notification to ${maskEmail(ctx.to as string)}: "${ctx.ticketTitle}" (RESEND_API_KEY not configured)`);
       return { success: true };
     }
     try {
@@ -50,8 +53,8 @@ export const sendTicketNotification = createTool({
 
       return { success: true, emailId: data?.id };
     } catch (error: unknown) {
-      console.error('[Resend] API error:', error instanceof Error ? error.message : String(error));
-      return { success: false, error: `Resend error: ${error instanceof Error ? error.message : String(error)}` };
+      console.error('[Resend] API error:', error instanceof Error ? error.message.slice(0, 200) : 'Unknown error');
+      return { success: false, error: `Resend error: ${error instanceof Error ? error.message.slice(0, 200) : 'Unknown error'}` };
     }
   },
 });
@@ -64,7 +67,7 @@ export const sendResolutionNotification = createTool({
   execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
     const ctx = (input?.context ?? input) as Record<string, unknown>;
     if (!resendClient) {
-      console.log(`[Resend] Skipping resolution notification to ${ctx.to}: "${ctx.originalTitle}" (RESEND_API_KEY not configured)`);
+      console.log(`[Resend] Skipping resolution notification to ${Array.isArray(ctx.to) ? (ctx.to as string[]).map(maskEmail).join(', ') : maskEmail(ctx.to as string)}: "${ctx.originalTitle}" (RESEND_API_KEY not configured)`);
       return { success: true };
     }
     try {
@@ -86,8 +89,8 @@ export const sendResolutionNotification = createTool({
 
       return { success: true, emailId: data?.id };
     } catch (error: unknown) {
-      console.error('[Resend] API error:', error instanceof Error ? error.message : String(error));
-      return { success: false, error: `Resend error: ${error instanceof Error ? error.message : String(error)}` };
+      console.error('[Resend] API error:', error instanceof Error ? error.message.slice(0, 200) : 'Unknown error');
+      return { success: false, error: `Resend error: ${error instanceof Error ? error.message.slice(0, 200) : 'Unknown error'}` };
     }
   },
 });

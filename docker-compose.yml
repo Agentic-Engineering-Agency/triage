@@ -46,7 +46,7 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     depends_on:
       runtime:
         condition: service_healthy
