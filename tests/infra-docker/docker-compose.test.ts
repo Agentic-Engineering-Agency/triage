@@ -290,13 +290,13 @@ describe('REQ-D03: Dependency Ordering', () => {
       expect(deps?.minio?.condition).toBe('service_healthy');
     });
 
-    it('langfuse-web should depend on langfuse-worker with service_healthy', () => {
+    it('langfuse-web should NOT depend on langfuse-worker (both start from infra)', () => {
       // GIVEN docker-compose.yml is parsed
       // WHEN inspecting langfuse-web depends_on
-      // THEN langfuse-worker should be listed with condition: service_healthy
+      // THEN langfuse-worker should NOT be listed (web runs migrations, worker retries)
       const compose = loadCompose();
       const deps = compose.services['langfuse-web']?.depends_on;
-      expect(deps?.['langfuse-worker']?.condition).toBe('service_healthy');
+      expect(deps?.['langfuse-worker']).toBeUndefined();
     });
 
     it('runtime should depend on libsql with service_healthy', () => {
