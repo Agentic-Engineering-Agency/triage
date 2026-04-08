@@ -13,5 +13,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: latest
+      - name: Add Helm repos
+        run: helm repo add bitnami https://charts.bitnami.com/bitnami
       - run: npm ci
       - run: npm test
