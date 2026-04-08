@@ -17,7 +17,7 @@
 
 // WARNING: These tests may produce side effects (e.g., writes to k8s/helm/charts/).
 // They should ideally run in isolation or in a clean working copy.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -25,6 +25,24 @@ import * as yaml from 'yaml';
 
 const HELM_CHART_DIR = path.resolve(__dirname, '../../k8s/helm');
 const TEMPLATES_DIR = path.join(HELM_CHART_DIR, 'templates');
+
+// Ensure Helm dependencies are built before any test calls helm template.
+// Without this, tests that call helmTemplate() before the dependency-build
+// test (REQ-K02) will fail in CI where charts/ starts empty.
+beforeAll(() => {
+  try {
+    execSync('helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true', {
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
+    execSync(`helm dependency build ${HELM_CHART_DIR}`, {
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
+  } catch {
+    // If helm is not installed, individual tests will fail with clear errors
+  }
+});
 
 // --- Helper functions ---
 
