@@ -436,16 +436,16 @@ describe('REQ-D04: Named Volumes', () => {
 describe('REQ-D05: Network and Port Exposure', () => {
   // --- T-D06: Verify port exposure ---
   describe('T-D06: Port exposure rules', () => {
-    it('frontend should expose port 3001 publicly', () => {
-      // GIVEN docker-compose.yml is parsed
-      // WHEN inspecting frontend ports
-      // THEN port 3001 should be published (not bound to 127.0.0.1)
-      const compose = loadCompose();
-      const ports = compose.services.frontend?.ports;
-      expect(ports).toBeDefined();
-      const portsStr = JSON.stringify(ports);
-      expect(portsStr).toContain('3001');
-      expect(portsStr).not.toMatch(/127\.0\.0\.1:3001/);
+    it('frontend should expose port 3001 bound to localhost', () => {
+     // GIVEN docker-compose.yml is parsed
+     // WHEN inspecting frontend ports
+     // THEN port 3001 should be published bound to 127.0.0.1 (security hardening)
+     const compose = loadCompose();
+     const ports = compose.services.frontend?.ports;
+     expect(ports).toBeDefined();
+     const portsStr = JSON.stringify(ports);
+     expect(portsStr).toContain('3001');
+     expect(portsStr).toMatch(/127\.0\.0\.1:3001/);
     });
 
     it('langfuse-web should expose port 3000', () => {
