@@ -325,17 +325,40 @@ describe('Zod Schemas — ticket.ts', () => {
               url: 'https://linear.app/agentic/issue/TRI-40',
             },
           ],
-          totalCount: 1,
+          returnedCount: 1,
+          hasNextPage: false,
         },
       });
       expect(result.data?.issues).toHaveLength(1);
-      expect(result.data?.totalCount).toBe(1);
+      expect(result.data?.returnedCount).toBe(1);
+      expect(result.data?.hasNextPage).toBe(false);
+    });
+
+    it('accepts issue with null state', () => {
+      const result = issueSearchResultSchema.parse({
+        success: true,
+        data: {
+          issues: [
+            {
+              id: 'i1',
+              identifier: 'TRI-40',
+              title: 'API crash on login',
+              state: null,
+              priority: 1,
+              url: 'https://linear.app/agentic/issue/TRI-40',
+            },
+          ],
+          returnedCount: 1,
+          hasNextPage: false,
+        },
+      });
+      expect(result.data?.issues[0].state).toBeNull();
     });
 
     it('accepts empty search results', () => {
       const result = issueSearchResultSchema.parse({
         success: true,
-        data: { issues: [], totalCount: 0 },
+        data: { issues: [], returnedCount: 0, hasNextPage: false },
       });
       expect(result.data?.issues).toHaveLength(0);
     });

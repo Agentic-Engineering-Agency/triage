@@ -86,7 +86,7 @@ export const issueSearchSchema = z.object({
   status: z.string().optional(),
   assigneeId: z.string().uuid().optional(),
   labels: z.array(z.string()).optional(),
-  priority: z.number().optional(),
+  priority: prioritySchema.optional(),
   limit: z.number().min(1).max(50).default(10),
 });
 
@@ -103,12 +103,13 @@ export const issueSearchResultSchema = z.object({
           state: z.object({
             id: z.string(),
             name: z.string(),
-          }),
+          }).nullable(),
           priority: z.number(),
           url: z.string().url(),
         })
       ),
-      totalCount: z.number(),
+      returnedCount: z.number(),
+      hasNextPage: z.boolean(),
     })
     .optional(),
   error: z.string().optional(),
@@ -159,7 +160,7 @@ export const resolutionNotificationSchema = z.object({
 export const issueIdInputSchema = z.object({ issueId: z.string().min(1) });
 
 // Input schema for fetching team members by team ID
-export const teamIdInputSchema = z.object({ teamId: z.string().min(1) });
+export const teamIdInputSchema = z.object({ teamId: z.string().uuid() });
 
 // Email send response
 export const emailResponseSchema = z.object({
