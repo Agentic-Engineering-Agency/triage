@@ -1,0 +1,105 @@
+---
+title: Triage Agent
+description: Mercury-2 RAG analyst — produces structured severity, root cause, and file reference output
+---
+
+The triage agent is a specialized incident analysis agent. It receives an enriched incident description (text plus image descriptions from the vision model) and produces a complete structured triage assessment. It is called by the orchestrator (indirectly, via the `triage-workflow`) and also directly within `triageStep` in the workflow.
+
+## Configuration
+
+```typescript
+new Agent({
+  id: 'triage-agent',
+  name: 'triage-agent',
+  model: openrouter(MODELS.mercury),   // inception/mercury-2
+  tools: {
+    queryWikiTool,                      // only tool — RAG lookup
+  },
+})
+```
+
+**Model:** `inception/mercury-2` — fast text reasoning optimized for structured output. Text-only; does not process images directly.
+
+**Tools:** Only `queryWikiTool`. The triage agent's job is analysis, not action — it queries the wiki for context but does not create tickets, send emails, or interact with Linear.
+
+## Single Responsibility
+
+The triage agent has exactly one job: **analyze the incident and produce a structured triage output**. It does not:
+- Create tickets
+- Send emails
+- Interact with the user directly
+- Make any changes to external systems
+
+## Analysis Process
+
+1. **Query the wiki** — calls `queryWikiTool` with the incident description to find relevant codebase files, services, and patterns
+2. **Cross-reference symptoms** — maps reported symptoms against known service patterns from wiki results
+3. **Identify root cause** — forms a hypothesis with confidence level and supporting evidence
+4. **Map affected services** — lists all services that may be impacted
+5. **Generate file references** — specific files from wiki results with line ranges and relevance notes
+6. **Suggest actions** — ordered list of remediation steps
+
+## Output Schema
+
+The triage agent produces output conforming to `triageOutputSchema`:
+
+```typescript
+{
+  severity: "Critical" | "High" | "Medium" | "Low",
+  confidence: number,          // 0.0 to 1.0
+  summary: string,             // one-paragraph executive summary
+  rootCause: string,           // technical hypothesis with evidence
+  affectedServices: string[],  // service names
+  fileReferences: Array<{
+    filePath: string,
+    lineRange?: string,        // e.g., "45-67"
+    relevance: string,         // why this file is relevant
+  }>,
+  suggestedActions: string[],  // ordered remediation steps
+  chainOfThought: string,      // step-by-step reasoning trace
+}
+```
+
+## Severity Guide
+
+| Severity | Criteria |
+|----------|----------|
+| **Critical** | Service completely down, data loss, security breach, revenue impact >$10k/hr |
+| **High** | Major feature broken, significant user impact, no workaround available |
+| **Medium** | Degraded performance, partial outage, workaround exists |
+| **Low** | Cosmetic issue, minor bug, affects small user segment |
+
+## Confidence Scoring
+
+Confidence (0.0 to 1.0) reflects actual certainty, not optimism. Rules:
+
+- If confidence is below 0.5, the agent explicitly states what additional information would help
+- If wiki queries return no relevant results, confidence is reduced accordingly
+- File references are only included if found via wiki queries — fabricated paths are strictly prohibited
+
+## Chain of Thought
+
+The `chainOfThought` field contains the full reasoning trace showing each analysis step:
+
+1. What symptoms were reported
+2. What wiki queries were made and what was found
+3. How the evidence maps to the root cause hypothesis
+4. Why the severity level was chosen
+5. What uncertainty remains
+
+This field is valuable for debugging triage quality and understanding why a particular root cause was identified.
+
+## Constraints
+
+The triage agent operates under strict constraints:
+
+- **Never fabricate file paths** — only reference files found in wiki query results
+- **Always include at least one suggested action** — even if it's "gather more logs"
+- **Chain of thought must show actual reasoning** — not just a repeat of the conclusion
+- **Confidence must be honest** — low confidence with an explanation is better than false confidence
+
+## RAG Integration
+
+The `queryWikiTool` performs a vector similarity search against the codebase wiki indexed in LibSQL. Wiki documents are stored as `F32_BLOB(1536)` vectors with DiskANN indexing. The search returns the top-k most relevant documents along with their source file paths, summaries, and content snippets.
+
+The triage agent uses these results as grounding for its analysis — it cannot invent file references that weren't returned by the wiki query.
