@@ -20,7 +20,7 @@ export function SeverityBadge({
   severity: Severity
   className?: string
 }) {
-  const config = severityConfig[severity]
+  const config = severityConfig[severity?.toLowerCase() as Severity] ?? severityConfig.medium
   const Icon = config.icon
 
   return (

@@ -11,11 +11,12 @@ export const prioritySchema = z.number().int().min(0).max(4);
 export const ticketCreateSchema = z.object({
   title: z.string().min(1),
   description: z.string(),
-  teamId: z.string().uuid(),
+  teamId: z.string().uuid().optional().describe('Linear team ID — defaults to configured team if omitted'),
   priority: prioritySchema,
   assigneeId: z.string().uuid().optional(),
   labelIds: z.array(z.string().uuid()).optional(),
   stateId: z.string().uuid().optional(),
+  cycleId: z.string().uuid().optional().describe('Linear cycle ID to assign the issue to'),
 });
 
 // Response from creating a ticket
@@ -160,7 +161,7 @@ export const resolutionNotificationSchema = z.object({
 export const issueIdInputSchema = z.object({ issueId: z.string().min(1) });
 
 // Input schema for fetching team members by team ID
-export const teamIdInputSchema = z.object({ teamId: z.string().uuid() });
+export const teamIdInputSchema = z.object({ teamId: z.string().uuid().optional().describe('Linear team ID — defaults to configured team if omitted') });
 
 // Email send response
 export const emailResponseSchema = z.object({

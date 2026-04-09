@@ -29,7 +29,7 @@ export const mastra = new Mastra({
   }),
   server: {
     apiRoutes: [
-      chatRoute({ path: '/chat', agent: 'orchestrator' }),
+      chatRoute({ path: '/chat', agent: 'orchestrator', sendReasoning: true, defaultOptions: { savePerStep: true } }),
       registerApiRoute('/auth/*', {
         method: 'ALL',
         handler: async (c) => {

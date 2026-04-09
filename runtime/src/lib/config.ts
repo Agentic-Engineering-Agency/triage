@@ -59,21 +59,23 @@ export function validateEnv(): EnvConfig {
 /**
  * Model identifiers used across the runtime.
  *
- * - orchestrator: Primary orchestration model (MiniMax M2.7).
- * - orchestratorFallback1: First fallback for orchestration (Qwen3 235B, free).
- * - orchestratorFallback2: Second fallback for orchestration (MiniMax M2.5, free).
+ * All orchestrator/agent models MUST support tool/function calling via OpenRouter.
+ *
+ * - orchestrator: Qwen 3.6 Plus (1M context, tools + vision, paid).
+ * - orchestratorFallback1: Qwen3 235B MoE (free, 131K context, tools confirmed).
+ * - orchestratorFallback2: DeepSeek V3 (free, 131K context, tools confirmed).
  * - mercury: Fast text generation, research, summarization. TEXT-ONLY.
- * - vision: Multimodal understanding (images, screenshots). Gemma 4 31B.
+ * - vision: Gemma 4 31B (free) — dedicated multimodal for image analysis.
  * - visionFallback: Paid Gemma 4 — used when free tier is rate-limited.
  * - freeRouter: OpenRouter auto-router fallback.
  */
 export const MODELS = {
-  /** minimax/minimax-m2.7-20260318 — primary orchestrator */
-  orchestrator: 'minimax/minimax-m2.7-20260318',
-  /** qwen/qwen3-235b-a22b:free — orchestrator fallback 1 */
+  /** qwen/qwen3.6-plus — primary orchestrator (1M context, tools + vision) */
+  orchestrator: 'qwen/qwen3.6-plus',
+  /** qwen/qwen3-235b-a22b:free — orchestrator fallback 1 (MoE 235B, tools confirmed) */
   orchestratorFallback1: 'qwen/qwen3-235b-a22b:free',
-  /** minimax/minimax-m2.5-20260211:free — orchestrator fallback 2 */
-  orchestratorFallback2: 'minimax/minimax-m2.5-20260211:free',
+  /** deepseek/deepseek-chat-v3-0324:free — orchestrator fallback 2 (tools confirmed) */
+  orchestratorFallback2: 'deepseek/deepseek-chat-v3-0324:free',
   /** inception/mercury-2 — fast text, structured output, reasoning. TEXT-ONLY. */
   mercury: 'inception/mercury-2',
   /** google/gemma-4-31b-it:free — multimodal vision (free tier) */
@@ -86,7 +88,8 @@ export const MODELS = {
 
 /**
  * Fallback chains for each model role.
- * Each chain is tried in order until one succeeds.
+ * OpenRouter tries models in order until one succeeds.
+ * Max 4 models per chain (OpenRouter limit).
  */
 export const MODEL_CHAINS = {
   orchestrator: [MODELS.orchestrator, MODELS.orchestratorFallback1, MODELS.orchestratorFallback2],
