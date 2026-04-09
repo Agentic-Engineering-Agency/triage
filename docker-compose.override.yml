@@ -7,7 +7,7 @@ services:
   vite:
     image: node:22-alpine
     working_dir: /app
-    command: npx vite --host 0.0.0.0
+    command: sh -c "npm install && npx vite --host 0.0.0.0"
     ports:
       - "127.0.0.1:5173:5173"
     volumes:
@@ -25,6 +25,7 @@ services:
       context: .
       dockerfile: Dockerfile.runtime
       target: builder
-    command: npx tsx watch src/index.ts
+    working_dir: /app/runtime
+    command: sh -c "npx mastra dev"
     volumes:
-      - ./runtime/src:/app/src
+      - ./runtime/src:/app/runtime/src
