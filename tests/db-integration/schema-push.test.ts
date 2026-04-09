@@ -37,8 +37,8 @@ describe.skipIf(SKIP)('REQ-DB17: Schema Push Integration', () => {
 
   it('SHALL be idempotent on re-push', () => {
     expect(() => {
-      execSync('npx drizzle-kit push --force', {
-        cwd: process.cwd(),
+      execSync('npx drizzle-kit migrate', {
+        cwd: process.cwd() + '/runtime',
         env: { ...process.env },
         stdio: 'pipe',
       });

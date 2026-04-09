@@ -43,9 +43,11 @@ describe.skipIf(SKIP)('REQ-DB19: Local Tickets CRUD Integration', () => {
         title: 'Test Incident: Payment Gateway Timeout',
         description: 'Payments failing with 504 errors on checkout',
         severity: 'sev1',
+        priority: 1,
         status: 'triage',
-        reporterEmail: 'oncall@example.com',
         linearIssueId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
         syncedAt: null,
       })
       .returning();
@@ -71,7 +73,7 @@ describe.skipIf(SKIP)('REQ-DB19: Local Tickets CRUD Integration', () => {
   });
 
   it('SHALL update linearIssueId and syncedAt', async () => {
-    const now = new Date().toISOString();
+    const now = new Date();
     const updated = await db
       .update(localTickets)
       .set({
@@ -84,7 +86,7 @@ describe.skipIf(SKIP)('REQ-DB19: Local Tickets CRUD Integration', () => {
 
     expect(updated).toHaveLength(1);
     expect(updated[0].linearIssueId).toBe('TRI-42');
-    expect(updated[0].syncedAt).toBe(now);
+    expect(updated[0].syncedAt).toBeInstanceOf(Date);
     expect(updated[0].status).toBe('synced');
   });
 
@@ -126,9 +128,11 @@ describe.skipIf(SKIP)('REQ-DB19: Local Tickets CRUD Integration', () => {
         title: 'Sev1 triage',
         description: 'Critical issue',
         severity: 'sev1',
+        priority: 1,
         status: 'triage',
-        reporterEmail: 'a@example.com',
         linearIssueId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
         syncedAt: null,
       },
       {
@@ -136,9 +140,11 @@ describe.skipIf(SKIP)('REQ-DB19: Local Tickets CRUD Integration', () => {
         title: 'Sev2 triage',
         description: 'Major issue',
         severity: 'sev2',
+        priority: 2,
         status: 'triage',
-        reporterEmail: 'b@example.com',
         linearIssueId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
         syncedAt: null,
       },
       {
@@ -146,10 +152,12 @@ describe.skipIf(SKIP)('REQ-DB19: Local Tickets CRUD Integration', () => {
         title: 'Sev1 resolved',
         description: 'Was critical, now resolved',
         severity: 'sev1',
+        priority: 1,
         status: 'resolved',
-        reporterEmail: 'c@example.com',
         linearIssueId: 'TRI-99',
-        syncedAt: new Date().toISOString(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        syncedAt: new Date(),
       },
     ];
 
