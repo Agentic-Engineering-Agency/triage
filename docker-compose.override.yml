@@ -26,6 +26,8 @@ services:
       dockerfile: Dockerfile.runtime
       target: builder
     working_dir: /app/runtime
-    command: npx mastra dev --port 4111
+    command: npx mastra dev
+    environment:
+      - PORT=4111
     volumes:
       - ./runtime/src:/app/runtime/src
