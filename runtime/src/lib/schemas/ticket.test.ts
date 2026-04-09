@@ -110,9 +110,9 @@ describe('Zod Schemas — ticket.ts', () => {
       expect(() => ticketCreateSchema.parse(noTitle)).toThrow();
     });
 
-    it('rejects missing teamId', () => {
+    it('accepts missing teamId (optional, defaults to configured team)', () => {
       const { teamId, ...noTeamId } = validInput;
-      expect(() => ticketCreateSchema.parse(noTeamId)).toThrow();
+      expect(() => ticketCreateSchema.parse(noTeamId)).not.toThrow();
     });
 
     it('rejects invalid teamId (not UUID)', () => {
