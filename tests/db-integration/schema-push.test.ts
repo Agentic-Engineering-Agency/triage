@@ -6,8 +6,8 @@ const SKIP = !process.env.LIBSQL_URL;
 describe.skipIf(SKIP)('REQ-DB17: Schema Push Integration', () => {
   beforeAll(() => {
     // Run drizzle-kit push to apply schema to live LibSQL
-    execSync('npx drizzle-kit push --force', {
-      cwd: process.cwd(),
+    execSync('npx drizzle-kit migrate', {
+      cwd: process.cwd() + '/runtime',
       env: { ...process.env },
       stdio: 'pipe',
     });

@@ -9,8 +9,8 @@ describe.skipIf(SKIP)('REQ-DB18: Wiki Vector Search Integration', () => {
 
   beforeAll(async () => {
     // Ensure schema is applied
-    execSync('npx drizzle-kit push --force', {
-      cwd: process.cwd(),
+    execSync('npx drizzle-kit migrate', {
+      cwd: process.cwd() + '/runtime',
       env: { ...process.env },
       stdio: 'pipe',
     });
