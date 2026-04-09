@@ -1,25 +1,12 @@
 import { Mastra } from '@mastra/core';
+import { registerApiRoute } from '@mastra/core/server';
 import { LibSQLStore } from '@mastra/libsql';
 import { chatRoute } from '@mastra/ai-sdk';
 
 import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent } from './agents/index';
 import { triageWorkflow } from './workflows/index';
+import { auth } from '../auth/index';
 
-/**
- * Mastra instance — the core runtime for the Triage SRE agent.
- *
- * Registers:
- * - 3 agents: orchestrator (main), triage-agent (analysis), resolution-reviewer (verification)
- * - 1 workflow: triageWorkflow (full E2E intake → resolve pipeline)
- * - LibSQL storage for workflow state, threads, and memory
- *
- * HTTP endpoints exposed by mastra.serve():
- * - POST /api/agents/:agentId/stream    — SSE chat streaming
- * - POST /api/agents/:agentId/generate  — one-shot generation
- * - GET  /health                        — health check
- *
- * The frontend connects to: POST /api/agents/orchestrator/stream
- */
 export const mastra = new Mastra({
   agents: {
     orchestrator,
@@ -37,6 +24,12 @@ export const mastra = new Mastra({
   server: {
     apiRoutes: [
       chatRoute({ path: '/chat', agent: 'orchestrator' }),
+      registerApiRoute('/auth/*', {
+        method: 'ALL',
+        handler: async (c) => {
+          return auth.handler(c.req.raw);
+        },
+      }),
     ],
   },
 });
