@@ -107,6 +107,9 @@ export const getLinearIssue = createTool({
     try {
       const issue = await linearClient.issue((ctx as Record<string, unknown>).issueId as string);
       const state = await issue.state;
+      if (!state) {
+        return { success: false, error: 'Issue state not available' };
+      }
       const assignee = await issue.assignee;
       const labelsResult = await issue.labels();
       const labels = labelsResult.nodes.map((l: { id: string; name: string }) => ({ id: l.id, name: l.name }));
@@ -118,7 +121,7 @@ export const getLinearIssue = createTool({
           identifier: issue.identifier,
           title: issue.title,
           description: issue.description,
-          state: state ? { id: state.id, name: state.name, type: ((state as Record<string, unknown>).type as string) ?? 'unknown' } : null,
+          state: { id: state.id, name: state.name, type: state.type },
           assignee: assignee ? { id: assignee.id, name: assignee.name, email: assignee.email } : null,
           labels,
           priority: issue.priority,
@@ -157,7 +160,7 @@ export const searchLinearIssues = createTool({
       const result = await linearClient.issues({ filter, first: limit });
 
       const issues = await Promise.all(
-        result.nodes.map(async (issue: { id: string; identifier: string; title: string; state: Promise<{ id: string; name: string } | undefined>; priority: number; url: string }) => {
+        result.nodes.map(async (issue) => {
           const state = await issue.state;
           return {
             id: issue.id,
@@ -174,7 +177,7 @@ export const searchLinearIssues = createTool({
         success: true,
         data: {
           issues,
-          totalCount: issues.length,
+          returnedCount: issues.length,
           hasNextPage: result.pageInfo?.hasNextPage ?? false,
         },
       };
