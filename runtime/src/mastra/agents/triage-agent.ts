@@ -20,6 +20,7 @@ const openrouter = createOpenRouter({
  * - chainOfThought (step-by-step reasoning trace)
  */
 export const triageAgent = new Agent({
+  id: 'triage-agent',
   name: 'triage-agent',
   instructions: `You are a specialized SRE triage analyst for an e-commerce platform (Solidus/Rails stack).
 

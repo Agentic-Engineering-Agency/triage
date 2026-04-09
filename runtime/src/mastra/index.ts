@@ -29,6 +29,7 @@ export const mastra = new Mastra({
     'triage-workflow': triageWorkflow,
   },
   storage: new LibSQLStore({
+    id: 'triage-main',
     url: process.env.LIBSQL_URL || 'http://libsql:8080',
   }),
 });

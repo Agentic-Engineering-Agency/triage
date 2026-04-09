@@ -18,6 +18,7 @@ const openrouter = createOpenRouter({
  * the original triage assessment.
  */
 export const resolutionReviewer = new Agent({
+  id: 'resolution-reviewer',
   name: 'resolution-reviewer',
   instructions: `You are a resolution verification specialist for SRE incidents on an e-commerce platform (Solidus/Rails stack).
 
