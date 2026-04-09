@@ -1,0 +1,44 @@
+import { betterAuth } from 'better-auth';
+import { drizzleAdapter } from '@better-auth/drizzle-adapter';
+import { db } from '../db/client';
+import { authUser, authSession, authAccount, authVerification } from '../db/schema';
+
+const trustedOrigins = (() => {
+  const origins: string[] = [];
+  const devOrigin = process.env.BETTER_AUTH_URL || 'http://localhost:3001';
+  if (process.env.NODE_ENV === 'production') {
+    origins.push(process.env.BETTER_AUTH_URL || 'https://triage.example.com');
+  } else {
+    origins.push(devOrigin);
+  }
+  return origins;
+})();
+
+export const auth = betterAuth({
+  basePath: '/auth',
+  database: drizzleAdapter(db, {
+    provider: 'sqlite',
+    schema: {
+      user: authUser,
+      session: authSession,
+      account: authAccount,
+      verification: authVerification,
+    },
+  }),
+  emailAndPassword: {
+    enabled: true,
+  },
+  session: {
+    expiresIn: 60 * 60 * 24 * 7, // 7 days fixed expiry
+    updateAge: 0, // sliding window disabled — no extension on activity
+    cookie: {
+      name: 'session',
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+    },
+  },
+  trustedOrigins,
+  secret: process.env.BETTER_AUTH_SECRET || 'dev-secret-change-in-production-min32chars',
+});
