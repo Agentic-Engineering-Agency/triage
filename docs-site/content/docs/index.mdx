@@ -1,0 +1,57 @@
+---
+title: Welcome to Triage
+description: AI-powered SRE incident triage agent for Solidus/Rails e-commerce platforms
+---
+
+import { Cards, Card } from 'fumadocs-ui/components/card';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="info" title="Built at AgentX Hackathon 2026">
+  Triage was built by a four-person team in **48 hours**. It ships as ten Docker containers behind a Caddy reverse proxy.
+</Callout>
+
+Triage is an AI-powered SRE incident triage agent for Solidus/Rails e-commerce platforms. Engineers describe production incidents in a multimodal chat interface — using text, screenshots, and log snippets — and the agent queries a RAG-indexed codebase wiki to pinpoint root cause, identify affected files, and classify severity.
+
+Once analysis is complete, a triage card is presented for **human approval** before a Linear ticket is created and the on-call team is notified by email. When the fix ships and the Linear ticket is marked Done, a webhook triggers a Resolution Reviewer that independently verifies the fix before closing the loop.
+
+## How It Works
+
+<Steps>
+  <Step>
+    **Describe the incident** — Send a message in the chat UI with text, screenshots, or log snippets describing what's broken.
+  </Step>
+  <Step>
+    **Automated triage** — The Triage Agent queries the codebase wiki (RAG), cross-references symptoms against source files, and produces a structured severity / confidence / root-cause report.
+  </Step>
+  <Step>
+    **Review and approve** — A triage card shows a preview. You explicitly approve before any Linear ticket is created or email notifications are sent.
+  </Step>
+  <Step>
+    **Resolution verification** — When the fix ships and the Linear ticket is marked Done, a webhook triggers the Resolution Reviewer, which returns a `close / reopen / monitor` recommendation.
+  </Step>
+</Steps>
+
+## Feature Highlights
+
+- **Multimodal Chat** — Attach screenshots, dashboards, and log files alongside text descriptions. Vision model (Gemma 4 31B) extracts and describes image content before analysis.
+- **RAG-Powered Triage** — Codebase wiki indexed as F32_BLOB(1536) vectors in LibSQL. Mercury-2 queries relevant files, cross-references symptoms, and produces structured output.
+- **Two-Phase Ticket Creation** — Triage card shows a preview (pending state) requiring explicit user approval before any Linear ticket is created.
+- **Linear Integration** — Full ticket lifecycle: create, update, search, and team assignment. Webhook resume triggers resolution review when an issue is marked Done.
+- **Email Notifications** — Resend-powered HTML notifications to assignees on ticket creation and to reporters on resolution.
+- **Resolution Verification** — Resolution Reviewer agent compares the deployed fix against the original root cause, returning a structured recommendation.
+- **Graceful Degradation** — All external services have fallback modes. Triage never blocks on infrastructure failures.
+- **Self-Hosted Observability** — Full Langfuse stack (ClickHouse, Redis, MinIO, Postgres) for LLM trace visibility, latency, and cost tracking.
+
+## Quick Navigation
+
+<Cards>
+  <Card title="Installation" href="/docs/getting-started/installation" description="Prerequisites, clone, env setup, docker compose up" />
+  <Card title="Configuration" href="/docs/getting-started/configuration" description="All 38+ environment variables by group" />
+  <Card title="First Incident" href="/docs/getting-started/first-incident" description="End-to-end walkthrough from login to resolution" />
+  <Card title="Architecture" href="/docs/architecture" description="10 containers, 2 networks, system diagram" />
+  <Card title="Agents" href="/docs/agents" description="Orchestrator, Triage, Resolution Reviewer, Code Review" />
+  <Card title="Integrations" href="/docs/integrations" description="Linear, Resend, OpenRouter, Langfuse" />
+  <Card title="API Reference" href="/docs/reference/api-routes" description="All 11 API routes with request/response examples" />
+  <Card title="Environment Reference" href="/docs/reference/environment" description="Complete env var table with defaults" />
+</Cards>

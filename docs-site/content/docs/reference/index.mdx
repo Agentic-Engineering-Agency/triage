@@ -1,0 +1,40 @@
+---
+title: Reference
+description: API routes, Zod schemas, and complete environment variable reference
+---
+
+The reference section provides complete technical specifications for the Triage API, data schemas, and configuration.
+
+## Contents
+
+| Page | Description |
+|------|-------------|
+| [API Routes](/docs/reference/api-routes) | All 11 registered routes with method, path, auth requirement, and request/response examples |
+| [Schemas](/docs/reference/schemas) | Key Zod schema definitions: triageOutput, ticketCreate, codeReviewOutput, wikiQueryResult |
+| [Environment](/docs/reference/environment) | Complete table of all 38+ environment variables with defaults and required/optional status |
+
+## API Conventions
+
+All non-streaming API responses follow a consistent format:
+
+```typescript
+// Success
+{ "success": true, "data": T }
+
+// Failure
+{ "success": false, "error": { "code": string, "message": string } }
+```
+
+The `/chat` endpoint is an exception — it uses the Vercel AI SDK streaming protocol (Server-Sent Events), not the JSON response format above.
+
+## Authentication
+
+Routes under `/auth/*` are handled by Better Auth. Session cookies are set on the client after successful login. API routes do not independently validate auth — all requests to `/api/*` come through Caddy, which handles TLS and security headers.
+
+## Date Format
+
+All dates in API responses are ISO 8601 strings (e.g., `"2026-04-09T14:23:00.000Z"`). The frontend formats these with `Intl.DateTimeFormat` — no date library is used for display.
+
+## Null vs Undefined
+
+API responses use `null` for absent values, never `undefined`. This ensures JSON serialization is consistent.

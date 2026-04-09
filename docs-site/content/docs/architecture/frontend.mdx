@@ -1,0 +1,136 @@
+---
+title: Frontend
+description: React 19, TanStack Router, Vite 7, Tailwind 4, and the generative UI components
+---
+
+The frontend is a single-page application (SPA) served by Caddy on port 3001. In dev mode, Caddy reverse-proxies to Vite's HMR server. In production, Caddy serves the static build output directly.
+
+## Technology Stack
+
+| Technology | Version | Role |
+|------------|---------|------|
+| React | 19 | UI framework |
+| TanStack Router | Latest | File-based type-safe routing |
+| Vite | 7 | Build tool and dev server |
+| Tailwind CSS | 4 | Utility-first styling |
+| shadcn/ui | Latest | Component primitives built on Radix UI |
+| TanStack Query | Latest | Server state management and data fetching |
+| Vercel AI SDK (`useChat`) | Latest | Streaming chat with tool invocation support |
+
+## Routes
+
+| Path | Component | Description |
+|------|-----------|-------------|
+| `/login` | LoginPage | Better Auth sign-in form |
+| `/register` | RegisterPage | Better Auth account creation |
+| `/chat` | ChatPage | Main incident reporting interface |
+| `/board` | BoardPage | Kanban board of Linear issues |
+| `/settings` | SettingsPage | User settings and preferences |
+
+All routes except `/login` and `/register` require authentication. TanStack Router handles redirects to `/login` for unauthenticated requests.
+
+## Chat Interface
+
+The chat interface uses `useChat` from the Vercel AI SDK, which connects to the orchestrator agent at `POST /chat` via streaming. The hook handles:
+
+- **Streaming text** — Orchestrator responses stream token-by-token
+- **Tool invocations** — When the orchestrator calls `displayTriage` or `displayDuplicate`, the AI SDK delivers the tool result as a structured part in the stream
+- **Multimodal attachments** — Files attached to a message are uploaded and sent as part of the message data before streaming begins
+- **Conversation threading** — `threadId` is passed with each request; `MemoryLibSQL` on the runtime stores conversation history per thread
+
+### Multimodal Attachments
+
+The chat input accepts image files (PNG, JPG, WebP), PDFs, and plain text log files. When files are attached:
+
+1. The frontend sends the message with attached file data
+2. The orchestrator calls `processAttachmentsTool` first
+3. The vision model (Gemma 4 31B free) describes image content in text
+4. The enriched description is used for wiki RAG lookup and triage analysis
+
+## Generative UI Components
+
+The most distinctive frontend feature is the **Triage Card** — a rich generative UI component that renders inline in the chat stream when the orchestrator calls `displayTriage`.
+
+### TriageCard States
+
+The TriageCard renders in four states, transitioning as the workflow progresses:
+
+| State | Description |
+|-------|-------------|
+| `loading` | Animated skeleton while the triage agent is processing |
+| `pending` | Full triage output displayed, awaiting user approval |
+| `confirmed` | Ticket created, shows Linear issue identifier and URL |
+| `error` | Error state with retry option |
+
+The `pending` state shows the full structured output:
+
+```tsx
+<TriageCard
+  state="pending"
+  title="Checkout 500 on Stripe payment_intent mismatch"
+  severity="High"
+  confidence={0.87}
+  summary="Payment processing failures affecting ~30% of Stripe checkouts..."
+  fileReferences={[
+    { filePath: "app/services/payment_processor.rb", lineRange: "45-67", relevance: "..." },
+  ]}
+  proposedFix="Update payment_intent retrieval to handle stale intent IDs..."
+/>
+```
+
+### SeverityBadge
+
+Color-coded badge for severity levels:
+
+- **Critical** — Red background, white text
+- **High** — Orange background, white text
+- **Medium** — Yellow background, dark text
+- **Low** — Green background, white text
+
+### ConfidenceScore
+
+A circular progress indicator showing the triage agent's confidence from 0.0 to 1.0. Color transitions from red (low confidence) through amber to green (high confidence). A confidence below 0.5 also renders a note suggesting what additional information would help.
+
+### FileReference
+
+Renders an individual file reference from the triage output with:
+- File path (monospaced)
+- Optional line range indicator
+- Relevance description tooltip
+- Click-to-copy path functionality
+
+### DuplicateCard
+
+When the orchestrator detects similarity with an existing Linear issue (similarity score > 0.70), a `DuplicateCard` is rendered instead of a `TriageCard`. It shows:
+
+- The matching issue identifier and title
+- Similarity score
+- Warning level: "possible duplicate" (0.70–0.85) or "likely duplicate" (>0.85)
+- Primary action: "Update Existing" (>0.85) or "Create New" (0.70–0.85)
+
+## Board View
+
+The `/board` route renders a Kanban-style board from `GET /api/linear/issues`. Issues are grouped by Linear state (Triage, Backlog, Todo, In Progress, In Review, Done) and displayed as cards showing:
+
+- Issue identifier (e.g., `TRI-42`)
+- Title and description excerpt
+- Severity label badge
+- Assignee avatar and name
+- Estimate points
+- Project name
+- Created/updated timestamps
+
+The board also shows an active cycle progress bar from `GET /api/linear/cycle/active`.
+
+## State Management
+
+The application avoids global state managers (no Redux, no Zustand) in favor of:
+
+- **`useChat`** for streaming chat state
+- **TanStack Query** for server data (board issues, cycle data, members)
+- **TanStack Router** search params for URL-persisted UI state
+- **React context** for auth session (shallow, read-only)
+
+## Security
+
+HTML sanitization uses DOMPurify on any content rendered from agent outputs. Caddy handles all security headers (HSTS, X-Frame-Options, CSP, X-Content-Type-Options) — no Helmet.js is used.

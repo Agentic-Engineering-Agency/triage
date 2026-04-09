@@ -103,7 +103,7 @@ describe('REQ-T02: AGENTS_USE.md Template', () => {
     // WHEN we inspect section headers
     const requiredSections = [
       'Agent Overview',
-      'Agents & Capabilities',
+      'Agent Capabilities',
       'Architecture & Orchestration',
       'Context Engineering',
       'Use Cases',
@@ -125,8 +125,8 @@ describe('REQ-T02: AGENTS_USE.md Template', () => {
     const filePath = path.join(REPO_ROOT, 'AGENTS_USE.md');
     const content = fs.readFileSync(filePath, 'utf-8');
 
-    // WHEN we locate the Architecture & Orchestration section
-    const archSectionMatch = content.match(/#{1,3}\s*.*Architecture\s*&\s*Orchestration[\s\S]*?(?=#{1,3}\s|\z)/i);
+    // WHEN we locate the Architecture & Orchestration section (from heading to next ## heading)
+    const archSectionMatch = content.match(/## 3\.\s*Architecture\s*&\s*Orchestration[\s\S]*?(?=\n## \d|$)/i);
     expect(archSectionMatch).not.toBeNull();
 
     // THEN it SHALL contain at least one Mermaid code block
@@ -134,17 +134,16 @@ describe('REQ-T02: AGENTS_USE.md Template', () => {
     expect(archSection).toMatch(/```mermaid/);
   });
 
-  // Scenario 3 — Error case: evidence placeholders in sections 6 and 7
-  it('SHALL contain evidence placeholders in Observability and Security sections', () => {
+  // Scenario 3 — Evidence in sections 6 and 7 (real content, not placeholders)
+  it('SHALL contain test evidence references in Observability and Security sections', () => {
     // GIVEN the AGENTS_USE.md file exists
     const filePath = path.join(REPO_ROOT, 'AGENTS_USE.md');
     const content = fs.readFileSync(filePath, 'utf-8');
 
     // WHEN we inspect sections 6 (Observability) and 7 (Security & Guardrails)
-    // THEN they SHALL contain <!-- EVIDENCE: --> placeholder tags
-    const evidencePlaceholders = content.match(/<!--\s*EVIDENCE:[\s\S]*?-->/g);
-    expect(evidencePlaceholders).not.toBeNull();
-    expect(evidencePlaceholders!.length).toBeGreaterThanOrEqual(2);
+    // THEN they SHALL contain "Test Evidence" subsections with real test file references
+    expect(content).toMatch(/### Test Evidence/);
+    expect(content).toMatch(/tests\/infra/);
   });
 });
 
