@@ -13,6 +13,8 @@ const trustedOrigins = (() => {
     origins.push(process.env.BETTER_AUTH_URL);
   } else {
     origins.push(devOrigin);
+    // Allow SSH port-forward dev testing (localhost:3002)
+    origins.push('http://localhost:3002');
   }
   return origins;
 })();

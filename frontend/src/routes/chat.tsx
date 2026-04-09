@@ -1,15 +1,37 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { useChat } from "@ai-sdk/react"
 import { DefaultChatTransport } from "ai"
-import { useRef, useState, useCallback, useEffect } from "react"
-import { Send, Paperclip, X, ZoomIn, FileText, FileCode, File as FileIcon } from "lucide-react"
+import { useRef, useState, useCallback, useEffect, useMemo } from "react"
+import { Send, Paperclip, X, ZoomIn, FileText, FileCode, File as FileIcon, Plus, MessageSquare, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { toolComponents, DuplicatePrompt } from "@/components/tool-registry"
 import { TriageCard } from "@/components/triage-card"
 import { getDraft, saveDraft, clearDraft } from "@/lib/chat-draft"
 import { apiFetch } from "@/lib/api"
+import { useAuth } from "@/hooks/use-auth"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+
+// ---- Conversation management ----
+interface Conversation {
+  id: string
+  title: string
+  createdAt: string
+}
+
+function loadConversations(): Conversation[] {
+  try {
+    return JSON.parse(localStorage.getItem('conversations') ?? '[]')
+  } catch { return [] }
+}
+
+function saveConversations(convs: Conversation[]) {
+  localStorage.setItem('conversations', JSON.stringify(convs))
+}
+
+function newConversationId() {
+  return crypto.randomUUID()
+}
 
 export const Route = createFileRoute("/chat")({
   component: ChatPage,
@@ -44,15 +66,80 @@ interface Attachment {
   pastedText?: string
 }
 
-const transport = new DefaultChatTransport({
-  api: "/chat",
-  credentials: "include",
-})
-
 function ChatPage() {
+  const { user } = useAuth()
+
+  // ---- Conversation state ----
+  const [conversations, setConversations] = useState<Conversation[]>(loadConversations)
+  const [activeThreadId, setActiveThreadId] = useState<string>(() => {
+    const saved = localStorage.getItem('active_thread_id')
+    return saved ?? newConversationId()
+  })
+
+  const threadIdRef = useRef(activeThreadId)
+  threadIdRef.current = activeThreadId
+
+  const transport = useMemo(() => new DefaultChatTransport({
+    api: "/chat",
+    credentials: "include",
+    body: () => ({
+      threadId: threadIdRef.current,
+      resourceId: user?.id ?? 'anonymous',
+    }),
+  }), [user?.id])
+
   const { messages, status, error, sendMessage, regenerate } = useChat({
     transport,
+    id: activeThreadId,
   })
+
+  // Persist active thread
+  useEffect(() => {
+    localStorage.setItem('active_thread_id', activeThreadId)
+  }, [activeThreadId])
+
+  // Auto-title conversation from first user message
+  useEffect(() => {
+    if (messages.length === 0) return
+    const firstUser = messages.find(m => m.role === 'user')
+    if (!firstUser) return
+    const text = firstUser.parts?.filter((p): p is { type: 'text'; text: string } => p.type === 'text').map(p => p.text).join('').slice(0, 60)
+    if (!text) return
+    setConversations(prev => {
+      const exists = prev.find(c => c.id === activeThreadId)
+      if (exists && exists.title !== 'New conversation') return prev
+      const next = exists
+        ? prev.map(c => c.id === activeThreadId ? { ...c, title: text } : c)
+        : [{ id: activeThreadId, title: text, createdAt: new Date().toISOString() }, ...prev]
+      saveConversations(next)
+      return next
+    })
+  }, [messages, activeThreadId])
+
+  const startNewConversation = useCallback(() => {
+    const id = newConversationId()
+    const conv: Conversation = { id, title: 'New conversation', createdAt: new Date().toISOString() }
+    setConversations(prev => {
+      const next = [conv, ...prev]
+      saveConversations(next)
+      return next
+    })
+    setActiveThreadId(id)
+    clearDraft()
+  }, [])
+
+  const deleteConversation = useCallback((id: string) => {
+    setConversations(prev => {
+      const next = prev.filter(c => c.id !== id)
+      saveConversations(next)
+      return next
+    })
+    if (id === activeThreadId) {
+      const remaining = conversations.filter(c => c.id !== id)
+      const next = remaining[0]?.id ?? newConversationId()
+      setActiveThreadId(next)
+    }
+  }, [activeThreadId, conversations])
 
   const initialDraft = getDraft()
   const [input, setInput] = useState(initialDraft.input)
@@ -64,6 +151,10 @@ function ChatPage() {
     content?: string
     name: string
   } | null>(null)
+  const [cardStates, setCardStates] = useState<Record<string, {
+    state: 'submitting' | 'confirmed' | 'error';
+    errorMessage?: string;
+  }>>({});
 
   // Persist draft when input or attachments change
   useEffect(() => {
@@ -242,29 +333,33 @@ function ChatPage() {
     [handleSubmit],
   )
 
-  const handleCreateTicket = async (triageData: Record<string, unknown>) => {
+  const handleCreateTicket = async (triageData: Record<string, unknown>, cardKey: string) => {
+    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat';
+    setCardStates(prev => ({ ...prev, [cardKey]: { state: 'submitting' } }));
     try {
       await apiFetch('/workflows/triage-workflow/trigger', {
         method: 'POST',
         body: JSON.stringify({
           description: triageData.summary ?? '',
-          reporterEmail: 'user@agenticengineering.lat',
+          reporterEmail,
           repository: 'Agentic-Engineering-Agency/triage',
         }),
       });
-      console.log('[chat] Workflow triggered successfully');
+      setCardStates(prev => ({ ...prev, [cardKey]: { state: 'confirmed' } }));
     } catch (error) {
-      console.error('[chat] Failed to trigger workflow:', error);
+      const message = error instanceof Error ? error.message : 'Failed to create ticket';
+      setCardStates(prev => ({ ...prev, [cardKey]: { state: 'error', errorMessage: message } }));
     }
   };
 
   const handleUpdateExisting = async (dupData: Record<string, unknown>) => {
+    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat';
     try {
       await apiFetch('/workflows/triage-workflow/trigger', {
         method: 'POST',
         body: JSON.stringify({
           description: `Update existing ticket: ${dupData.existingTicketTitle ?? ''}`,
-          reporterEmail: 'user@agenticengineering.lat',
+          reporterEmail,
           repository: 'Agentic-Engineering-Agency/triage',
         }),
       });
@@ -274,13 +369,20 @@ function ChatPage() {
     }
   };
 
-  const handleCreateNew = async (dupData: Record<string, unknown>) => {
+  const handleCreateNew = async (_dupData: Record<string, unknown>) => {
+    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat';
+    // Use the last user message text as the incident description
+    const lastUserMessage = messages.filter(m => m.role === 'user').at(-1);
+    const description = lastUserMessage?.parts
+      .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+      .map(p => p.text)
+      .join('') ?? '';
     try {
       await apiFetch('/workflows/triage-workflow/trigger', {
         method: 'POST',
         body: JSON.stringify({
-          description: dupData.existingTicketTitle ?? '',
-          reporterEmail: 'user@agenticengineering.lat',
+          description,
+          reporterEmail,
           repository: 'Agentic-Engineering-Agency/triage',
         }),
       });
@@ -293,7 +395,43 @@ function ChatPage() {
   const hasMessages = messages.length > 0
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full">
+      {/* Conversations sidebar */}
+      <div className="w-48 shrink-0 border-r border-border/50 flex flex-col bg-card/30">
+        <div className="flex items-center justify-between px-3 py-2.5 border-b border-border/50">
+          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Chats</span>
+          <button
+            onClick={startNewConversation}
+            className="h-6 w-6 flex items-center justify-center rounded-lg hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+            title="New conversation"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto py-1">
+          {conversations.length === 0 ? (
+            <p className="text-xs text-muted-foreground px-3 py-2">No conversations yet</p>
+          ) : conversations.map(conv => (
+            <button
+              key={conv.id}
+              onClick={() => setActiveThreadId(conv.id)}
+              className={`w-full text-left px-3 py-2 flex items-start gap-2 group hover:bg-muted/30 transition-colors ${conv.id === activeThreadId ? 'bg-muted/50' : ''}`}
+            >
+              <MessageSquare className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+              <span className="text-xs text-foreground truncate flex-1 leading-snug">{conv.title}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id) }}
+                className="opacity-0 group-hover:opacity-100 h-4 w-4 flex items-center justify-center text-muted-foreground hover:text-destructive transition-all shrink-0"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Main chat area */}
+    <div className="flex flex-1 flex-col min-w-0">
       {/* Messages area */}
       <div className="flex flex-1 flex-col overflow-y-auto">
         {!hasMessages ? (
@@ -391,11 +529,20 @@ function ChatPage() {
                           // Special handling for displayTriage with onCreateTicket wired
                           if (toolKey === 'displayTriage' && toolPart.state === 'output-available') {
                             const output = toolPart.output as Record<string, unknown>
+                            const cardKey = `${message.id}-${i}`
+                            const override = cardStates[cardKey]
+                            const cardState = override?.state === 'confirmed' ? 'confirmed'
+                              : override?.state === 'error' ? 'error'
+                              : (output.state as import("@/components/triage-card").TriageCardState) ?? 'pending'
                             return (
                               <div key={`tool-${i}`} className="mt-2">
                                 <TriageCard
                                   {...(output as unknown as import("@/components/triage-card").TriageCardProps)}
-                                  onCreateTicket={() => handleCreateTicket(output)}
+                                  state={cardState}
+                                  isSubmitting={override?.state === 'submitting'}
+                                  errorMessage={override?.errorMessage ?? output.errorMessage as string | undefined}
+                                  onCreateTicket={() => handleCreateTicket(output, cardKey)}
+                                  onRetry={() => handleCreateTicket(output, cardKey)}
                                 />
                               </div>
                             )
@@ -439,7 +586,31 @@ function ChatPage() {
                               </div>
                             )
                           }
-                          return null
+
+                          // Generic step indicator for tools without a custom component
+                          const stepLabel = toolKey.replace(/-/g, ' ')
+                          if (toolPart.state === "output-available") {
+                            return (
+                              <div key={`tool-${i}`} className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">
+                                <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
+                                <span>{stepLabel}</span>
+                              </div>
+                            )
+                          }
+                          if (toolPart.state === "output-error") {
+                            return (
+                              <div key={`tool-${i}`} className="flex items-center gap-2 mt-1.5 text-xs text-destructive">
+                                <span className="h-1.5 w-1.5 rounded-full bg-destructive shrink-0" />
+                                <span>{stepLabel} failed</span>
+                              </div>
+                            )
+                          }
+                          return (
+                            <div key={`tool-${i}`} className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">
+                              <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+                              <span>{stepLabel}...</span>
+                            </div>
+                          )
                         })}
                       </>
                     )
@@ -657,6 +828,7 @@ function ChatPage() {
           </form>
         </div>
       </div>
+    </div>
     </div>
   )
 }

@@ -44,7 +44,8 @@ export const queryWikiTool = createTool({
       .describe('Number of top results to return'),
   }),
   outputSchema: wikiQueryResultSchema,
-  execute: async () => {
-    throw new Error('Not implemented yet');
+  execute: async ({ context }) => {
+    // Wiki not yet populated — return empty results so triage continues without RAG context
+    return { results: [], query: context.query, totalResults: 0 };
   },
 });
