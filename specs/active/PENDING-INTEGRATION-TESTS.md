@@ -1,75 +1,45 @@
-# PENDING INTEGRATION TESTS — Requires Running Docker Stack
+# INTEGRATION TEST STATUS — Manual Sync Note
 
-> **DO NOT SHIP TO PRODUCTION WITHOUT COMPLETING THESE.**
-> These tests are marked `it.todo(...)` because they require a live Docker
-> environment (docker compose up) to validate. They CANNOT be tested via
-> static file analysis alone. Implement them once the full stack runs.
+> This file is still referenced by `PROJECT_STATE.md`, but its original "19 pending `it.todo(...)` tests" status is stale.
+> As of 2026-04-08, the 19 infrastructure scenarios have been implemented as executable tests across the infra test suite.
 
-## Status: 19 tests pending across 4 files
+## Status
 
----
+- 19/19 infrastructure scenarios implemented
+- 4 infra test files updated
+- no executable `it.todo(...)` cases remain in `tests/infra-docker/`
+- live-stack smoke validation with `docker compose up --build` is still recommended before a final hackathon demo
 
-## Priority 1 — Full Stack Smoke Tests (docker-compose.test.ts)
+## Implemented Coverage
 
-These block "it works from clean clone" confidence:
+### architecture-alignment.test.ts
 
-| # | Test | What to validate |
-|---|------|-----------------|
-| 1 | all 9 containers should start and become healthy within 120s | `docker compose up --build`, then `docker compose ps` — all healthy |
-| 2 | docker compose config should validate without errors | `docker compose config` exits 0, produces valid merged YAML |
-| 3 | error case: missing .env variable causes clear startup error | Remove a required var, verify compose fails with clear message |
+- 13 tests covering network segmentation, hostname resolution, Caddy proxy behavior, dev/prod mode assumptions, config routing, and Langfuse-related service expectations
 
-## Priority 2 — Network Isolation (architecture-alignment.test.ts)
+### docker-compose.test.ts
 
-These validate the dual-network architecture actually works:
+- 3 tests covering compose smoke/config validation and missing `.env` failure behavior
 
-| # | Test | What to validate |
-|---|------|-----------------|
-| 4 | network isolation — app-only service cannot resolve langfuse-only hostname | `docker exec frontend nslookup clickhouse` should FAIL |
-| 5 | runtime resolves both libsql and langfuse-web hostnames | `docker exec runtime nslookup libsql` AND `nslookup langfuse-web` both succeed |
-| 6 | Caddy proxies to runtime:4111 successfully | `curl http://localhost:3001/api/health` returns 200 |
+### dockerfiles.test.ts
 
-## Priority 3 — Dev/Prod Mode Switching (architecture-alignment.test.ts)
+- 1 test covering the total image-size constraint
 
-| # | Test | What to validate |
-|---|------|-----------------|
-| 7 | docker compose up auto-loads override and starts vite with HMR | `docker compose up` → vite container running on :5173 |
-| 8 | docker compose -f docker-compose.yml up skips override | Explicit base-only → no vite container |
-| 9 | Caddy starts in prod mode when FRONTEND_MODE is unset | Static files served from /srv |
-| 10 | Caddy proxies to vite:5173 when FRONTEND_MODE=dev | Frontend requests reach Vite |
+### env-config.test.ts
 
-## Priority 4 — Config & Service Integration (architecture-alignment.test.ts)
+- 3 tests covering integration env vars, demo-mode behavior without Linear, and missing OpenRouter handling
 
-| # | Test | What to validate |
-|---|------|-----------------|
-| 11 | GET /config.json returns JSON in prod mode | `curl http://localhost:3001/config.json` returns valid JSON, NOT index.html |
-| 12 | in dev mode, Vite serves /config.json from public directory | Same endpoint works via Vite proxy |
-| 13 | ClickHouse starts with password, Langfuse connects | Check langfuse-web logs for successful ClickHouse connection |
-| 14 | MinIO starts, healthcheck passes, dependents can connect | Check langfuse-worker logs for successful S3 operations |
-| 15 | redis healthcheck runs without auth warning in logs | `docker compose logs redis` has no "Warning: Using a password" |
+## What Still Needs Manual Verification
 
-## Priority 5 — Graceful Degradation (env-config.test.ts)
+These items are no longer "missing tests," but they are still worth exercising against a running stack before submission:
 
-| # | Test | What to validate |
-|---|------|-----------------|
-| 16 | all API keys configured uses real integrations | Full flow with real keys |
-| 17 | demo environment has no Linear workspace | LINEAR_API_KEY empty → local tickets work |
-| 18 | OPENROUTER_API_KEY completely missing prevents triage | Clear error message shown |
+1. `docker compose up --build` from a clean clone
+2. stub frontend at `http://localhost:3001`
+3. runtime health endpoint at `http://localhost:3001/api/health`
+4. `config.json` served correctly through Caddy
+5. Langfuse dashboard availability at `http://localhost:3000`
 
-## Priority 6 — Image Size (dockerfiles.test.ts)
+## Notes
 
-| # | Test | What to validate |
-|---|------|-----------------|
-| 19 | total docker image size should not exceed 2GB | `docker images` sum ≤ 2GB |
-
----
-
-## How to implement
-
-Once `docker compose up --build` works end-to-end:
-
-1. Convert each `it.todo(...)` to a real `it(...)` with assertions
-2. For tests needing Docker: use `execSync('docker ...')` in beforeAll/test
-3. For tests needing HTTP: use `fetch` or `execSync('curl ...')`
-4. Mark with `@integration` tag or put in separate test file for CI separation
-5. Run with: `npx vitest run --reporter=verbose`
+- The compose stack currently falls back to stub frontend/runtime containers when the real app code is not present.
+- Live Docker/Helm smoke assertions are opt-in via `RUN_MANUAL_INFRA_TESTS=1 npm test`.
+- This file was updated manually to keep the written documentation aligned with the implemented tests. `PROJECT_STATE.md` still needs a formal SpecSafe workflow update.
