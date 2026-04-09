@@ -328,6 +328,16 @@ All 10 containers define Docker `healthcheck` directives (cloudflared uses `rest
 - `tests/infra-docker/docker-compose.test.ts` — validates compose parsing and environment failure behavior
 - `tests/infra-docker/dockerfiles.test.ts` — enforces the image-size constraint for the hackathon stack
 
+### Screenshots
+
+**Langfuse Dashboard — Project Overview (model costs, trace count, usage graph):**
+
+![Langfuse Dashboard](/evidence/04-langfuse-dashboard.png)
+
+**Langfuse Traces — End-to-end trace listing with agent calls:**
+
+![Langfuse Traces](/evidence/05-langfuse-traces.png)
+
 ---
 
 ## 7. Security & Guardrails
@@ -385,6 +395,20 @@ External service failures never block triage:
 - `runtime/src/mastra/tools/resend.test.ts` — verifies graceful degradation when API key is absent, idempotency-key usage, and PII masking in log output
 - `tests/infra-docker/env-config.test.ts` — verifies documented integration env vars and missing-key behavior at startup
 - `tests/infra-docker/*.test.ts` — validates infrastructure security properties: network isolation, port binding, healthcheck presence, and container configuration
+
+### Screenshots
+
+**Login Page — Better Auth with email/password, HttpOnly session cookies:**
+
+![Login Page](/evidence/01-login-page.png)
+
+**Chat UI — Multimodal input with file attachments, error boundary on agent failure:**
+
+![Chat UI](/evidence/07-chat-incident-submitted.png)
+
+**Kanban Board — Linear integration with live issue data:**
+
+![Kanban Board](/evidence/08-board-kanban.png)
 
 ---
 
