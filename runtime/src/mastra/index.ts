@@ -1,13 +1,11 @@
 import { Mastra } from '@mastra/core';
 import { LibSQLStore } from '@mastra/libsql';
 import { chatRoute } from '@mastra/ai-sdk';
-import { registerApiRoute } from '@mastra/core/server';
 import { LinearClient } from '@linear/sdk';
 import type { Context } from 'hono';
 
 import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent } from './agents/index';
 import { triageWorkflow } from './workflows/index';
-import { auth } from '../lib/auth';
 import { config, LINEAR_CONSTANTS } from '../lib/config';
 
 // Linear client singleton — only instantiate if API key is configured
@@ -30,12 +28,6 @@ export const mastra = new Mastra({
   server: {
     apiRoutes: [
       chatRoute({ path: '/chat', agent: 'orchestrator' }),
-      registerApiRoute('/auth/*', {
-        method: 'ALL',
-        handler: async (c) => {
-          return auth.handler(c.req.raw);
-        },
-      }),
 
       // GET /api/linear/issues — fetch and group by state
       {
