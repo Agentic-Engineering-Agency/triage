@@ -1,0 +1,53 @@
+name: Deploy Docs
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - 'docs-site/**'
+      - 'README.md'
+      - 'AGENTS_USE.md'
+      - 'SCALING.md'
+      - 'QUICKGUIDE.md'
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'docs-site/**'
+      - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: docs-site/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: docs-site
+        run: pnpm install --frozen-lockfile
+
+      - name: Build static site
+        working-directory: docs-site
+        run: pnpm build
+
+      - name: Deploy to Cloudflare Pages
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy ./out --project-name triage-docs --branch main --commit-dirty=true
+          workingDirectory: docs-site

@@ -1,87 +1,119 @@
-# Quick Guide — Get Triage Running in 5 Minutes
+# Quick Start Guide — Triage
 
-> This branch is the hackathon foundation layer. `docker compose up --build` starts the full infrastructure plus stub frontend/runtime containers when the real app code is not present yet.
+Get the full Triage system running locally in about 5 minutes.
 
-## Step 1: Clone the Repository
+## Prerequisites
+
+- Docker and Docker Compose v2+
+- API keys for: OpenRouter, Linear, Resend
+
+## Steps
+
+### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/Agentic-Engineering-Agency/triage.git
 cd triage
 ```
 
-> Already have a clone? Skip this step and pull the latest changes instead:
-> ```bash
-> git pull origin main
-> ```
+Already have a clone? Pull the latest:
 
-## Step 2: Configure Environment
+```bash
+git pull origin main
+```
+
+### 2. Copy the Environment File
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and replace all `CHANGEME` values with your actual secrets (API keys, passwords, etc.).
+### 3. Fill in Mandatory Environment Variables
 
-## Step 3: Run the Verification Suite
+Open `.env` and set at minimum these four variables:
 
-```bash
-npm test
-```
+| Variable | Required | Where to Get It |
+|----------|----------|-----------------|
+| `OPENROUTER_API_KEY` | Yes | [openrouter.ai](https://openrouter.ai) → Keys |
+| `LINEAR_API_KEY` | Yes | [linear.app](https://linear.app) → Settings → API |
+| `RESEND_API_KEY` | Yes | [resend.com](https://resend.com) → API Keys |
+| `BETTER_AUTH_SECRET` | Yes | Any random 32+ character string |
+| `RESEND_FROM_EMAIL` | Recommended | A verified sender address on your Resend domain |
+| `CLOUDFLARE_TUNNEL_TOKEN` | Optional | Cloudflare Tunnel token for exposing Langfuse publicly. Get with: `cloudflared tunnel token triage-hackathon` |
 
-This runs the committed runtime and infrastructure test suites before you boot the stack.
+The full `.env.example` documents all 38 variables with descriptions and defaults.
 
-To include the opt-in live Docker/Helm smoke checks, run:
-
-```bash
-RUN_MANUAL_INFRA_TESTS=1 npm test
-```
-
-## Step 4: Start All Services
+### 4. Start All Services
 
 ```bash
 docker compose up --build
 ```
 
-This builds and starts all 9 containers. First run takes a few minutes to pull images.
+The first run pulls base images and builds both app containers — allow about 2 minutes. Subsequent starts are faster.
 
-## Step 5: Access the Stack
+### 5. Open the App
 
-Open your browser and navigate to:
-
-- **Frontend container**: [http://localhost:3001](http://localhost:3001)
+- **Chat UI**: [http://localhost:3001](http://localhost:3001)
 - **Langfuse Dashboard**: [http://localhost:3000](http://localhost:3000)
 
-On the current branch, `http://localhost:3001` is expected to show the infrastructure stub page unless a real `frontend/` application has been added.
+## You're Ready When...
 
-## Step 6: Verify the Runtime Stub and Observability
+- `docker compose ps` shows all 10 containers as healthy
+- `http://localhost:3001/health` returns `OK`
+- The chat UI loads at `http://localhost:3001/chat`
 
-- `http://localhost:3001/api/health` should return a healthy JSON response from the stub runtime
-- `http://localhost:3001/config.json` should return the mounted runtime config file
-- `http://localhost:3000` should load the Langfuse dashboard
+## Try It Out
 
-## Step 7: Inspect the Implemented Hackathon Foundation
+1. Go to `http://localhost:3001/register` to create an account, then log in
+2. In the chat, describe an incident:
+   > "We're seeing 500 errors on the checkout page starting 20 minutes ago. The payment service logs show a timeout connecting to the order processor."
+3. The agent triages the incident and displays a **TriageCard** with severity, confidence score, root cause, and affected file references
+4. Click **Create Ticket** to approve — the agent creates a Linear issue and sends an email notification to the team
+5. When a fix ships, the webhook triggers the Resolution Reviewer agent to confirm resolution and notify the reporter
 
-- Linear tools: `runtime/src/mastra/tools/linear.ts`
-- Resend tools: `runtime/src/mastra/tools/resend.ts`
-- Shared schemas: `runtime/src/lib/schemas/ticket.ts`
-- Infra tests: `tests/infra-docker/*.test.ts`
+## Optional: Run Tests
 
-The full chat UI and workflow runtime are planned but not fully committed on this branch yet.
+```bash
+pnpm test
+```
 
----
+To include live infrastructure smoke checks:
+
+```bash
+RUN_MANUAL_INFRA_TESTS=1 pnpm test
+```
+
+## Optional: Langfuse Observability Dashboard
+
+Open [http://localhost:3000](http://localhost:3000) to view LLM traces, token costs, and latency metrics for every agent invocation. On first load you will be prompted to create a local admin account.
+
+## Optional: Database Studio
+
+```bash
+cd runtime && npx drizzle-kit studio
+```
+
+Connects to the LibSQL instance at `localhost:8080` for schema inspection and direct queries.
 
 ## Troubleshooting
 
-### Common Issues
+**Port conflict on 3001 or 3000**
+Change `CADDY_PORT` or `LANGFUSE_PORT` in `.env` before starting.
 
-**Port conflicts**: If port 3001 is already in use, change `CADDY_PORT` in `.env`.
+**Docker build fails**
+Ensure Docker Desktop is running with at least 4 GB RAM allocated. On Linux, confirm the Docker daemon is active: `systemctl status docker`.
 
-**Docker build fails**: Ensure Docker Desktop is running and you have at least 4GB RAM allocated.
+**A container is unhealthy or keeps restarting**
+Check its logs: `docker compose logs -f <service-name>`. The most common cause is a missing or incorrect env var.
 
-**Services not starting**: Run `docker compose logs` to check for errors. Ensure all `CHANGEME` values in `.env` have been replaced.
+**`CHANGEME` values still in .env**
+The runtime will refuse to start if required secrets are not set. Search your `.env` for `CHANGEME` and replace every occurrence.
 
-**Database connection errors**: Wait 10-15 seconds after startup for all services to initialize.
+**Database connection errors on first boot**
+LibSQL takes a few seconds to initialize. Wait 10–15 seconds after all containers report healthy, then retry.
 
-**Dev mode does not work**: `docker-compose.override.yml` expects a real `frontend/` app and a real runtime entrypoint. On this branch, development mode is intentionally incomplete because Docker falls back to the stubs.
+**Email not arriving**
+Verify `RESEND_API_KEY` is valid and `RESEND_FROM_EMAIL` matches a verified sender domain in your Resend account.
 
-**Why am I seeing a stub page?**: That is expected until the frontend SPA and runtime entrypoint are added. The compose stack is still useful for validating networking, health checks, config serving, and Langfuse.
+**Linear ticket not created**
+Check that `LINEAR_API_KEY` has write access and that `LINEAR_TEAM_ID` in `.env` matches an existing team. If Linear is unreachable, Triage falls back to storing tickets in the local `local_tickets` table — check the runtime logs for the fallback message.

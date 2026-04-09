@@ -1,0 +1,48 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+:root {
+  --fd-primary: 214 60% 45%;
+  --fd-background: 0 0% 98%;
+  --fd-foreground: 220 15% 12%;
+  --fd-muted: 220 10% 94%;
+  --fd-muted-foreground: 220 10% 45%;
+  --fd-border: 220 10% 88%;
+  --fd-card: 0 0% 100%;
+  --fd-card-foreground: 220 15% 12%;
+  --fd-accent: 214 60% 95%;
+  --fd-accent-foreground: 214 60% 30%;
+}
+
+.dark {
+  --fd-primary: 214 60% 62%;
+  --fd-background: 220 15% 8%;
+  --fd-foreground: 220 10% 92%;
+  --fd-muted: 220 12% 14%;
+  --fd-muted-foreground: 220 10% 55%;
+  --fd-border: 220 12% 18%;
+  --fd-card: 220 12% 11%;
+  --fd-card-foreground: 220 10% 92%;
+  --fd-accent: 214 40% 18%;
+  --fd-accent-foreground: 214 60% 72%;
+}
+
+/* Sidebar footer — completely remove the theme toggle container box */
+#nd-sidebar {
+  --color-fd-secondary: transparent;
+}
+
+#nd-sidebar .flex.items-center.border.rounded-lg,
+#nd-sidebar div:has(> [data-theme-toggle]) {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  justify-content: center !important;
+}
+
+#nd-sidebar [data-theme-toggle] {
+  border: none !important;
+  padding: 0.25rem !important;
+}
