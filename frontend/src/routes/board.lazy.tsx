@@ -303,7 +303,7 @@ function CycleSidebar({
 
   const metrics = useMemo(() => {
     const scope = cycle?.scopeCount || totalIssues;
-    const started = cycle?.startedScopeCount || allIssues.filter((i) => {
+    const started = cycle?.startedScopeCount || allIssues.filter((_i) => {
       // "started" means In Progress or In Review
       return true; // We don't have state info per issue here directly, use cycle data
     }).length;
