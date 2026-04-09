@@ -34,6 +34,15 @@ const mockDrizzle = vi.fn().mockReturnValue(mockDbInstance);
 
 vi.mock('@libsql/client', () => ({ createClient: mockCreateClient }));
 vi.mock('drizzle-orm/libsql', () => ({ drizzle: mockDrizzle }));
+vi.mock('./schema', () => ({
+  authUser: {},
+  authSession: {},
+  authAccount: {},
+  authVerification: {},
+  wikiDocuments: {},
+  wikiChunks: {},
+  localTickets: {},
+}));
 
 describe('REQ-DB14: Drizzle Client Module', () => {
   const originalEnv = { ...process.env };

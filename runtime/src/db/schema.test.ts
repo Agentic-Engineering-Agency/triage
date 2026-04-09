@@ -164,6 +164,8 @@ describe('REQ-DB15: auth_account columns', () => {
     'accessToken',
     'refreshToken',
     'idToken',
+    'accessTokenExpiresAt',
+    'refreshTokenExpiresAt',
     'scope',
     'password',
     'createdAt',

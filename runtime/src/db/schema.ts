@@ -10,8 +10,8 @@ export const authUser = sqliteTable('auth_user', {
   email: text('email').notNull().unique(),
   emailVerified: integer('email_verified', { mode: 'boolean' }).notNull().default(false),
   image: text('image'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
 export const authSession = sqliteTable('auth_session', {
@@ -21,8 +21,8 @@ export const authSession = sqliteTable('auth_session', {
   token: text('token').notNull().unique(),
   ipAddress: text('ip_address'),
   userAgent: text('user_agent'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
 export const authAccount = sqliteTable('auth_account', {
@@ -33,10 +33,12 @@ export const authAccount = sqliteTable('auth_account', {
   accessToken: text('access_token'),
   refreshToken: text('refresh_token'),
   idToken: text('id_token'),
+  accessTokenExpiresAt: integer('access_token_expires_at', { mode: 'timestamp' }),
+  refreshTokenExpiresAt: integer('refresh_token_expires_at', { mode: 'timestamp' }),
   scope: text('scope'),
   password: text('password'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
 export const authVerification = sqliteTable('auth_verification', {
@@ -44,8 +46,8 @@ export const authVerification = sqliteTable('auth_verification', {
   identifier: text('identifier').notNull(),
   value: text('value').notNull(),
   expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
 // ─── Wiki Tables ────────────────────────────────────────────────
@@ -56,17 +58,17 @@ export const wikiDocuments = sqliteTable('wiki_documents', {
   filePath: text('file_path').notNull(),
   summary: text('summary').notNull(),
   pass: integer('pass').notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
 export const wikiChunks = sqliteTable('wiki_chunks', {
   id: text('id').primaryKey(),
-  documentId: text('document_id').notNull().references(() => wikiDocuments.id),
+  documentId: text('document_id').notNull().references(() => wikiDocuments.id, { onDelete: 'cascade' }),
   content: text('content').notNull(),
   chunkIndex: integer('chunk_index').notNull(),
   embedding: float32Array('embedding', { dimensions: 1536 }),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
 // ─── Local Tickets ──────────────────────────────────────────────
@@ -80,8 +82,8 @@ export const localTickets = sqliteTable('local_tickets', {
   priority: integer('priority').notNull(),
   status: text('status').notNull().default('triage'),
   assigneeId: text('assignee_id').references(() => authUser.id),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
   syncedAt: integer('synced_at', { mode: 'timestamp' }),
 });
 

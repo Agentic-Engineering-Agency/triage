@@ -6,6 +6,8 @@ CREATE TABLE `auth_account` (
 	`access_token` text,
 	`refresh_token` text,
 	`id_token` text,
+	`access_token_expires_at` integer,
+	`refresh_token_expires_at` integer,
 	`scope` text,
 	`password` text,
 	`created_at` integer NOT NULL,
@@ -68,7 +70,7 @@ CREATE TABLE `wiki_chunks` (
 	`chunk_index` integer NOT NULL,
 	`embedding` F32_BLOB(1536),
 	`created_at` integer NOT NULL,
-	FOREIGN KEY (`document_id`) REFERENCES `wiki_documents`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`document_id`) REFERENCES `wiki_documents`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE TABLE `wiki_documents` (
