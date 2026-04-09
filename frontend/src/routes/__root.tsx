@@ -1,4 +1,4 @@
-import { createRootRoute, Link, Outlet, useLocation } from "@tanstack/react-router"
+import { createRootRoute, Link, Navigate, Outlet, useLocation } from "@tanstack/react-router"
 import { TanStackRouterDevtools } from "@tanstack/router-devtools"
 import { MessageSquare, LayoutGrid, Settings, Sun, Moon } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
@@ -9,7 +9,7 @@ export const Route = createRootRoute({
 })
 
 function RootLayout() {
-  const { /* isAuthenticated, isLoading */ } = useAuth()
+  const { isAuthenticated, isLoading, user } = useAuth()
   const { resolvedTheme, setTheme } = useTheme()
   const location = useLocation()
 
@@ -17,18 +17,21 @@ function RootLayout() {
   const isAuthPage =
     location.pathname === "/login" || location.pathname === "/register"
 
-  // TODO: Uncomment when Better Auth is connected (TRI-4 + TRI-21)
-  // if (isLoading) {
-  //   return (
-  //     <div className="flex h-screen items-center justify-center bg-background">
-  //       <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-  //     </div>
-  //   )
-  // }
-  //
-  // if (!isAuthenticated && !isAuthPage) {
-  //   return <Navigate to="/login" />
-  // }
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    )
+  }
+
+  if (!isAuthenticated && !isAuthPage) {
+    return <Navigate to="/login" />
+  }
+
+  if (isAuthenticated && isAuthPage) {
+    return <Navigate to="/chat" />
+  }
 
   // Auth pages render without sidebar
   if (isAuthPage) {
@@ -83,11 +86,11 @@ function RootLayout() {
         <div className="px-4 pb-4">
           <div className="flex items-center gap-2.5 rounded-xl bg-muted/40 px-3 py-2">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-secondary/30 text-xs font-bold text-secondary">
-              K
+              {user?.name?.[0]?.toUpperCase() || "?"}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-foreground truncate">Koki</p>
-              <p className="text-[10px] text-muted-foreground truncate">Developer</p>
+              <p className="text-xs font-medium text-foreground truncate">{user?.name || "User"}</p>
+              <p className="text-[10px] text-muted-foreground truncate">{user?.email || ""}</p>
             </div>
           </div>
         </div>
