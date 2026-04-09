@@ -21,7 +21,7 @@ export const toolComponents: Record<string, ComponentType<any>> = {
  * Duplicate detection prompt card.
  * Renders when the agent detects a similar existing ticket.
  */
-function DuplicatePrompt({
+export function DuplicatePrompt({
   existingTicketTitle,
   existingTicketUrl,
   similarity,

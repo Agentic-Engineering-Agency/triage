@@ -4,8 +4,10 @@ import { DefaultChatTransport } from "ai"
 import { useRef, useState, useCallback, useEffect } from "react"
 import { Send, Paperclip, X, ZoomIn, FileText, FileCode, File as FileIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { toolComponents } from "@/components/tool-registry"
+import { toolComponents, DuplicatePrompt } from "@/components/tool-registry"
+import { TriageCard } from "@/components/triage-card"
 import { getDraft, saveDraft, clearDraft } from "@/lib/chat-draft"
+import { apiFetch } from "@/lib/api"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -240,6 +242,54 @@ function ChatPage() {
     [handleSubmit],
   )
 
+  const handleCreateTicket = async (triageData: Record<string, unknown>) => {
+    try {
+      await apiFetch('/workflows/triage-workflow/trigger', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: triageData.summary ?? '',
+          reporterEmail: 'user@agenticengineering.lat',
+          repository: 'Agentic-Engineering-Agency/triage',
+        }),
+      });
+      console.log('[chat] Workflow triggered successfully');
+    } catch (error) {
+      console.error('[chat] Failed to trigger workflow:', error);
+    }
+  };
+
+  const handleUpdateExisting = async (dupData: Record<string, unknown>) => {
+    try {
+      await apiFetch('/workflows/triage-workflow/trigger', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: `Update existing ticket: ${dupData.existingTicketTitle ?? ''}`,
+          reporterEmail: 'user@agenticengineering.lat',
+          repository: 'Agentic-Engineering-Agency/triage',
+        }),
+      });
+      console.log('[chat] Update existing triggered');
+    } catch (error) {
+      console.error('[chat] Failed to update existing:', error);
+    }
+  };
+
+  const handleCreateNew = async (dupData: Record<string, unknown>) => {
+    try {
+      await apiFetch('/workflows/triage-workflow/trigger', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: dupData.existingTicketTitle ?? '',
+          reporterEmail: 'user@agenticengineering.lat',
+          repository: 'Agentic-Engineering-Agency/triage',
+        }),
+      });
+      console.log('[chat] Create new triggered');
+    } catch (error) {
+      console.error('[chat] Failed to create new:', error);
+    }
+  };
+
   const hasMessages = messages.length > 0
 
   return (
@@ -337,6 +387,33 @@ function ChatPage() {
                           const toolPart = part as any
                           const toolKey = part.type.replace("tool-", "")
                           const ToolComponent = toolComponents[toolKey]
+
+                          // Special handling for displayTriage with onCreateTicket wired
+                          if (toolKey === 'displayTriage' && toolPart.state === 'output-available') {
+                            const output = toolPart.output as Record<string, unknown>
+                            return (
+                              <div key={`tool-${i}`} className="mt-2">
+                                <TriageCard
+                                  {...(output as unknown as import("@/components/triage-card").TriageCardProps)}
+                                  onCreateTicket={() => handleCreateTicket(output)}
+                                />
+                              </div>
+                            )
+                          }
+
+                          // Special handling for displayDuplicate with onUpdateExisting/onCreateNew wired
+                          if (toolKey === 'displayDuplicate' && toolPart.state === 'output-available') {
+                            const output = toolPart.output as Record<string, unknown>
+                            return (
+                              <div key={`tool-${i}`} className="mt-2">
+                                <DuplicatePrompt
+                                  {...output}
+                                  onUpdateExisting={() => handleUpdateExisting(output)}
+                                  onCreateNew={() => handleCreateNew(output)}
+                                />
+                              </div>
+                            )
+                          }
 
                           if (ToolComponent) {
                             if (toolPart.state === "output-available") {
