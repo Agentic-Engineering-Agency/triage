@@ -22,7 +22,6 @@ export const createLinearIssue = createTool({
   id: 'create-linear-issue',
   description: 'Create a new Linear issue with title, description, priority, and optional assignee/labels.',
   inputSchema: ticketCreateSchema,
-  requireApproval: true,
   execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
     const ctx = (input as Record<string, unknown>)?.context ?? input;
     if (!linearClient) {

@@ -64,6 +64,10 @@ function ChatPage() {
     content?: string
     name: string
   } | null>(null)
+  const [cardStates, setCardStates] = useState<Record<string, {
+    state: 'submitting' | 'confirmed' | 'error';
+    errorMessage?: string;
+  }>>({});
 
   // Persist draft when input or attachments change
   useEffect(() => {
@@ -242,29 +246,33 @@ function ChatPage() {
     [handleSubmit],
   )
 
-  const handleCreateTicket = async (triageData: Record<string, unknown>) => {
+  const handleCreateTicket = async (triageData: Record<string, unknown>, cardKey: string) => {
+    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat';
+    setCardStates(prev => ({ ...prev, [cardKey]: { state: 'submitting' } }));
     try {
       await apiFetch('/workflows/triage-workflow/trigger', {
         method: 'POST',
         body: JSON.stringify({
           description: triageData.summary ?? '',
-          reporterEmail: 'user@agenticengineering.lat',
+          reporterEmail,
           repository: 'Agentic-Engineering-Agency/triage',
         }),
       });
-      console.log('[chat] Workflow triggered successfully');
+      setCardStates(prev => ({ ...prev, [cardKey]: { state: 'confirmed' } }));
     } catch (error) {
-      console.error('[chat] Failed to trigger workflow:', error);
+      const message = error instanceof Error ? error.message : 'Failed to create ticket';
+      setCardStates(prev => ({ ...prev, [cardKey]: { state: 'error', errorMessage: message } }));
     }
   };
 
   const handleUpdateExisting = async (dupData: Record<string, unknown>) => {
+    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat';
     try {
       await apiFetch('/workflows/triage-workflow/trigger', {
         method: 'POST',
         body: JSON.stringify({
           description: `Update existing ticket: ${dupData.existingTicketTitle ?? ''}`,
-          reporterEmail: 'user@agenticengineering.lat',
+          reporterEmail,
           repository: 'Agentic-Engineering-Agency/triage',
         }),
       });
@@ -274,13 +282,20 @@ function ChatPage() {
     }
   };
 
-  const handleCreateNew = async (dupData: Record<string, unknown>) => {
+  const handleCreateNew = async (_dupData: Record<string, unknown>) => {
+    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat';
+    // Use the last user message text as the incident description
+    const lastUserMessage = messages.filter(m => m.role === 'user').at(-1);
+    const description = lastUserMessage?.parts
+      .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+      .map(p => p.text)
+      .join('') ?? '';
     try {
       await apiFetch('/workflows/triage-workflow/trigger', {
         method: 'POST',
         body: JSON.stringify({
-          description: dupData.existingTicketTitle ?? '',
-          reporterEmail: 'user@agenticengineering.lat',
+          description,
+          reporterEmail,
           repository: 'Agentic-Engineering-Agency/triage',
         }),
       });
@@ -391,11 +406,20 @@ function ChatPage() {
                           // Special handling for displayTriage with onCreateTicket wired
                           if (toolKey === 'displayTriage' && toolPart.state === 'output-available') {
                             const output = toolPart.output as Record<string, unknown>
+                            const cardKey = `${message.id}-${i}`
+                            const override = cardStates[cardKey]
+                            const cardState = override?.state === 'confirmed' ? 'confirmed'
+                              : override?.state === 'error' ? 'error'
+                              : (output.state as import("@/components/triage-card").TriageCardState) ?? 'pending'
                             return (
                               <div key={`tool-${i}`} className="mt-2">
                                 <TriageCard
                                   {...(output as unknown as import("@/components/triage-card").TriageCardProps)}
-                                  onCreateTicket={() => handleCreateTicket(output)}
+                                  state={cardState}
+                                  isSubmitting={override?.state === 'submitting'}
+                                  errorMessage={override?.errorMessage ?? output.errorMessage as string | undefined}
+                                  onCreateTicket={() => handleCreateTicket(output, cardKey)}
+                                  onRetry={() => handleCreateTicket(output, cardKey)}
                                 />
                               </div>
                             )
@@ -439,7 +463,31 @@ function ChatPage() {
                               </div>
                             )
                           }
-                          return null
+
+                          // Generic step indicator for tools without a custom component
+                          const stepLabel = toolKey.replace(/-/g, ' ')
+                          if (toolPart.state === "output-available") {
+                            return (
+                              <div key={`tool-${i}`} className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">
+                                <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
+                                <span>{stepLabel}</span>
+                              </div>
+                            )
+                          }
+                          if (toolPart.state === "output-error") {
+                            return (
+                              <div key={`tool-${i}`} className="flex items-center gap-2 mt-1.5 text-xs text-destructive">
+                                <span className="h-1.5 w-1.5 rounded-full bg-destructive shrink-0" />
+                                <span>{stepLabel} failed</span>
+                              </div>
+                            )
+                          }
+                          return (
+                            <div key={`tool-${i}`} className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">
+                              <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+                              <span>{stepLabel}...</span>
+                            </div>
+                          )
                         })}
                       </>
                     )

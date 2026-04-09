@@ -12,11 +12,50 @@ interface TeamMember {
   displayName: string;
 }
 
+const FALLBACK_EMAIL = 'user@agenticengineering.lat';
+
 function SettingsPage() {
   const queryClient = useQueryClient();
   const [repoUrl, setRepoUrl] = useState('');
   const [linearToken, setLinearToken] = useState('');
-  const [tokenStatus, setTokenStatus] = useState<'idle' | 'valid' | 'invalid'>('idle');
+  const [tokenStatus, setTokenStatus] = useState<'idle' | 'valid' | 'invalid' | 'testing'>('idle');
+  const [tokenError, setTokenError] = useState<string | null>(null);
+
+  // Notification email — stored in localStorage, falls back to hardcoded default
+  const [notifyEmail, setNotifyEmail] = useState(
+    () => localStorage.getItem('reporter_email') ?? FALLBACK_EMAIL
+  );
+  const [emailSaved, setEmailSaved] = useState(false);
+
+  // Webhook configuration
+  const [webhookUrl, setWebhookUrl] = useState(
+    () => localStorage.getItem('webhook_url') ?? (typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/linear` : '')
+  );
+  const [webhookStatus, setWebhookStatus] = useState<'idle' | 'registering' | 'success' | 'error'>('idle');
+  const [webhookError, setWebhookError] = useState<string | null>(null);
+
+  const registerWebhook = async () => {
+    setWebhookStatus('registering');
+    setWebhookError(null);
+    try {
+      await apiFetch('/linear/webhook/setup', {
+        method: 'POST',
+        body: JSON.stringify({ url: webhookUrl.trim() }),
+      });
+      localStorage.setItem('webhook_url', webhookUrl.trim());
+      setWebhookStatus('success');
+    } catch (err) {
+      setWebhookStatus('error');
+      setWebhookError(err instanceof Error ? err.message : 'Registration failed');
+    }
+  };
+
+  const saveEmail = () => {
+    const trimmed = notifyEmail.trim();
+    if (trimmed) localStorage.setItem('reporter_email', trimmed);
+    setEmailSaved(true);
+    setTimeout(() => setEmailSaved(false), 2000);
+  };
 
   // Team members query
   const { data: membersData, isLoading: membersLoading } = useQuery<{ members: TeamMember[] }>({
@@ -45,14 +84,15 @@ function SettingsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['linear-members'] }),
   });
 
-  const validateToken = () => {
-    // For MVP, just check that token is non-empty and looks like a linear API key
-    if (linearToken.startsWith('lin_api_') && linearToken.length > 20) {
+  const testConnection = async () => {
+    setTokenStatus('testing');
+    setTokenError(null);
+    try {
+      await apiFetch('/linear/members');
       setTokenStatus('valid');
-    } else if (linearToken.length > 0) {
+    } catch (err) {
       setTokenStatus('invalid');
-    } else {
-      setTokenStatus('idle');
+      setTokenError(err instanceof Error ? err.message : 'Connection failed');
     }
   };
 
@@ -70,6 +110,32 @@ function SettingsPage() {
           <p className="text-sm text-muted-foreground">Configure integrations and team settings</p>
         </div>
 
+        {/* Notifications */}
+        <section className="space-y-4">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Notifications</h2>
+          <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+            <div>
+              <label className="text-sm font-medium block mb-1">Reporter Email</label>
+              <p className="text-xs text-muted-foreground mb-2">Incident notifications and resolution emails will be sent here.</p>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  value={notifyEmail}
+                  onChange={(e) => { setNotifyEmail(e.target.value); setEmailSaved(false); }}
+                  placeholder={FALLBACK_EMAIL}
+                  className="flex-1 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                <button
+                  onClick={saveEmail}
+                  className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+                >
+                  {emailSaved ? '✓ Saved' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Integrations */}
         <section className="space-y-4">
           <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Integrations</h2>
@@ -80,14 +146,20 @@ function SettingsPage() {
                 <input
                   type="password"
                   value={linearToken}
-                  onChange={(e) => { setLinearToken(e.target.value); setTokenStatus('idle'); }}
-                  onBlur={validateToken}
-                  placeholder="lin_api_..."
+                  onChange={(e) => { setLinearToken(e.target.value); setTokenStatus('idle'); setTokenError(null); }}
+                  placeholder="lin_api_... (configured server-side)"
                   className="flex-1 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
                 />
-                {tokenStatus === 'valid' && <span className="flex items-center text-xs text-green-500 font-medium">✓ Connected</span>}
-                {tokenStatus === 'invalid' && <span className="flex items-center text-xs text-destructive font-medium">✗ Invalid</span>}
+                <button
+                  onClick={testConnection}
+                  disabled={tokenStatus === 'testing'}
+                  className="px-3 py-2 text-sm font-medium border border-input rounded-md hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                >
+                  {tokenStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+                </button>
               </div>
+              {tokenStatus === 'valid' && <p className="mt-1 text-xs text-green-500 font-medium">✓ Connected</p>}
+              {tokenStatus === 'invalid' && <p className="mt-1 text-xs text-destructive font-medium">✗ {tokenError ?? 'Connection failed'}</p>}
             </div>
 
             <div>
@@ -122,6 +194,38 @@ function SettingsPage() {
                 </div>
               </div>
             )}
+          </div>
+        </section>
+
+        {/* Webhook */}
+        <section className="space-y-4">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Webhook</h2>
+          <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+            <div>
+              <label className="text-sm font-medium block mb-1">Linear Webhook URL</label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Register this URL with Linear so the agent is notified when issues are resolved.
+                The URL is auto-detected from your current domain — change it if you're behind a proxy or tunnel.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={webhookUrl}
+                  onChange={(e) => { setWebhookUrl(e.target.value); setWebhookStatus('idle'); setWebhookError(null); }}
+                  placeholder="https://your-domain.com/api/webhooks/linear"
+                  className="flex-1 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-ring font-mono"
+                />
+                <button
+                  onClick={registerWebhook}
+                  disabled={!webhookUrl || webhookStatus === 'registering'}
+                  className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                >
+                  {webhookStatus === 'registering' ? 'Registering...' : 'Register Webhook'}
+                </button>
+              </div>
+              {webhookStatus === 'success' && <p className="mt-1 text-xs text-green-500 font-medium">✓ Webhook registered with Linear</p>}
+              {webhookStatus === 'error' && <p className="mt-1 text-xs text-destructive font-medium">✗ {webhookError ?? 'Registration failed'}</p>}
+            </div>
           </div>
         </section>
 
