@@ -54,3 +54,22 @@ export type {
   WikiQueryChunk,
   WikiQueryResult,
 } from './wiki';
+
+// Code review schemas and types
+export {
+  reviewSeveritySchema,
+  reviewCategorySchema,
+  reviewCommentSchema,
+  fileReviewSummarySchema,
+  codeReviewOutputSchema,
+  codeReviewInputSchema,
+} from './review';
+
+export type {
+  ReviewSeverity,
+  ReviewCategory,
+  ReviewComment,
+  FileReviewSummary,
+  CodeReviewOutput,
+  CodeReviewInput,
+} from './review';
