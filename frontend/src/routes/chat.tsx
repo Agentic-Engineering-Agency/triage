@@ -287,10 +287,43 @@ function ChatPage() {
                       .map((p) => p.text)
                       .join("")
 
+                    const fileParts = message.parts.filter((p) => p.type === "file") as Array<{
+                      type: "file"
+                      mediaType: string
+                      url: string
+                      filename?: string
+                    }>
                     const toolParts = message.parts.filter((p) => p.type.startsWith("tool-"))
 
                     return (
                       <>
+                        {/* File attachments (images, docs) */}
+                        {fileParts.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {fileParts.map((file, i) =>
+                              file.mediaType.startsWith("image/") ? (
+                                <img
+                                  key={`file-${i}`}
+                                  src={file.url}
+                                  alt={file.filename || "Attached image"}
+                                  className="max-h-48 max-w-full rounded-lg object-cover border border-border/50"
+                                />
+                              ) : (
+                                <div
+                                  key={`file-${i}`}
+                                  className="flex items-center gap-2 rounded-lg bg-muted/50 border border-border/50 px-3 py-2"
+                                >
+                                  <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                  <span className="text-xs text-muted-foreground truncate max-w-40">
+                                    {file.filename || file.mediaType}
+                                  </span>
+                                </div>
+                              ),
+                            )}
+                          </div>
+                        )}
+
+                        {/* Text content */}
                         {textContent && (
                           message.role === "user" ? (
                             <p className="whitespace-pre-wrap">{textContent}</p>
