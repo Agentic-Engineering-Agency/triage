@@ -35,3 +35,8 @@ export {
 export { queryWikiTool } from './wiki-query';
 
 export { generateWikiTool } from './wiki-generate';
+
+export { processAttachmentsTool } from './attachments';
+export { displayTriageTool } from './display-triage';
+export { displayDuplicateTool } from './display-duplicate';
+export { commentOnGitHubPRTool } from './github';
