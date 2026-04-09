@@ -1,0 +1,204 @@
+---
+title: Schemas
+description: Key Zod schema definitions — triageOutput, ticketCreate, codeReviewOutput, wikiQueryResult
+---
+
+All data boundaries in the Triage runtime use Zod schemas. Schemas are split by domain in `runtime/src/lib/schemas/` — never duplicated inline. This page documents the key schemas used across the system.
+
+## triageOutputSchema
+
+Produced by the **Triage Agent** and consumed by the orchestrator, triage workflow, and frontend `TriageCard` component.
+
+```typescript
+// runtime/src/lib/schemas/triage.ts
+const triageOutputSchema = z.object({
+  severity: z.enum(["Critical", "High", "Medium", "Low"]),
+  confidence: z.number().min(0).max(1),
+  summary: z.string(),
+  rootCause: z.string(),
+  affectedServices: z.array(z.string()),
+  fileReferences: z.array(
+    z.object({
+      filePath: z.string(),
+      lineRange: z.string().optional(),   // e.g., "45-67"
+      relevance: z.string(),              // why this file is relevant
+    })
+  ),
+  suggestedActions: z.array(z.string()), // ordered remediation steps
+  chainOfThought: z.string(),            // step-by-step reasoning trace
+});
+
+type TriageOutput = z.infer<typeof triageOutputSchema>;
+```
+
+### Field Notes
+
+- `severity` — one of four levels; see severity guide in [Triage Agent docs](/docs/agents/triage-agent)
+- `confidence` — 0.0 to 1.0; below 0.5 the agent explains what additional info would help
+- `chainOfThought` — full reasoning trace; useful for debugging triage quality
+- `fileReferences` — only includes files found in wiki query results; never fabricated
+
+---
+
+## incidentReportSchema
+
+The input schema for the `triage-workflow`. Validated at the `intake` step.
+
+```typescript
+const incidentReportSchema = z.object({
+  description: z.string(),                // plain-text incident report
+  images: z.array(z.string()).optional(), // base-64 or URL references to screenshots
+  reporterEmail: z.string().email(),      // who filed the report
+  repository: z.string().optional(),      // GitHub org/repo for codebase wiki lookup
+});
+```
+
+---
+
+## ticketCreateSchema
+
+Input schema for the `createLinearIssueTool`. Maps triage output to a Linear issue.
+
+```typescript
+const ticketCreateSchema = z.object({
+  title: z.string(),
+  description: z.string(),               // markdown — full triage output
+  severity: z.enum(["Critical", "High", "Medium", "Low"]),
+  assigneeId: z.string().optional(),      // Linear user ID
+  teamId: z.string(),
+  stateId: z.string(),                   // defaults to TRIAGE state UUID
+  labelIds: z.array(z.string()),         // severity + category label UUIDs
+  estimate: z.number().optional(),       // story points
+});
+```
+
+---
+
+## resolutionOutputSchema
+
+Produced by the **Resolution Reviewer** agent.
+
+```typescript
+const resolutionOutputSchema = z.object({
+  verified: z.boolean(),
+  confidence: z.number().min(0).max(1),
+  analysis: z.string(),
+  remainingRisks: z.array(z.string()),
+  recommendation: z.enum(["close", "reopen", "monitor"]),
+});
+
+type ResolutionOutput = z.infer<typeof resolutionOutputSchema>;
+```
+
+### Recommendation Values
+
+| Value | Meaning |
+|-------|---------|
+| `close` | Fix fully addresses root cause |
+| `reopen` | Fix insufficient or introduces new issues |
+| `monitor` | Fix seems correct, needs observation period |
+
+---
+
+## codeReviewOutputSchema
+
+Produced by the **Code Review Agent**. Large structured schema covering per-file triage, individual comments, aggregate stats, and an overall verdict.
+
+```typescript
+const codeReviewOutputSchema = z.object({
+  summary: z.string(),                              // 2-3 sentence executive summary
+  reviewEffort: z.number().int().min(1).max(5),    // 1 = trivial, 5 = very complex
+  verdict: z.enum(["approve", "request-changes", "comment-only"]),
+  fileSummaries: z.array(
+    z.object({
+      filePath: z.string(),
+      classification: z.enum(["needs-review", "approved", "skipped"]),
+      summary: z.string(),
+    })
+  ),
+  comments: z.array(
+    z.object({
+      filePath: z.string(),
+      lineRange: z.string().optional(),
+      severity: z.enum(["critical", "major", "minor", "trivial", "info"]),
+      category: z.enum([
+        "bug-risk", "security", "performance", "error-handling", "logic",
+        "edge-case", "race-condition", "data-integrity", "maintainability",
+        "complexity", "naming", "documentation", "style", "best-practice",
+      ]),
+      title: z.string(),                            // one line, under 120 chars
+      analysis: z.string(),                         // what's wrong + why it matters
+      suggestion: z.string(),                       // concrete fix, code snippet preferred
+      confidence: z.number().min(0).max(1),
+    })
+  ),
+  stats: z.object({
+    critical: z.number(),
+    major: z.number(),
+    minor: z.number(),
+    trivial: z.number(),
+    info: z.number(),
+  }),
+  topRisks: z.array(z.string()),                   // top 1-5 items for human reviewer
+});
+```
+
+---
+
+## wikiQueryResultSchema
+
+Output schema for `queryWikiTool`. Each result represents a matching wiki document.
+
+```typescript
+const wikiQueryResultSchema = z.object({
+  results: z.array(
+    z.object({
+      id: z.string(),
+      filePath: z.string(),
+      summary: z.string(),
+      content: z.string(),             // excerpt from the document
+      similarity: z.number(),          // cosine similarity score (0.0–1.0)
+    })
+  ),
+  query: z.string(),                   // the original query for traceability
+  totalFound: z.number(),
+});
+```
+
+Wiki documents are stored in LibSQL as `F32_BLOB(1536)` vectors and searched using DiskANN. The `similarity` score reflects how closely the document matches the query embedding.
+
+---
+
+## API Response Envelopes
+
+Non-streaming API responses follow this consistent envelope:
+
+```typescript
+// Success envelope
+const successResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.unknown(),    // varies by endpoint
+});
+
+// Error envelope
+const errorResponseSchema = z.object({
+  success: z.literal(false),
+  error: z.object({
+    code: z.string(),    // machine-readable error code (e.g., 'NO_LINEAR_KEY')
+    message: z.string(), // human-readable explanation
+  }),
+});
+```
+
+---
+
+## Schema File Organization
+
+```
+runtime/src/lib/schemas/
+├── triage.ts      # triageOutputSchema, incidentReportSchema, resolutionOutputSchema
+├── ticket.ts      # ticketCreateSchema, ticketUpdateSchema
+└── wiki.ts        # wikiQueryResultSchema, wikiDocumentSchema
+```
+
+Code review schemas live in the agent file (`code-review-agent.ts`) since they are agent-specific. Shared schemas are always in the `schemas/` directory — never duplicated inline.

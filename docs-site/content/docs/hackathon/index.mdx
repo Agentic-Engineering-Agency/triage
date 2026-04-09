@@ -1,0 +1,23 @@
+---
+title: Solution Introduction
+description: Triage — AI-powered SRE incident triage for Solidus/Rails e-commerce, built for AgentX Hackathon 2026.
+---
+
+## What Is Triage?
+
+Triage is an AI-powered incident response system built for on-call SRE engineers working on Solidus/Rails e-commerce platforms. Instead of manually hunting through logs, codebase history, and runbooks under pressure, an engineer describes the incident in plain text — with optional screenshots or log attachments — and Triage does the rest. Four specialized agents collaborate to analyze the incident, identify the root cause grounded in the actual codebase via RAG, and produce a structured triage report in under 30 seconds.
+
+## Our Approach
+
+The system is built on Mastra v1.23 running on Hono as the unified HTTP and agent runtime. A single `docker compose up --build` starts all ten containers — frontend, runtime, LibSQL, a full self-hosted Langfuse observability stack, and a `cloudflared` Cloudflare Tunnel — behind a Caddy reverse proxy that eliminates CORS and handles all security headers. OpenRouter provides multi-model routing with automatic fallback chains so no single model failure blocks triage. LibSQL with F32_BLOB(1536) vector embeddings and a DiskANN index powers the codebase wiki RAG without requiring a separate vector database.
+
+The engineer reviews a triage card preview, approves it, and the workflow creates a Linear ticket, sends an email notification to the assigned engineer, then suspends — waiting for a webhook when the fix ships. When the fix lands, the Resolution Reviewer agent confirms whether the issue is actually resolved and notifies the reporter. The entire loop, from incident description to resolution confirmation, runs within a single durable Mastra workflow with state persisted to LibSQL so it survives container restarts.
+
+## Documentation
+
+| Page | Contents |
+|------|----------|
+| [README](/docs/hackathon/readme) | Project overview, architecture diagram, quick start, tech stack, and agent summary |
+| [Agents & Implementation](/docs/hackathon/agents-use) | Full agent design, orchestration, context engineering, use cases, observability, security, and lessons learned |
+| [Scaling](/docs/hackathon/scaling) | Docker Compose capacity analysis, Kubernetes migration path, cost projections, and bottleneck analysis |
+| [Quick Guide](/docs/hackathon/quick-guide) | Step-by-step local setup, verification checklist, and troubleshooting |

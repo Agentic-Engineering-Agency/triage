@@ -1,0 +1,129 @@
+---
+title: QUICKGUIDE.md
+description: Get the full Triage system running locally in about 5 minutes — step-by-step setup, verification checklist, and troubleshooting.
+---
+
+Get the full Triage system running locally in about 5 minutes.
+
+## Prerequisites
+
+- Docker and Docker Compose v2+
+- API keys for: OpenRouter, Linear, Resend
+
+## Steps
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/Agentic-Engineering-Agency/triage.git
+cd triage
+```
+
+Already have a clone? Pull the latest:
+
+```bash
+git pull origin main
+```
+
+### 2. Copy the Environment File
+
+```bash
+cp .env.example .env
+```
+
+### 3. Fill in Mandatory Environment Variables
+
+Open `.env` and set at minimum these four variables:
+
+| Variable | Required | Where to Get It |
+|----------|----------|-----------------|
+| `OPENROUTER_API_KEY` | Yes | [openrouter.ai](https://openrouter.ai) → Keys |
+| `LINEAR_API_KEY` | Yes | [linear.app](https://linear.app) → Settings → API |
+| `RESEND_API_KEY` | Yes | [resend.com](https://resend.com) → API Keys |
+| `BETTER_AUTH_SECRET` | Yes | Any random 32+ character string |
+| `RESEND_FROM_EMAIL` | Recommended | A verified sender address on your Resend domain |
+| `CLOUDFLARE_TUNNEL_TOKEN` | Optional | Cloudflare Tunnel token for public Langfuse access. Get with: `cloudflared tunnel token triage-hackathon` |
+
+The full `.env.example` documents all 38 variables with descriptions and defaults.
+
+### 4. Start All Services
+
+```bash
+docker compose up --build
+```
+
+The first run pulls base images and builds both app containers — allow about 2 minutes. Subsequent starts are faster.
+
+### 5. Open the App
+
+- **Chat UI**: [http://localhost:3001](http://localhost:3001)
+- **Langfuse Dashboard**: [http://localhost:3000](http://localhost:3000)
+
+## You're Ready When...
+
+- `docker compose ps` shows all 10 containers as healthy
+- `http://localhost:3001/health` returns `OK`
+- The chat UI loads at `http://localhost:3001/chat`
+
+## Try It Out
+
+1. Go to `http://localhost:3001/register` to create an account, then log in
+2. In the chat, describe an incident:
+   > "We're seeing 500 errors on the checkout page starting 20 minutes ago. The payment service logs show a timeout connecting to the order processor."
+3. The agent triages the incident and displays a **TriageCard** with severity, confidence score, root cause, and affected file references
+4. Click **Create Ticket** to approve — the agent creates a Linear issue and sends an email notification to the team
+5. When a fix ships, the webhook triggers the Resolution Reviewer agent to confirm resolution and notify the reporter
+
+## Optional: Run Tests
+
+```bash
+pnpm test
+```
+
+To include live infrastructure smoke checks:
+
+```bash
+RUN_MANUAL_INFRA_TESTS=1 pnpm test
+```
+
+## Optional: Langfuse Observability Dashboard
+
+Open [http://localhost:3000](http://localhost:3000) to view LLM traces, token costs, and latency metrics for every agent invocation. On first load you will be prompted to create a local admin account.
+
+## Optional: Database Studio
+
+```bash
+cd runtime && npx drizzle-kit studio
+```
+
+Connects to the LibSQL instance at `localhost:8080` for schema inspection and direct queries.
+
+## Troubleshooting
+
+**Port conflict on 3001 or 3000**
+
+Change `CADDY_PORT` or `LANGFUSE_PORT` in `.env` before starting.
+
+**Docker build fails**
+
+Ensure Docker Desktop is running with at least 4 GB RAM allocated. On Linux, confirm the Docker daemon is active: `systemctl status docker`.
+
+**A container is unhealthy or keeps restarting**
+
+Check its logs: `docker compose logs -f <service-name>`. The most common cause is a missing or incorrect env var.
+
+**`CHANGEME` values still in .env**
+
+The runtime will refuse to start if required secrets are not set. Search your `.env` for `CHANGEME` and replace every occurrence.
+
+**Database connection errors on first boot**
+
+LibSQL takes a few seconds to initialize. Wait 10–15 seconds after all containers report healthy, then retry.
+
+**Email not arriving**
+
+Verify `RESEND_API_KEY` is valid and `RESEND_FROM_EMAIL` matches a verified sender domain in your Resend account.
+
+**Linear ticket not created**
+
+Check that `LINEAR_API_KEY` has write access and that `LINEAR_TEAM_ID` in `.env` matches an existing team. If Linear is unreachable, Triage falls back to storing tickets in the local `local_tickets` table — check the runtime logs for the fallback message.

@@ -1,0 +1,114 @@
+---
+title: Your First Incident
+description: Step-by-step walkthrough from registration through triage, ticket creation, and resolution
+---
+
+This walkthrough takes you through the complete incident lifecycle: registering an account, describing an incident, reviewing the triage card, approving ticket creation, and watching the resolution reviewer close the loop when the fix ships.
+
+## Step 1 — Register an Account
+
+Navigate to `http://localhost:3001/register` and create an account. Better Auth handles session management — your session persists across browser refreshes.
+
+After registration you'll be redirected to the main chat interface at `/chat`.
+
+## Step 2 — Log In
+
+If you already have an account, navigate to `http://localhost:3001/login` and sign in with your credentials.
+
+## Step 3 — Open the Chat Interface
+
+The chat interface is at `/chat`. This is where all incident analysis happens. The orchestrator agent (`MiniMax M2.7`) is your entry point — it routes to sub-agents and tools based on your input.
+
+## Step 4 — Describe the Incident
+
+Type a description of the incident in the chat input. Be as specific as possible — the more detail you provide, the higher the confidence score in the triage output.
+
+**Example incident description:**
+
+```
+Checkout is failing for ~30% of users since 14:23 UTC. Orders with Stripe payments are
+getting a 500 error on /checkout/complete. The other 70% using PayPal are unaffected.
+Cart abandonment rate spiked to 68% in the last hour. Error logs show:
+"Stripe::InvalidRequestError: No such payment_intent: 'pi_xxxxxxx'"
+```
+
+### Attaching Files
+
+Click the attachment button to add screenshots, dashboard exports, or log files. The orchestrator calls the `process-attachments` tool first, which uses Gemma 4 31B (vision) to extract and describe image content before passing it to the triage analysis.
+
+## Step 5 — Watch the Triage Process
+
+The orchestrator follows this sequence automatically:
+
+1. **Process Attachments** — If files are present, vision model describes them
+2. **Query Wiki** — RAG lookup against your indexed codebase wiki for relevant files
+3. **Check for Duplicates** — Searches existing Linear issues for similar tickets
+4. **Present Triage Card** — A structured card appears in the chat stream
+
+The triage card (in `loading` state, then `pending` state) shows:
+- **Severity** — Critical / High / Medium / Low with color coding
+- **Confidence** — 0.0 to 1.0 score from the Mercury-2 triage agent
+- **Summary** — One-paragraph executive summary
+- **Root Cause** — Technical hypothesis with evidence
+- **Affected Services** — List of impacted services
+- **File References** — Specific files from the codebase wiki with line ranges
+- **Suggested Actions** — Ordered remediation steps
+
+## Step 6 — Review and Approve the Ticket
+
+The triage card has two action buttons:
+
+- **Approve and Create Ticket** — Confirms the triage and triggers Linear ticket creation
+- **Dismiss** — Discards the triage (you can re-describe the incident)
+
+Click **Approve and Create Ticket**. The orchestrator calls `createLinearIssueTool`, which creates an issue in your Linear team (`triage-hackathon`) with the appropriate severity label, state (`Triage`), and assigns it based on the affected area.
+
+The triage card transitions to `confirmed` state with the Linear issue identifier and URL.
+
+## Step 7 — Check Linear
+
+Open your Linear workspace. You should see a new issue in the **Triage** state with:
+- Title matching the incident summary
+- Severity label (Critical / High / Medium / Low)
+- Description containing the full triage output
+- File references and suggested actions
+
+## Step 8 — Check Email
+
+If `RESEND_API_KEY` and `RESEND_FROM_EMAIL` are configured, the assignee receives an HTML email notification from `triage@your-domain.com` with:
+- Incident summary and severity
+- Link to the Linear ticket
+- Suggested first actions
+
+If Resend is not configured, the notification is logged and skipped — triage is not blocked.
+
+## Step 9 — Fix the Incident
+
+The engineer assigned to the ticket investigates using the file references and suggested actions. When the fix is deployed:
+
+1. Move the Linear issue to **Done** state
+2. The Linear webhook fires a `POST /api/webhooks/linear` to the runtime
+3. The runtime finds the suspended workflow run for that issue ID
+4. The workflow resumes with `{ newStatus: "Done", updatedAt: "..." }`
+
+## Step 10 — Resolution Review
+
+The `triage-workflow` resumes at the `suspend` step and continues to the Resolution Reviewer. The `resolution-reviewer` agent:
+
+1. Retrieves the original ticket (Linear issue + triage data)
+2. Queries the codebase wiki for the current state of affected files
+3. Compares the fix description against the root cause
+4. Produces a structured verdict: `close`, `reopen`, or `monitor`
+
+The reporter receives an email notification with the resolution verdict. If the verdict is `reopen`, the workflow re-escalates the issue.
+
+## Viewing the Board
+
+Navigate to `/board` to see all Linear issues in a Kanban-style view, grouped by state (Triage, Backlog, Todo, In Progress, In Review, Done). The board polls the `GET /api/linear/issues` endpoint and shows issue metadata, severity labels, assignees, and estimates.
+
+## Next Steps
+
+- [Configure all integrations](/docs/getting-started/configuration)
+- [Understand the agent architecture](/docs/agents)
+- [Set up Linear webhook for resolution](/docs/integrations/linear)
+- [Review the API reference](/docs/reference/api-routes)

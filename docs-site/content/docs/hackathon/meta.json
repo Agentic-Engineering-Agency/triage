@@ -1,0 +1,5 @@
+{
+  "title": "Hackathon Deliverables",
+  "defaultOpen": true,
+  "pages": ["index", "readme", "agents-use", "scaling", "quick-guide"]
+}
