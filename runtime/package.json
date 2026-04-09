@@ -1,13 +1,14 @@
 {
   "name": "triage-runtime",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "private": true,
   "scripts": {
     "dev": "mastra dev --port 4111",
     "build": "mastra build",
     "start": "node .mastra/output/index.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@linear/sdk": "^81.0.0",
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@types/node": "^22.15.0",
     "mastra": "^1.4.1",
-    "typescript": "~5.8.3"
+    "typescript": "~5.8.3",
+    "vitest": "^3.1.1"
   }
 }
