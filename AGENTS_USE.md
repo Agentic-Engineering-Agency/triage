@@ -14,7 +14,7 @@ Implemented on this branch:
 
 Still pending for the full hackathon deliverable:
 
-- frontend chat experience
+- frontend chat experience 
 - durable workflow entrypoint and agent orchestration
 - RAG/wiki pipeline wiring
 - webhook-driven resolution verification loop
