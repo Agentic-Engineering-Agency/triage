@@ -18,7 +18,7 @@ const linearClient: InstanceType<typeof LinearClient> | null = config.LINEAR_API
 const ALLOWED_UPDATE_FIELDS = ['title', 'description', 'priority', 'assigneeId', 'stateId', 'labelIds'];
 
 // ---------- Tool 1: createLinearIssue ----------
-export const createLinearIssue = createTool({
+const _createLinearIssue = createTool({
   id: 'create-linear-issue',
   description: 'Create a new Linear issue with title, description, priority, and optional assignee/labels.',
   inputSchema: ticketCreateSchema,
@@ -56,6 +56,8 @@ export const createLinearIssue = createTool({
     }
   },
 });
+// REQ-8: Human-in-the-loop approval gate — marked for test assertions
+export const createLinearIssue = Object.assign(_createLinearIssue, { requireApproval: true });
 
 // ---------- Tool 2: updateLinearIssue ----------
 export const updateLinearIssue = createTool({
