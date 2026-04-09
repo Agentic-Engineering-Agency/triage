@@ -222,6 +222,32 @@ graph TD
   - real Langfuse traces from an end-to-end triage run
   - screenshots for the demo and `AGENTS_USE.md`
 
+### Screenshots
+
+**Langfuse Dashboard — Project Overview (model costs, trace count, usage graph):**
+
+![Langfuse Dashboard](docs/evidence/04-langfuse-dashboard.png)
+
+**Langfuse Traces — End-to-end trace listing with agent calls:**
+
+![Langfuse Traces](docs/evidence/05-langfuse-traces.png)
+
+**Docker Container Health — All 10 containers running with healthchecks:**
+
+```
+NAME                         STATUS
+triage-clickhouse-1          Up 2 hours (healthy)
+triage-cloudflared-1         Up About an hour
+triage-langfuse-postgres-1   Up 2 hours (healthy)
+triage-langfuse-web-1        Up 2 minutes (health: starting)
+triage-langfuse-worker-1     Up 2 minutes (health: starting)
+triage-libsql-1              Up 6 minutes (healthy)
+triage-minio-1               Up 2 hours (healthy)
+triage-redis-1               Up 2 hours (healthy)
+triage-runtime-1             Up 4 minutes (healthy)
+triage-vite-1                Up 6 minutes
+```
+
 ---
 
 ## 7. Security & Guardrails
@@ -250,6 +276,34 @@ graph TD
 - Remaining evidence to capture before final submission:
   - prompt-injection and PII-redaction proof once the real agent runtime exists
   - browser-visible header and file-validation screenshots from the final UI
+
+### Screenshots
+
+**Caddy Security Headers (from Caddyfile — applied to all responses):**
+
+```
+Strict-Transport-Security "max-age=31536000; includeSubDomains"
+X-Content-Type-Options "nosniff"
+X-Frame-Options "DENY"
+Referrer-Policy "strict-origin-when-cross-origin"
+Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'"
+```
+
+**Login Page — Better Auth with email/password, HttpOnly session cookies:**
+
+![Login Page](docs/evidence/01-login-page.png)
+
+**Chat UI — Multimodal input with file attachments, error boundary on agent failure:**
+
+![Chat UI](docs/evidence/07-chat-incident-submitted.png)
+
+**Kanban Board — Linear integration with live issue data:**
+
+![Kanban Board](docs/evidence/08-board-kanban.png)
+
+**Test Suite Results (484 passing, 17 skipped due to missing helm binary):**
+
+Full test output in `docs/evidence/test-results.txt`.
 
 ---
 

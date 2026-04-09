@@ -13,7 +13,8 @@ const trustedOrigins = (() => {
     origins.push(process.env.BETTER_AUTH_URL);
   } else {
     origins.push(devOrigin);
-    // Allow SSH port-forward dev testing (localhost:3002)
+    // Allow Vite dev server (localhost:5173) and SSH port-forward (localhost:3002)
+    origins.push('http://localhost:5173');
     origins.push('http://localhost:3002');
   }
   return origins;
