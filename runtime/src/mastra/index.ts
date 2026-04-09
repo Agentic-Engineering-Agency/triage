@@ -2,7 +2,6 @@ import { Mastra } from '@mastra/core';
 import { registerApiRoute } from '@mastra/core/server';
 import { LibSQLStore } from '@mastra/libsql';
 import { chatRoute } from '@mastra/ai-sdk';
-import { registerApiRoute } from '@mastra/core/server';
 import { LinearClient } from '@linear/sdk';
 import type { Context } from 'hono';
 
@@ -141,29 +140,125 @@ export const mastra = new Mastra({
         },
       },
 
-      // POST /api/webhooks/linear — handle Linear webhooks to resume workflow
+      // POST /api/linear/webhook/setup — register the Linear webhook for this deployment
       {
-        path: '/api/webhooks/linear',
+        path: '/api/linear/webhook/setup',
         method: 'POST' as const,
         handler: async (c: Context) => {
           try {
-            const payload = await c.req.json() as Record<string, unknown>;
-            console.log('[webhook/linear] Received:', JSON.stringify(payload).slice(0, 500));
-
-            const action = payload.action as string;
-            const data = payload.data as Record<string, unknown> | undefined;
-
-            if (action === 'update' && data) {
-              const issueId = data.id as string;
-              console.log(`[webhook/linear] Issue ${issueId} updated`);
-              // TODO: Look up suspended workflow run by issueId and resume it
+            if (!linearClient) {
+              return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
             }
 
-            return c.json({ success: true, data: { received: true } });
+            const body = await c.req.json() as { url?: string };
+            if (!body.url) {
+              return c.json({ success: false, error: { code: 'MISSING_URL', message: 'url is required' } }, 400);
+            }
+
+            const result = await linearClient.createWebhook({
+              url: body.url,
+              teamId: LINEAR_CONSTANTS.TEAM_ID,
+              resourceTypes: ['Issue'],
+              enabled: true,
+            });
+
+            const webhook = await result.webhook;
+            return c.json({ success: true, data: { id: webhook?.id, url: webhook?.url, enabled: webhook?.enabled } });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            return c.json({ success: false, error: { code: 'WEBHOOK_ERROR', message } }, 500);
+            return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
           }
+        },
+      },
+
+      // POST /api/webhooks/linear — resume suspended workflow when issue moves to Done
+      {
+        path: '/api/webhooks/linear',
+        method: 'POST' as const,
+        createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
+          return async (c: Context) => {
+            try {
+              const payload = await c.req.json() as Record<string, unknown>;
+              console.log('[webhook/linear] Received:', JSON.stringify(payload).slice(0, 500));
+
+              const action = payload.action as string;
+              const type = payload.type as string;
+              const data = payload.data as Record<string, unknown> | undefined;
+
+              // Only handle issue updates
+              if (action !== 'update' || type !== 'Issue' || !data) {
+                return c.json({ success: true, data: { received: true, skipped: true } });
+              }
+
+              const issueId = data.id as string;
+              const issueState = data.state as { name?: string; type?: string } | undefined;
+              const updatedAt = (data.updatedAt as string) ?? new Date().toISOString();
+
+              // Only trigger on completed state (Done)
+              if (issueState?.type !== 'completed') {
+                return c.json({ success: true, data: { received: true, skipped: true, reason: 'state not completed' } });
+              }
+
+              console.log(`[webhook/linear] Issue ${issueId} marked as "${issueState.name}" — searching for suspended run`);
+
+              // Find the suspended workflow run for this issueId via storage
+              const storage = m.getStorage();
+              const workflowsStore = await storage?.getStore('workflows');
+
+              if (!workflowsStore) {
+                console.error('[webhook/linear] Workflow storage not available');
+                return c.json({ success: false, error: { code: 'NO_STORAGE', message: 'Workflow storage not available' } }, 500);
+              }
+
+              const runsResult = await workflowsStore.listWorkflowRuns({
+                workflowName: 'triage-workflow',
+                status: 'suspended',
+                perPage: false,
+              });
+
+              // Match by issueId stored in the ticket step output inside the snapshot
+              let matchedRunId: string | null = null;
+              for (const run of runsResult.runs) {
+                const snapshot = typeof run.snapshot === 'string'
+                  ? JSON.parse(run.snapshot) as Record<string, unknown>
+                  : run.snapshot as unknown as Record<string, unknown>;
+
+                const context = snapshot?.context as Record<string, Record<string, unknown>> | undefined;
+                const ticketOutput = context?.['ticket']?.['output'] as Record<string, unknown> | undefined;
+
+                if (ticketOutput?.['issueId'] === issueId) {
+                  matchedRunId = run.runId;
+                  break;
+                }
+              }
+
+              if (!matchedRunId) {
+                console.log(`[webhook/linear] No suspended run found for issueId: ${issueId}`);
+                return c.json({ success: true, data: { received: true, matched: false } });
+              }
+
+              console.log(`[webhook/linear] Resuming run ${matchedRunId} for issue ${issueId}`);
+
+              // Resume the suspended step — fire and forget so webhook responds immediately
+              const workflow = m.getWorkflow('triage-workflow');
+              const workflowRun = await workflow.createRun({ runId: matchedRunId });
+
+              workflowRun.resume({
+                step: 'suspend',
+                resumeData: {
+                  newStatus: issueState.name ?? 'Done',
+                  updatedAt,
+                },
+              }).catch((err: Error) => {
+                console.error('[webhook/linear] Resume error:', err.message);
+              });
+
+              return c.json({ success: true, data: { received: true, matched: true, runId: matchedRunId } });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return c.json({ success: false, error: { code: 'WEBHOOK_ERROR', message } }, 500);
+            }
+          };
         },
       },
 

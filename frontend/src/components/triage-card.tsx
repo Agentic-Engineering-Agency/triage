@@ -17,6 +17,7 @@ export interface TriageCardProps {
   proposedFix?: string
   linearUrl?: string
   errorMessage?: string
+  isSubmitting?: boolean
   onCreateTicket?: () => void
   onRetry?: () => void
   className?: string
@@ -32,6 +33,7 @@ export function TriageCard({
   proposedFix,
   linearUrl,
   errorMessage,
+  isSubmitting = false,
   onCreateTicket,
   onRetry,
   className,
@@ -128,20 +130,24 @@ export function TriageCard({
       {/* Footer actions */}
       <div className="flex items-center gap-2 pt-2 border-t border-border">
         {state === "pending" && (
-          <Button size="sm" onClick={onCreateTicket}>
-            Create Ticket
+          <Button size="sm" onClick={onCreateTicket} disabled={isSubmitting}>
+            {isSubmitting ? "Creating..." : "Create Ticket"}
           </Button>
         )}
-        {state === "confirmed" && linearUrl && (
-          <a
-            href={linearUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-secondary hover:text-secondary/80"
-          >
-            <ExternalLink className="h-3 w-3" />
-            View in Linear
-          </a>
+        {state === "confirmed" && (
+          linearUrl ? (
+            <a
+              href={linearUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-secondary hover:text-secondary/80"
+            >
+              <ExternalLink className="h-3 w-3" />
+              View in Linear
+            </a>
+          ) : (
+            <span className="text-xs text-muted-foreground">Ticket created ✓</span>
+          )
         )}
         {state === "error" && (
           <Button size="sm" variant="destructive" onClick={onRetry}>

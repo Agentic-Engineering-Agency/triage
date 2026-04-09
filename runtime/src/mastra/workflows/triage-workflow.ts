@@ -289,6 +289,8 @@ const ticketStep = createStep({
     rootCause: z.string(),
     triageSummary: z.string(),
     reporterEmail: z.string(),
+    assigneeEmail: z.string().optional().describe('Email of the Linear assignee, if assigned'),
+    assigneeName: z.string().optional().describe('Display name of the Linear assignee'),
   }),
   execute: async ({ inputData }) => {
     try {
@@ -307,6 +309,9 @@ const ticketStep = createStep({
           issueId: inputData.existingIssueId,
           description: `[Updated] Additional context:\n${inputData.triageSummary}`,
         });
+        // Fetch assignee from the existing issue
+        const existing = await callTool(getLinearIssue, { issueId: inputData.existingIssueId }).catch(() => null);
+        const existingAssignee = (existing as Record<string, unknown>)?.data as { assignee?: { email: string; name: string } | null } | undefined;
         return {
           issueId: inputData.existingIssueId,
           issueUrl: inputData.existingIssueUrl ?? '',
@@ -315,6 +320,8 @@ const ticketStep = createStep({
           rootCause: inputData.rootCause,
           triageSummary: inputData.triageSummary,
           reporterEmail: inputData.reporterEmail,
+          assigneeEmail: existingAssignee?.assignee?.email,
+          assigneeName: existingAssignee?.assignee?.name,
         };
       }
 
@@ -332,6 +339,18 @@ const ticketStep = createStep({
         ? (createResult as Record<string, unknown>).data as { id?: string; url?: string } | undefined
         : undefined;
 
+      // Fetch the created issue to get assignee details (Linear may auto-assign based on team settings)
+      let assigneeEmail: string | undefined;
+      let assigneeName: string | undefined;
+      if (created?.id) {
+        const issueDetails = await callTool(getLinearIssue, { issueId: created.id }).catch(() => null);
+        const details = (issueDetails as Record<string, unknown>)?.data as { assignee?: { email: string; name: string } | null } | undefined;
+        if (details?.assignee) {
+          assigneeEmail = details.assignee.email;
+          assigneeName = details.assignee.name;
+        }
+      }
+
       return {
         issueId: created?.id ?? 'unknown',
         issueUrl: created?.url ?? '',
@@ -340,6 +359,8 @@ const ticketStep = createStep({
         rootCause: inputData.rootCause,
         triageSummary: inputData.triageSummary,
         reporterEmail: inputData.reporterEmail,
+        assigneeEmail,
+        assigneeName,
       };
     } catch (error) {
       console.error('[ticket] Error:', error);
@@ -376,6 +397,8 @@ const notifyStep = createStep({
     rootCause: z.string(),
     triageSummary: z.string(),
     reporterEmail: z.string(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
   }),
   outputSchema: z.object({
     notificationSent: z.boolean(),
@@ -388,14 +411,17 @@ const notifyStep = createStep({
   execute: async ({ inputData }) => {
     try {
       const severityMap: Record<string, 'Critical'|'High'|'Medium'|'Low'> = { P0: 'Critical', P1: 'High', P2: 'Medium', P3: 'Low', P4: 'Low' };
+      // Send ticket notification to assignee if assigned, otherwise fall back to reporter
+      const notifyEmail = inputData.assigneeEmail ?? inputData.reporterEmail;
+      const notifyName = inputData.assigneeName ?? 'Team';
       await callTool(sendTicketNotification, {
-        to: inputData.reporterEmail,
+        to: notifyEmail,
         ticketTitle: inputData.triageSummary.slice(0, 120),
         severity: severityMap[inputData.severity] ?? 'Medium',
         priority: ({ P0: 1, P1: 2, P2: 3, P3: 4, P4: 4 } as Record<string, number>)[inputData.severity] ?? 3,
         summary: inputData.triageSummary,
         linearUrl: inputData.issueUrl,
-        assigneeName: 'Team',
+        assigneeName: notifyName,
         linearIssueId: inputData.issueId,
       });
       return {
