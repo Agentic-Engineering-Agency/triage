@@ -1,9 +1,11 @@
 import { Mastra } from '@mastra/core';
 import { LibSQLStore } from '@mastra/libsql';
 import { chatRoute } from '@mastra/ai-sdk';
+import { registerApiRoute } from '@mastra/core/server';
 
 import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent } from './agents/index';
 import { triageWorkflow } from './workflows/index';
+import { auth } from '../lib/auth';
 
 /**
  * Mastra instance — the core runtime for the Triage SRE agent.
@@ -37,6 +39,12 @@ export const mastra = new Mastra({
   server: {
     apiRoutes: [
       chatRoute({ path: '/chat', agent: 'orchestrator' }),
+      registerApiRoute('/auth/*', {
+        method: 'ALL',
+        handler: async (c) => {
+          return auth.handler(c.req.raw);
+        },
+      }),
     ],
   },
 });
