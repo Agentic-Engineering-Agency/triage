@@ -250,7 +250,7 @@ services:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
       langfuse-web:
-        condition: service_started
+        condition: service_healthy
     restart: always
     networks:
       - langfuse
