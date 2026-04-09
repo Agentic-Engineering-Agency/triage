@@ -575,10 +575,63 @@ function BoardPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <span className="text-sm text-muted-foreground">Loading board...</span>
+      <div className="h-full flex flex-col">
+        {/* Header skeleton */}
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/50">
+          <div className="flex items-center gap-2">
+            <div className="h-3 w-32 rounded bg-muted animate-pulse" />
+            <div className="h-3 w-3 rounded bg-muted animate-pulse" />
+            <div className="h-3 w-16 rounded bg-muted animate-pulse" />
+          </div>
+          <div className="flex gap-2">
+            <div className="h-6 w-20 rounded-lg bg-muted animate-pulse" />
+            <div className="h-6 w-20 rounded-lg bg-muted animate-pulse" />
+          </div>
+        </div>
+        {/* Body skeleton */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Kanban skeleton */}
+          <div className="flex-1 overflow-x-auto p-4">
+            <div className="flex gap-4 h-full min-w-max">
+              {COLUMNS.map((col) => (
+                <div key={col.key} className="w-64 flex flex-col gap-2">
+                  <div className="flex items-center gap-2 pb-2">
+                    <div className="h-3 w-3 rounded-full animate-pulse" style={{ backgroundColor: col.color }} />
+                    <div className="h-3 w-20 rounded bg-muted animate-pulse" />
+                    <div className="h-4 w-5 rounded bg-muted animate-pulse ml-auto" />
+                  </div>
+                  {[...Array(3)].map((_, i) => (
+                    <div key={i} className="rounded-xl bg-card border border-border/50 p-3 space-y-2 animate-pulse">
+                      <div className="flex items-center gap-2">
+                        <div className="h-3 w-12 rounded bg-muted" />
+                        <div className="h-3 w-8 rounded bg-muted ml-auto" />
+                      </div>
+                      <div className="h-4 w-full rounded bg-muted" />
+                      <div className="h-3 w-3/4 rounded bg-muted" />
+                      <div className="flex gap-1 pt-1">
+                        <div className="h-4 w-8 rounded-full bg-muted" />
+                        <div className="h-4 w-12 rounded-full bg-muted" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+          {/* Sidebar skeleton */}
+          <div className="w-72 border-l border-border/50 p-4 space-y-4 shrink-0">
+            <div className="h-5 w-24 rounded bg-muted animate-pulse" />
+            <div className="h-3 w-full rounded bg-muted animate-pulse" />
+            <div className="h-2 w-full rounded-full bg-muted animate-pulse" />
+            <div className="grid grid-cols-3 gap-2 pt-2">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="rounded-lg bg-muted/50 p-2 space-y-1 animate-pulse">
+                  <div className="h-5 w-8 rounded bg-muted mx-auto" />
+                  <div className="h-3 w-full rounded bg-muted" />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
