@@ -3,17 +3,17 @@
 **Date:** 2026-04-09
 **Inspector:** Lyra (QA Warden)
 **Spec:** better-auth-drizzle-libsql-auth
-**Recommendation:** CONDITIONAL GO (see conditions)
+**Recommendation:** CONDITIONAL GO (see remaining manual checks)
 
 ---
 
 ## Test Results
 
 - **Total:** 34 tests
-- **Passed:** 5 (REQ-A02 ×1, REQ-A09 ×4)
+- **Passed:** 25
 - **Failed:** 0
-- **Skipped:** 30 (integration tests — require runtime + LibSQL)
-- **Coverage:** N/A (coverage provider version mismatch; structural tests used instead)
+- **Skipped:** 9 (runtime/LibSQL probes not available in this verification environment)
+- **Coverage:** N/A (not collected in this verification pass)
 
 ---
 
@@ -21,35 +21,35 @@
 
 | Req ID | Description | Priority | Status | Evidence |
 |--------|-------------|----------|--------|---------|
-| REQ-A01 | Drizzle Client Singleton | P0 | UNTESTED | Requires LibSQL running |
-| REQ-A02 | drizzle.config.ts dialect turso | P0 | **PASS** | Test confirms `dialect: 'turso'` in config |
-| REQ-A03 | Auth Schema Tables (4 tables) | P0 | UNTESTED | Requires drizzle-kit push + LibSQL |
-| REQ-A04 | Better Auth Instance with drizzleAdapter | P0 | UNTESTED | Requires auth import |
-| REQ-A05 | Session Cookie 7d / HttpOnly / SameSite=Lax | P0 | UNTESTED | Requires runtime |
-| REQ-A06 | trustedOrigins includes BETTER_AUTH_URL | P0 | UNTESTED | Requires runtime |
-| REQ-A07 | /auth/* route mounting in Mastra | P0 | UNTESTED | Requires runtime + Mastra start |
-| REQ-A08 | drizzle-kit push completes successfully | P0 | UNTESTED | Requires LibSQL + drizzle-kit |
-| REQ-A09 | Zod schemas via drizzle-orm/zod | P0 | **PASS (×4)** | All 4 tests confirm: createSelectSchema, createInsertSchema, user/session/account/verification exports, correct package, named exports |
+| REQ-A01 | Drizzle Client Singleton | P0 | **PASS** | 3 structural tests passed: client export, LIBSQL_URL usage, no silent catch blocks |
+| REQ-A02 | drizzle.config.ts dialect turso | P0 | **PASS** | 3 tests passed: dialect, exported tables, `drizzle-kit generate` |
+| REQ-A03 | Auth Schema Tables (4 tables) | P0 | **PARTIAL** | `drizzle-kit push` idempotency + deterministic generate passed; direct LibSQL HTTP inspection probes skipped |
+| REQ-A04 | Better Auth Instance with drizzleAdapter | P0 | **PASS** | 4 structural tests passed: adapter wiring, exports, emailAndPassword, production secret guard |
+| REQ-A05 | Session Cookie 7d / HttpOnly / SameSite=Lax | P0 | **PASS** | 4 structural config tests passed |
+| REQ-A06 | trustedOrigins includes BETTER_AUTH_URL | P0 | **PASS** | 2 structural tests passed |
+| REQ-A07 | /auth/* route mounting in Mastra | P0 | **PARTIAL** | Route-mount test passed; 2 runtime endpoint probes skipped |
+| REQ-A08 | drizzle-kit push completes successfully | P0 | **PARTIAL** | `drizzle-kit push` success + unreachable-host timeout passed; direct table-count probe skipped |
+| REQ-A09 | Zod schemas via drizzle-orm/zod | P0 | **PASS** | All 4 tests confirm: createSelectSchema, createInsertSchema, auth_* exports, correct package, named aliases |
 
 ---
 
 ## Scenarios Validation
 
-All 9 REQs have 3 scenarios each (happy/edge/error = 27 scenarios + structural ones = 35 total tests). The 5 passing tests validate structural correctness of REQ-A02 and REQ-A09. The remaining 30 are blocked on runtime.
+This verification pass executed 34 tests from `tests/auth-backend.test.ts`: 25 passed and 9 were explicitly skipped. Skips are now reported as skips (not soft-pass returns), which makes infra gaps visible.
 
 ---
 
 ## Issues Found
 
-### 1. Coverage blocked by vitest/coverage-v8 version mismatch
-**Severity:** Medium
-**Detail:** `@vitest/coverage-v8@4.1.3` incompatible with `vitest@3.2.4` — `BaseCoverageProvider` export missing. No line/branch coverage available.
-**Fix:** Align versions in `runtime/package.json` devDependencies.
-
-### 2. 30 skipped integration tests (intentional — require runtime)
+### 1. 9 skipped integration probes
 **Severity:** Informational
-**Detail:** REQ-A01, A03–A08 have 30 tests skipped because they require: (a) LibSQL daemon running, (b) Mastra server starting, (c) drizzle-kit push executing. These are valid integration tests, not false positives.
-**Action:** Mark as `[MANUAL/CI]` and run with `docker compose up` before demo.
+**Detail:** 6 direct LibSQL HTTP inspection tests and 3 runtime HTTP probes were explicitly skipped in the current environment. The suite no longer hides these as passing tests.
+**Action:** Run the stack with the runtime and reachable LibSQL HTTP API, then re-run `npx vitest run tests/auth-backend.test.ts`.
+
+### 2. Coverage not collected in this pass
+**Severity:** Low
+**Detail:** This verification run focused on correctness and reviewer comments; V8 coverage was not collected.
+**Action:** Optional follow-up: run Vitest with coverage in CI or a local verification pass.
 
 ### 3. Better Auth `skipLibCheck` TS warnings
 **Severity:** Low
@@ -58,16 +58,15 @@ All 9 REQs have 3 scenarios each (happy/edge/error = 27 scenarios + structural o
 
 ---
 
-## Structural Validation (PASSING)
+## Validation Summary (PASSING)
 
-The 5 passing tests confirm:
+The 25 passing tests confirm:
 
-1. **REQ-A02 (dialect):** `drizzle.config.ts` uses `dialect: 'turso'` ✅
-2. **REQ-A09 (Zod schemas):**
-   - `runtime/src/lib/schemas/auth.ts` exports `createSelectSchema` and `createInsertSchema` ✅
-   - Exports for all 4 tables: user, session, account, verification ✅
-   - Uses `drizzle-orm/zod` (not deprecated `drizzle-zod`) ✅
-   - Exports named schema objects: `userSchema`, `sessionSchema`, `accountSchema`, `verificationSchema` ✅
+1. **REQ-A01 / REQ-A02:** Drizzle client wiring and `dialect: 'turso'` config are present and parsable ✅
+2. **REQ-A03 / REQ-A08:** `drizzle-kit push` succeeds, is idempotent, and `drizzle-kit generate` is deterministic ✅
+3. **REQ-A04 / REQ-A05 / REQ-A06:** Better Auth config includes the adapter mapping, 7-day cookie policy, trusted origins, and a production secret guard ✅
+4. **REQ-A07:** Mastra mounts `/auth/*` via `registerApiRoute` ✅
+5. **REQ-A09:** `runtime/src/lib/schemas/auth.ts` exports `createSelectSchema`, `createInsertSchema`, `auth_*` schemas, and the short aliases (`userSchema`, `sessionSchema`, `accountSchema`, `verificationSchema`) ✅
 
 ---
 
@@ -83,7 +82,7 @@ The 5 passing tests confirm:
 | `runtime/src/mastra/index.ts` | ✅ Updated (auth routes mounted) |
 | `runtime/package.json` | ✅ Updated (better-auth, drizzle-kit, libsql-client added) |
 | `.env.example` | ✅ Updated (BETTER_AUTH_SECRET + URL values) |
-| `tests/auth-backend.test.ts` | ✅ Created (35 tests, 5 passing) |
+| `tests/auth-backend.test.ts` | ✅ Updated (34 tests, 25 passing / 9 skipped in this verification pass) |
 
 ---
 
@@ -91,11 +90,11 @@ The 5 passing tests confirm:
 
 These MUST be verified before the feature is considered complete:
 
-1. **[MANUAL]** Run `drizzle-kit push` against running LibSQL — confirm 4 tables created
-2. **[MANUAL]** Start Mastra runtime — confirm `/auth/*` routes respond
-3. **[MANUAL]** Sign up a test user — confirm session cookie set with correct attributes
-4. **[MANUAL]** Run full test suite with `pnpm test` — confirm 5 structural tests still pass
-5. **[LOW]** Fix vitest coverage version mismatch (optional for demo)
+1. **[MANUAL]** Start Mastra runtime and confirm `/auth/get-session` + `/auth/sign-in/email` respond through the runtime path
+2. **[MANUAL]** Confirm the LibSQL HTTP API used by the raw SQL probes is reachable in the target environment, then re-run the skipped DB inspection tests
+3. **[MANUAL]** Sign up a test user and confirm the session cookie attributes in the browser
+4. **[DONE]** Full root suite passed with `npm test` in this verification pass
+5. **[LOW]** Optional follow-up: collect coverage in CI/local verification
 
 ---
 
@@ -103,10 +102,10 @@ These MUST be verified before the feature is considered complete:
 
 **CONDITIONAL GO**
 
-5 structural tests pass and confirm the implementation is correctly wired. The 30 skipped tests are intentional integration tests that require the full Docker stack. All critical files are created and correctly structured per spec requirements (REQ-A02 and REQ-A09 fully validated).
+25 tests pass and confirm the implementation is wired correctly across config, schema tooling, auth setup, and route registration. The remaining 9 tests are explicitly skipped because they require a reachable runtime HTTP surface and/or direct LibSQL HTTP probe path in the current environment.
 
 The following are NOT blocking but SHOULD be done before demo:
-- Run drizzle-kit push against live LibSQL and confirm tables created
+- Re-run the skipped runtime + LibSQL probe tests in the target stack
 - Test sign-in/sign-up flow end-to-end
 - Verify session cookie attributes in browser devtools
 

@@ -17,6 +17,7 @@ import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
+import { z } from 'zod';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKTREE_ROOT = resolve(__dirname, '..');
@@ -27,35 +28,63 @@ const runInfra = process.env.RUN_INFRA_TESTS === '1';
 const infraIt = runInfra ? it : (it.skip as typeof it);
 
 /**
- * Run SQL via LibSQL HTTP API (curl to localhost:8080).
+ * Run SQL via LibSQL HTTP API.
  * LibSQL sqld HTTP protocol: POST / with JSON body { "statements": ["SQL"] }
- * Returns rows array or null on failure.
+ * Returns parsed rows or throws on transport / parse failure.
  *
  * Uses node --input-type=module to avoid shell escaping issues with quotes.
  */
-function runSql(sql: string): any[] | null {
-  try {
-    const script = `
+const sqlScalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const sqlRowSchema = z.record(z.string(), sqlScalarSchema);
+const sqlRowsSchema = z.array(sqlRowSchema);
+
+type SqlRow = z.infer<typeof sqlRowSchema>;
+
+function runSql(sql: string): SqlRow[] {
+  const script = `
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const sql = ${JSON.stringify(sql)};
 const encoded = JSON.stringify({ statements: [sql] });
-const output = execSync(
-  \`curl -s --connect-timeout 5 -X POST ${LIBSQL_URL} -H 'Content-Type: application/json' -d \${encoded}\`,
+const output = execFileSync(
+  'curl',
+  ['-s', '--connect-timeout', '5', '-X', 'POST', ${JSON.stringify(LIBSQL_URL)}, '-H', 'Content-Type: application/json', '-d', encoded],
   { timeout: 10000, encoding: 'utf-8' }
 );
 const parsed = JSON.parse(output);
 console.log(JSON.stringify(parsed[0]?.results?.rows ?? null));
 `.trim();
-    const output = execSync(
-      `node --input-type=module`,
-      { timeout: 10_000, encoding: 'utf-8', input: script }
-    );
-    return JSON.parse(output.trim());
+  const output = execSync(
+    `node --input-type=module`,
+    { timeout: 10_000, encoding: 'utf-8', input: script }
+  );
+  return sqlRowsSchema.parse(JSON.parse(output.trim()));
+}
+
+function runSqlOrSkip(skip: () => void, sql: string): SqlRow[] {
+  try {
+    return runSql(sql);
   } catch {
-    return null;
+    skip();
+    return [];
   }
+}
+
+function getString(row: SqlRow, key: string): string {
+  const value = row[key];
+  if (typeof value !== 'string') {
+    throw new Error(`Expected ${key} to be a string`);
+  }
+  return value;
+}
+
+function getNumber(row: SqlRow, key: string): number {
+  const value = row[key];
+  if (typeof value !== 'number') {
+    throw new Error(`Expected ${key} to be a number`);
+  }
+  return value;
 }
 
 // ============================================================================
@@ -105,15 +134,11 @@ describe('REQ-A02: drizzle.config.ts with turso Dialect', () => {
   });
 
   it('should run drizzle-kit generate without schema parse errors', () => {
-    try {
-      execSync(
-        `cd ${WORKTREE_ROOT} && LIBSQL_URL=${LIBSQL_URL} ${RUNTIME_NODE_MODULES}/.bin/drizzle-kit generate --config drizzle.config.ts`,
-        { timeout: 30_000, encoding: 'utf-8' }
-      );
-      expect(true).toBe(true);
-    } catch (err: any) {
-      expect(err.status ?? 0).toBe(0);
-    }
+    execSync(
+      `cd ${WORKTREE_ROOT} && LIBSQL_URL=${LIBSQL_URL} ${RUNTIME_NODE_MODULES}/.bin/drizzle-kit generate --config drizzle.config.ts`,
+      { timeout: 30_000, encoding: 'utf-8' }
+    );
+    expect(true).toBe(true);
   });
 });
 
@@ -121,18 +146,18 @@ describe('REQ-A02: drizzle.config.ts with turso Dialect', () => {
 // REQ-A03: Auth Schema Tables
 // ============================================================================
 describe('REQ-A03: Auth Schema Tables', () => {
-  it('should have four auth tables in LibSQL', () => {
-    const rows = runSql("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'auth_%' ORDER BY name");
-    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
-    const names = rows.map((r) => r.name).sort();
+  it('should have four auth tables in LibSQL', ({ skip }) => {
+    const rows = runSqlOrSkip(skip, "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'auth_%' ORDER BY name");
+    const names = rows.map((row) => getString(row, 'name')).sort();
     expect(names).toEqual(['auth_account', 'auth_session', 'auth_user', 'auth_verification']);
   });
 
-  it('should create auth_user table with correct columns', () => {
-    const rows = runSql('PRAGMA table_info(auth_user)');
-    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
-    const cols: Record<string, any> = {};
-    for (const row of rows as any[]) cols[row.name] = row;
+  it('should create auth_user table with correct columns', ({ skip }) => {
+    const rows = runSqlOrSkip(skip, 'PRAGMA table_info(auth_user)');
+    const cols: Record<string, SqlRow> = {};
+    for (const row of rows) {
+      cols[getString(row, 'name')] = row;
+    }
     expect(cols).toHaveProperty('id');
     expect(cols).toHaveProperty('name');
     expect(cols).toHaveProperty('email');
@@ -140,21 +165,25 @@ describe('REQ-A03: Auth Schema Tables', () => {
     expect(cols).toHaveProperty('image');
     expect(cols).toHaveProperty('created_at');
     expect(cols).toHaveProperty('updated_at');
-    expect(cols['id'].pk).toBe(1); // PRIMARY KEY
+    expect(getNumber(cols['id'], 'pk')).toBe(1); // PRIMARY KEY
   });
 
-  it('should enforce UNIQUE constraint on auth_user.email', () => {
-    const rows = runSql("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='auth_user' AND sql LIKE '%UNIQUE%'");
-    if (!rows || rows.length === 0) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
-    const hasEmailUnique = rows.some((r: any) => r.sql?.toLowerCase().includes('email'));
+  it('should enforce UNIQUE constraint on auth_user.email', ({ skip }) => {
+    const rows = runSqlOrSkip(skip, "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='auth_user' AND sql LIKE '%UNIQUE%'");
+    if (rows.length === 0) {
+      skip();
+      return;
+    }
+    const hasEmailUnique = rows.some((row) => getString(row, 'sql').toLowerCase().includes('email'));
     expect(hasEmailUnique).toBe(true);
   });
 
-  it('should create auth_session table with correct columns and token UNIQUE index', () => {
-    const rows = runSql('PRAGMA table_info(auth_session)');
-    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
-    const cols: Record<string, any> = {};
-    for (const row of rows as any[]) cols[row.name] = row;
+  it('should create auth_session table with correct columns and token UNIQUE index', ({ skip }) => {
+    const rows = runSqlOrSkip(skip, 'PRAGMA table_info(auth_session)');
+    const cols: Record<string, SqlRow> = {};
+    for (const row of rows) {
+      cols[getString(row, 'name')] = row;
+    }
     expect(cols).toHaveProperty('id');
     expect(cols).toHaveProperty('user_id');
     expect(cols).toHaveProperty('expires_at');
@@ -163,19 +192,18 @@ describe('REQ-A03: Auth Schema Tables', () => {
     expect(cols).toHaveProperty('user_agent');
     expect(cols).toHaveProperty('created_at');
     expect(cols).toHaveProperty('updated_at');
-    expect(cols['id'].pk).toBe(1);
+    expect(getNumber(cols['id'], 'pk')).toBe(1);
     // UNIQUE index on token
-    const idxRows = runSql("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='auth_session' AND sql LIKE '%UNIQUE%'");
-    if (idxRows && idxRows.length > 0) {
-      const hasTokenUnique = idxRows.some((r: any) => r.sql?.toLowerCase().includes('token'));
+    const idxRows = runSqlOrSkip(skip, "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='auth_session' AND sql LIKE '%UNIQUE%'");
+    if (idxRows.length > 0) {
+      const hasTokenUnique = idxRows.some((row) => getString(row, 'sql').toLowerCase().includes('token'));
       expect(hasTokenUnique).toBe(true);
     }
   });
 
-  it('should create auth_account table with provider fields', () => {
-    const rows = runSql('PRAGMA table_info(auth_account)');
-    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
-    const colNames = rows.map((r) => r.name);
+  it('should create auth_account table with provider fields', ({ skip }) => {
+    const rows = runSqlOrSkip(skip, 'PRAGMA table_info(auth_account)');
+    const colNames = rows.map((row) => getString(row, 'name'));
     expect(colNames).toContain('account_id');
     expect(colNames).toContain('provider_id');
     expect(colNames).toContain('access_token');
@@ -186,10 +214,9 @@ describe('REQ-A03: Auth Schema Tables', () => {
     expect(colNames).toContain('user_id');
   });
 
-  it('should create auth_verification table with correct columns', () => {
-    const rows = runSql('PRAGMA table_info(auth_verification)');
-    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
-    const colNames = rows.map((r) => r.name);
+  it('should create auth_verification table with correct columns', ({ skip }) => {
+    const rows = runSqlOrSkip(skip, 'PRAGMA table_info(auth_verification)');
+    const colNames = rows.map((row) => getString(row, 'name'));
     expect(colNames).toContain('id');
     expect(colNames).toContain('identifier');
     expect(colNames).toContain('value');
@@ -199,15 +226,11 @@ describe('REQ-A03: Auth Schema Tables', () => {
   });
 
   it('should be idempotent — re-push succeeds on unchanged schema', () => {
-    try {
-      execSync(
-        `cd ${WORKTREE_ROOT} && LIBSQL_URL=${LIBSQL_URL} ${RUNTIME_NODE_MODULES}/.bin/drizzle-kit push --config drizzle.config.ts --force`,
-        { timeout: 60_000, encoding: 'utf-8' }
-      );
-      expect(true).toBe(true);
-    } catch (err: any) {
-      expect(err.status ?? 0).toBe(0);
-    }
+    execSync(
+      `cd ${WORKTREE_ROOT} && LIBSQL_URL=${LIBSQL_URL} ${RUNTIME_NODE_MODULES}/.bin/drizzle-kit push --config drizzle.config.ts --force`,
+      { timeout: 60_000, encoding: 'utf-8' }
+    );
+    expect(true).toBe(true);
   });
 
   it('should generate deterministic output for unchanged schema', () => {
@@ -248,10 +271,11 @@ describe('REQ-A04: Better Auth Instance with Drizzle Adapter', () => {
     expect(content).toMatch(/emailAndPassword:\s*\{[^}]*enabled:\s*true/);
   });
 
-  it('should use BETTER_AUTH_SECRET from environment with fallback', () => {
+  it('should use BETTER_AUTH_SECRET from environment with a dev-only fallback', () => {
     const content = readFileSync(resolve(WORKTREE_ROOT, 'runtime/src/auth/index.ts'), 'utf-8');
     expect(content).toMatch(/process\.env\.BETTER_AUTH_SECRET/);
     expect(content).toMatch(/dev-secret|fallback/);
+    expect(content).toMatch(/BETTER_AUTH_SECRET is required in production/);
   });
 });
 
@@ -311,55 +335,56 @@ describe('REQ-A07: /auth/* Route Mounting in Mastra', () => {
     expect(content).toMatch(/apiRoutes/);
   });
 
-  it('should return JSON session response from /auth/get-session', infraIt(async () => {
+  infraIt('should return JSON session response from /auth/get-session', async ({ skip }) => {
+    let res: Response;
     try {
-      const res = await fetch(`${RUNTIME_URL}/auth/get-session`, {
+      res = await fetch(`${RUNTIME_URL}/auth/get-session`, {
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
       });
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body).toHaveProperty('session');
-      expect(body.session).toBeNull();
     } catch {
-      // runtime not reachable
+      skip();
+      return;
     }
-  }));
 
-  it('should return error on malformed sign-in request', infraIt(async () => {
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty('session');
+    expect(body.session).toBeNull();
+  });
+
+  infraIt('should return error on malformed sign-in request', async ({ skip }) => {
+    let res: Response;
     try {
-      const res = await fetch(`${RUNTIME_URL}/auth/sign-in/email`, {
+      res = await fetch(`${RUNTIME_URL}/auth/sign-in/email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{ invalid json }',
       });
-      expect(res.status).toBeGreaterThanOrEqual(400);
-      expect(res.status).toBeLessThan(500);
     } catch {
-      // runtime not reachable
+      skip();
+      return;
     }
-  }));
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+  });
 });
 
 // ============================================================================
 // REQ-A08: drizzle-kit push Schema Application
 // ============================================================================
 describe('REQ-A08: drizzle-kit push Schema Application', () => {
-  it('should have all four auth tables in LibSQL', () => {
-    const rows = runSql("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'auth_%'");
-    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
+  it('should have all four auth tables in LibSQL', ({ skip }) => {
+    const rows = runSqlOrSkip(skip, "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'auth_%'");
     expect(rows.length).toBe(4);
   });
 
   it('should complete drizzle-kit push successfully', () => {
-    try {
-      execSync(
-        `cd ${WORKTREE_ROOT} && LIBSQL_URL=${LIBSQL_URL} ${RUNTIME_NODE_MODULES}/.bin/drizzle-kit push --config drizzle.config.ts --force`,
-        { timeout: 60_000, encoding: 'utf-8' }
-      );
-      expect(true).toBe(true);
-    } catch (err: any) {
-      expect(err.status ?? 0).toBe(0);
-    }
+    execSync(
+      `cd ${WORKTREE_ROOT} && LIBSQL_URL=${LIBSQL_URL} ${RUNTIME_NODE_MODULES}/.bin/drizzle-kit push --config drizzle.config.ts --force`,
+      { timeout: 60_000, encoding: 'utf-8' }
+    );
+    expect(true).toBe(true);
   });
 
   it('should report connection error when LibSQL is unreachable', () => {

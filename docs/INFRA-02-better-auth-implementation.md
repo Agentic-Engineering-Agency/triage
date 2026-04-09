@@ -38,8 +38,8 @@ Browser → Caddy (:3001/auth/*) → Mastra runtime (:4111) → Better Auth → 
 | `runtime/package.json` | Dependencias de auth agregadas |
 | `runtime/package-lock.json` | Regenerado para incluir las nuevas deps |
 | `.env.example` | `BETTER_AUTH_SECRET` y `BETTER_AUTH_URL` agregados |
-| `Dockerfile.runtime` | `pnpm` instalado globalmente (requerido por `mastra build`) |
-| `docker-compose.override.yml` | Dev mode corregido: `mastra dev` en vez de `tsx watch` |
+| `Dockerfile.runtime` | Build simplificado: `npm ci` + `npx mastra build` sin dependencias globales extra |
+| `docker-compose.override.yml` | Dev mode corregido: `mastra dev --port 4111` en vez de `tsx watch` |
 | `Caddyfile` | Bloque `handle /auth/*` para reverse proxy (ya existía) |
 
 ---
@@ -123,8 +123,10 @@ export const auth = betterAuth({
       secure: process.env.NODE_ENV === 'production',  // false en dev para HTTP
     },
   },
-  trustedOrigins,                        // localhost:3001 en dev
-  secret: process.env.BETTER_AUTH_SECRET || 'dev-secret-...',
+  trustedOrigins,                        // BETTER_AUTH_URL en prod, localhost:3001 fallback en dev
+  secret: process.env.NODE_ENV === 'production'
+    ? process.env.BETTER_AUTH_SECRET     // requerido en producción
+    : (process.env.BETTER_AUTH_SECRET || 'dev-secret-...'),
 });
 ```
 
@@ -160,10 +162,16 @@ En `runtime/package.json`:
 ```text
 better-auth: ^1.0.0
 @better-auth/drizzle-adapter: ^1.0.0
-drizzle-kit: ^0.30.0
 drizzle-orm: ^0.38.0
 @libsql/client: ^0.14.0
 @opentelemetry/api            ← peer dependency de better-auth
+```
+
+Y en `devDependencies`:
+
+```text
+drizzle-kit: ^0.30.0
+mastra: ^1.4.1
 ```
 
 ---
@@ -184,7 +192,7 @@ El override usa el stage `builder` directamente con hot-reload:
 runtime:
   target: builder              # usa el stage con source code
   working_dir: /app/runtime
-  command: npx mastra dev      # hot-reload, no build
+  command: npx mastra dev --port 4111  # hot-reload, no build
   volumes:
     - ./runtime/src:/app/runtime/src   # monta source para edición en vivo
 ```
@@ -193,7 +201,7 @@ runtime:
 
 ### Aplicar schema a LibSQL
 
-Las tablas auth se crean con `drizzle-kit push` (sin archivos de migración):
+Las tablas auth se aplican con `drizzle-kit push`, y el repositorio además versiona los artifacts generados en `drizzle/` para trazabilidad del esquema:
 
 ```bash
 cd <project-root>
@@ -347,7 +355,7 @@ RUN_INFRA_TESTS=1 npx vitest run tests/auth-backend.test.ts
 
 2. **`dialect: 'turso'` vs `provider: 'sqlite'`** — Son para herramientas diferentes. drizzle-kit (CLI) usa `turso` para conectarse a LibSQL. El adapter de Better Auth usa `sqlite` porque libsql es wire-compatible con SQLite.
 
-3. **`drizzle-kit push` en vez de migrations** — Para hackathon, push directo es más rápido. No genera archivos `.sql` de migración. Es idempotente.
+3. **`drizzle-kit push` como mecanismo de aplicación** — Para hackathon, push directo es más rápido e idempotente. Aun así, se versionan los artifacts generados en `drizzle/` para dejar evidencia del esquema aplicado.
 
 4. **Auth FUERA del directorio `mastra/`** — El código auth vive en `runtime/src/auth/`, no en `runtime/src/mastra/`. Mastra es el framework de IA, auth es infraestructura de la app web. Se conectan en un solo punto: la línea de `registerApiRoute`.
 
