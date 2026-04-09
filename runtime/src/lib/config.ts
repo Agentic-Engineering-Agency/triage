@@ -89,7 +89,7 @@ export const MODELS = {
  * Each chain is tried in order until one succeeds.
  */
 export const MODEL_CHAINS = {
-  orchestrator: [MODELS.orchestrator, MODELS.orchestratorFallback1, MODELS.orchestratorFallback2, MODELS.freeRouter],
+  orchestrator: [MODELS.orchestrator, MODELS.orchestratorFallback1, MODELS.orchestratorFallback2],
   subAgent: [MODELS.mercury, MODELS.freeRouter],
   vision: [MODELS.vision, MODELS.visionFallback, MODELS.freeRouter],
 } as const;

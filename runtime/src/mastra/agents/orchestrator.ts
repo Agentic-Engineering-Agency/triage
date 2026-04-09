@@ -1,5 +1,6 @@
 import { Agent } from '@mastra/core/agent';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { MemoryLibSQL } from '@mastra/libsql';
 import { MODELS, MODEL_CHAINS } from '../../lib/config';
 import { codeReviewAgent } from './code-review-agent';
 import {
@@ -18,6 +19,10 @@ import {
 
 const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
+});
+
+const memory = new MemoryLibSQL({
+  url: process.env.LIBSQL_URL || 'http://libsql:8080',
 });
 
 /**
@@ -74,6 +79,10 @@ When comparing a new incident against existing Linear issues, compute keyword ov
       route: 'fallback',
     },
   }),
+  memory,
+  defaultGenerateOptions: {
+    maxTokens: 8192,
+  },
   agents: {
     codeReviewAgent,
   },
