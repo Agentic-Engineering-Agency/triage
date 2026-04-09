@@ -152,12 +152,12 @@ describe('REQ-OBS-01: OpenRouter Broadcast Setup', () => {
       expect(langfuseLines.length).toBeGreaterThanOrEqual(3);
     });
 
-    it('wrong base URL: LANGFUSE_BASEURL defaults to internal Docker hostname', () => {
+    it('LANGFUSE_BASEURL defaults to the public Cloudflare tunnel URL', () => {
       // GIVEN the .env.example file
       // WHEN inspecting the LANGFUSE_BASEURL value
-      // THEN it should default to http://langfuse-web:3000 (internal Docker DNS)
+      // THEN it should default to the tunnel URL (cloudflared runs in Docker, reaches langfuse-web via DNS)
       const content = readEnvExample();
-      expect(content).toMatch(/LANGFUSE_BASEURL=http:\/\/langfuse-web:3000/);
+      expect(content).toMatch(/LANGFUSE_BASEURL=https:\/\/langfuse\.agenticengineering\.lat/);
     });
   });
 });
@@ -260,14 +260,14 @@ describe('REQ-OBS-03: Cloudflare Tunnel for Langfuse Exposure', () => {
       expect(content).toMatch(/LANGFUSE_BASEURL/);
     });
 
-    it('LANGFUSE_BASEURL default points to internal Docker hostname, not tunnel', () => {
+    it('LANGFUSE_BASEURL default points to the public tunnel URL', () => {
       // GIVEN the .env.example file
       // WHEN reading LANGFUSE_BASEURL value
-      // THEN it should point to internal Docker URL (tunnel override is user responsibility)
+      // THEN it should point to the Cloudflare tunnel URL (cloudflared service handles routing)
       const content = readEnvExample();
       const match = content.match(/LANGFUSE_BASEURL=(.+)/);
       expect(match).not.toBeNull();
-      expect(match![1]).toContain('langfuse-web:3000');
+      expect(match![1]).toContain('langfuse.agenticengineering.lat');
     });
   });
 
@@ -416,13 +416,13 @@ describe('REQ-OBS-05: Docker Compose Network Verification', () => {
   });
 
   describe('No new services needed for observability', () => {
-    it('docker-compose.yml should have exactly 9 services (no observability-specific additions)', () => {
+    it('docker-compose.yml should have exactly 10 services (9 app + cloudflared tunnel)', () => {
       // GIVEN docker-compose.yml is parsed
       // WHEN counting services
-      // THEN there should be exactly 9 (observability uses existing langfuse-web, no new sidecar)
+      // THEN there should be exactly 10 (9 app services + cloudflared for tunnel exposure)
       const compose = loadCompose();
       const serviceNames = Object.keys(compose.services);
-      expect(serviceNames).toHaveLength(9);
+      expect(serviceNames).toHaveLength(10);
     });
 
     it('no new observability-only sidecar services should exist', () => {
