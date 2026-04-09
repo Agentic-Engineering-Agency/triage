@@ -3,6 +3,7 @@
 # In dev mode, config.json is proxied to Vite along with all other frontend requests
 
 (dev-frontend) {
+    header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws://vite:5173 ws://localhost:5173; font-src 'self'; frame-ancestors 'none'"
     reverse_proxy vite:5173
 }
 

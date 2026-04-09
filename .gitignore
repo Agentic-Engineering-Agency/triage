@@ -40,3 +40,4 @@ docs/drizzle-libsql-reference.md
 config/
 .worktrees/
 *.bak
+test-results/

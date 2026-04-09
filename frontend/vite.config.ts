@@ -11,4 +11,20 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    proxy: {
+      "/auth": {
+        target: "http://localhost:4111",
+        changeOrigin: true,
+      },
+      "/chat": {
+        target: "http://localhost:4111",
+        changeOrigin: true,
+        // Only proxy POST (AI streaming) — GET /chat is the SPA route
+        bypass(req) {
+          if (req.method !== "POST") return req.url;
+        },
+      },
+    },
+  },
 })
