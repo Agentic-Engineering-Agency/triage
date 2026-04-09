@@ -6,6 +6,8 @@ import { Send, Paperclip, X, ZoomIn, FileText, FileCode, File as FileIcon } from
 import { Button } from "@/components/ui/button"
 import { toolComponents } from "@/components/tool-registry"
 import { getDraft, saveDraft, clearDraft } from "@/lib/chat-draft"
+import Markdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 export const Route = createFileRoute("/chat")({
   component: ChatPage,
@@ -41,7 +43,7 @@ interface Attachment {
 }
 
 const transport = new DefaultChatTransport({
-  api: "/api/agents/orchestrator/stream",
+  api: "/chat",
   credentials: "include",
 })
 
@@ -278,57 +280,99 @@ function ChatPage() {
                   }
                 >
                   {/* Render message parts */}
-                  {message.parts.map((part, i) => {
-                    if (part.type === "text") {
-                      return (
-                        <p key={i} className="whitespace-pre-wrap">
-                          {part.text}
-                        </p>
-                      )
-                    }
+                  {(() => {
+                    // Consolidate consecutive text parts into one block
+                    const textContent = message.parts
+                      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+                      .map((p) => p.text)
+                      .join("")
 
-                    // Tool UI parts — Mastra sends as tool-{toolKey}
-                    // States: input-streaming → input-available → output-available / output-error
-                    if (part.type.startsWith("tool-")) {
-                      const toolPart = part as any
-                      const toolKey = part.type.replace("tool-", "")
-                      const ToolComponent = toolComponents[toolKey]
+                    const fileParts = message.parts.filter((p) => p.type === "file") as Array<{
+                      type: "file"
+                      mediaType: string
+                      url: string
+                      filename?: string
+                    }>
+                    const toolParts = message.parts.filter((p) => p.type.startsWith("tool-"))
 
-                      if (ToolComponent) {
-                        if (toolPart.state === "output-available") {
-                          return (
-                            <div key={i} className="mt-2">
-                              <ToolComponent {...(toolPart.output ?? {})} />
-                            </div>
-                          )
-                        }
-                        if (toolPart.state === "output-error") {
-                          return (
-                            <div key={i} className="mt-2">
-                              <ToolComponent
-                                state="error"
-                                errorMessage={toolPart.errorText ?? "Tool execution failed"}
-                              />
-                            </div>
-                          )
-                        }
-                        // input-streaming / input-available → loading skeleton
-                        return (
-                          <div key={i} className="mt-2">
-                            <ToolComponent state="loading" />
+                    return (
+                      <>
+                        {/* File attachments (images, docs) */}
+                        {fileParts.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {fileParts.map((file, i) =>
+                              file.mediaType.startsWith("image/") ? (
+                                <img
+                                  key={`file-${i}`}
+                                  src={file.url}
+                                  alt={file.filename || "Attached image"}
+                                  className="max-h-48 max-w-full rounded-lg object-cover border border-border/50"
+                                />
+                              ) : (
+                                <div
+                                  key={`file-${i}`}
+                                  className="flex items-center gap-2 rounded-lg bg-muted/50 border border-border/50 px-3 py-2"
+                                >
+                                  <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                  <span className="text-xs text-muted-foreground truncate max-w-40">
+                                    {file.filename || file.mediaType}
+                                  </span>
+                                </div>
+                              ),
+                            )}
                           </div>
-                        )
-                      }
-                    }
+                        )}
 
-                    return null
-                  })}
+                        {/* Text content */}
+                        {textContent && (
+                          message.role === "user" ? (
+                            <p className="whitespace-pre-wrap">{textContent}</p>
+                          ) : (
+                            <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-primary prose-code:bg-muted/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-pre:bg-muted/50 prose-pre:rounded-lg prose-a:text-primary prose-strong:text-foreground">
+                              <Markdown remarkPlugins={[remarkGfm]}>{textContent}</Markdown>
+                            </div>
+                          )
+                        )}
+                        {toolParts.map((part, i) => {
+                          const toolPart = part as any
+                          const toolKey = part.type.replace("tool-", "")
+                          const ToolComponent = toolComponents[toolKey]
+
+                          if (ToolComponent) {
+                            if (toolPart.state === "output-available") {
+                              return (
+                                <div key={`tool-${i}`} className="mt-2">
+                                  <ToolComponent {...(toolPart.output ?? {})} />
+                                </div>
+                              )
+                            }
+                            if (toolPart.state === "output-error") {
+                              return (
+                                <div key={`tool-${i}`} className="mt-2">
+                                  <ToolComponent
+                                    state="error"
+                                    errorMessage={toolPart.errorText ?? "Tool execution failed"}
+                                  />
+                                </div>
+                              )
+                            }
+                            return (
+                              <div key={`tool-${i}`} className="mt-2">
+                                <ToolComponent state="loading" />
+                              </div>
+                            )
+                          }
+                          return null
+                        })}
+                      </>
+                    )
+                  })()}
                 </div>
               </div>
             ))}
 
-            {/* Loading indicator */}
-            {isLoading && (
+            {/* Loading indicator — only while waiting for first token, not during streaming */}
+            {status === "submitted" && (
               <div className="flex justify-start">
                 <div className="rounded-xl bg-card px-4 py-2.5 shadow-neu-sm">
                   <div className="flex items-center gap-1.5">

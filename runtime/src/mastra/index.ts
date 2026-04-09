@@ -1,5 +1,6 @@
 import { Mastra } from '@mastra/core';
 import { LibSQLStore } from '@mastra/libsql';
+import { chatRoute } from '@mastra/ai-sdk';
 
 import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent } from './agents/index';
 import { triageWorkflow } from './workflows/index';
@@ -33,4 +34,9 @@ export const mastra = new Mastra({
     id: 'triage-main',
     url: process.env.LIBSQL_URL || 'http://libsql:8080',
   }),
+  server: {
+    apiRoutes: [
+      chatRoute({ path: '/chat', agent: 'orchestrator' }),
+    ],
+  },
 });

@@ -330,6 +330,15 @@ describe('Linear Tools', () => {
       expect(result.data.assignee).toBeNull();
     });
 
+    it('S4: returns error when issue state is unavailable', async () => {
+      mockIssue.mockResolvedValue({ ...mockIssueData, state: Promise.resolve(undefined) });
+
+      const result = await executeTool(getLinearIssue, { issueId: 'TRI-42' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Issue state not available');
+    });
+
     it('S4: tool has id "get-linear-issue"', () => {
       expect((getLinearIssue as any).id).toBe('get-linear-issue');
     });
@@ -372,7 +381,8 @@ describe('Linear Tools', () => {
       expect(result.data.issues).toHaveLength(2);
       expect(result.data.issues[0].identifier).toBe('TRI-40');
       expect(result.data.issues[1].identifier).toBe('TRI-41');
-      expect(result.data.totalCount).toBe(2);
+      expect(result.data.returnedCount).toBe(2);
+      expect(result.data.hasNextPage).toBe(false);
 
       // Verify filter was constructed correctly
       expect(mockIssues).toHaveBeenCalledWith(
@@ -398,7 +408,7 @@ describe('Linear Tools', () => {
 
       expect(result.success).toBe(true);
       expect(result.data.issues).toHaveLength(0);
-      expect(result.data.totalCount).toBe(0);
+      expect(result.data.returnedCount).toBe(0);
     });
 
     it('S5: respects limit parameter', async () => {
@@ -504,7 +514,7 @@ describe('Linear Tools', () => {
       mockTeam.mockRejectedValue(new Error('Team not found'));
 
       const result = await executeTool(getLinearTeamMembers, {
-        teamId: 'nonexistent-team-id',
+        teamId: TEAM_ID,
       });
 
       expect(result.success).toBe(false);
