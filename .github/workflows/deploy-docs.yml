@@ -13,6 +13,11 @@ on:
     branches: [dev, main]
     paths:
       - 'docs-site/**'
+      - 'README.md'
+      - 'AGENTS_USE.md'
+      - 'SCALING.md'
+      - 'QUICKGUIDE.md'
+      - 'docs/evidence/**'
       - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
 
