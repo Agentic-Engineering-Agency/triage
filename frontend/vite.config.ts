@@ -11,4 +11,16 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    proxy: {
+      "/auth": {
+        target: "http://localhost:4111",
+        changeOrigin: true,
+      },
+      "/chat": {
+        target: "http://localhost:4111",
+        changeOrigin: true,
+      },
+    },
+  },
 })

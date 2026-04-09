@@ -12,6 +12,7 @@
 | SPEC-20260409-001 | better-auth-drizzle-libsql-auth | QA | 2026-04-09 | Better Auth + Drizzle/LibSQL: schema, Better Auth instance, drizzle-kit push, Zod schemas, route mounting in Mastra |
 | SPEC-20260408-002 | linear-resend-integration-tools | CODE | 2026-04-08 | Linear ticketing tools, Resend email tools, shared schemas, and runtime integration tests |
 | SPEC-20260408-003 | langfuse-observability-integration | CODE | 2026-04-08 | OpenRouter Broadcast + Langfuse SDK fallback, Cloudflare tunnel, trace verification |
+| SPEC-20260409-002 | fe-auth-pages-login-register | CODE | 2026-04-09 | Auth pages (login/register), Better Auth client SDK, auth guard, neumorphic UX |
 
 ## Integration Test Status
 
