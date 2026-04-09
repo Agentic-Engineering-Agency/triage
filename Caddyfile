@@ -29,14 +29,32 @@
         Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'"
     }
 
-    # API reverse proxy (with SSE support)
+    # --- Backend API routes (all proxied to runtime:4111) ---
+
+    # Mastra built-in API (/api/agents/*, /api/workflows/*, etc.)
     handle /api/* {
         reverse_proxy runtime:4111 {
             flush_interval -1
         }
     }
 
-    # Auth reverse proxy
+    # Chat streaming endpoint (POST only — GET /chat goes to SPA)
+    @chat_post {
+        path /chat
+        method POST
+    }
+    handle @chat_post {
+        reverse_proxy runtime:4111 {
+            flush_interval -1
+        }
+    }
+
+    # Runtime health check
+    handle /health {
+        reverse_proxy runtime:4111
+    }
+
+    # Auth endpoints
     handle /auth/* {
         reverse_proxy runtime:4111 {
             flush_interval -1
