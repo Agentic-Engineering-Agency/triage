@@ -27,6 +27,7 @@ const openrouter = createOpenRouter({
  *   POST /api/agents/orchestrator/stream
  */
 export const orchestrator = new Agent({
+  id: 'orchestrator',
   name: 'orchestrator',
   instructions: `You are Triage, an AI-powered SRE incident triage assistant for e-commerce platforms (Solidus/Rails stack).
 
