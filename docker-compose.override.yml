@@ -25,6 +25,7 @@ services:
       context: .
       dockerfile: Dockerfile.runtime
       target: builder
-    command: npx tsx watch src/index.ts
+    working_dir: /app/runtime
+    command: npx mastra dev --port 4111
     volumes:
-      - ./runtime/src:/app/src
+      - ./runtime/src:/app/runtime/src
