@@ -1,4 +1,4 @@
-import { createSelectSchema, createInsertSchema } from 'drizzle-orm/zod';
+import { createSelectSchema, createInsertSchema } from 'drizzle-zod';
 import { authUser, authSession, authAccount, authVerification, wikiDocuments, wikiChunks, localTickets } from './schema';
 
 // Auth table schemas

@@ -8,7 +8,9 @@
     "build": "mastra build",
     "start": "node .mastra/output/index.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.6.1",
@@ -20,6 +22,7 @@
     "@openrouter/ai-sdk-provider": "^2.5.0",
     "better-auth": "^1.6.1",
     "drizzle-orm": "^0.45.2",
+    "drizzle-zod": "^0.8.3",
     "resend": "^6.10.0",
     "zod": "^3.25.20"
   },
