@@ -37,3 +37,4 @@ HACKATHON_CONTEXT/
 HACKATHON_BRAINSTORM_OUTPUT/
 docs/drizzle-libsql-reference.md
 config/
+.worktrees/
