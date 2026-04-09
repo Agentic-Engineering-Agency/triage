@@ -1,5 +1,6 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows';
 import { z } from 'zod';
+import { prioritySchema } from '../../lib/schemas';
 
 // ---------------------------------------------------------------------------
 // Shared schemas
@@ -64,13 +65,13 @@ const intakeStep = createStep({
  *
  * Real implementation should:
  * - Query the codebase-wiki vector store (RAG) with the enriched description.
- * - Use an LLM to classify severity (P0–P4), identify likely root cause,
+ * - Use an LLM to classify ticket priority (Urgent/High/Medium/Low), identify likely root cause,
  *   and suggest relevant source files / modules.
  * - Return structured triage output for ticket creation.
  */
 const triageStep = createStep({
   id: 'triage',
-  description: 'Analyse incident via codebase wiki RAG – classify severity, root cause, file refs.',
+  description: 'Analyse incident via codebase wiki RAG – classify priority, root cause, file refs.',
   inputSchema: z.object({
     enrichedDescription: z.string(),
     reporterEmail: z.string(),
@@ -78,7 +79,7 @@ const triageStep = createStep({
     hasImages: z.boolean(),
   }),
   outputSchema: z.object({
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']).describe('Incident severity'),
+    priority: prioritySchema.describe('Incident priority'),
     rootCause: z.string().describe('Likely root cause summary'),
     suggestedFiles: z.array(z.string()).describe('Relevant source file paths'),
     triageSummary: z.string().describe('Structured triage summary for ticket body'),
@@ -89,11 +90,11 @@ const triageStep = createStep({
   execute: async ({ inputData }) => {
     // TODO: 1. Query RAG vector store with inputData.enrichedDescription
     //       2. Feed retrieved context + description into LLM with triage prompt
-    //       3. Parse structured output (severity, root cause, files)
+    //       3. Parse structured output (priority, root cause, files)
     //       Return placeholder values for now.
 
     return {
-      severity: 'P2' as const,
+      priority: 'Medium' as const,
       rootCause: 'TODO: LLM-determined root cause',
       suggestedFiles: [],
       triageSummary: `Triage summary for: ${inputData.enrichedDescription.slice(0, 120)}…`,
@@ -120,7 +121,7 @@ const dedupStep = createStep({
   id: 'dedup',
   description: 'Check for duplicate/similar existing tickets in Linear.',
   inputSchema: z.object({
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
+    priority: prioritySchema,
     rootCause: z.string(),
     suggestedFiles: z.array(z.string()),
     triageSummary: z.string(),
@@ -134,7 +135,7 @@ const dedupStep = createStep({
     existingIssueUrl: z.string().optional().describe('URL of the duplicate issue'),
     confidence: z.number().min(0).max(1).describe('Duplicate confidence score'),
     // Pass through triage data
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
+    priority: prioritySchema,
     rootCause: z.string(),
     suggestedFiles: z.array(z.string()),
     triageSummary: z.string(),
@@ -153,7 +154,7 @@ const dedupStep = createStep({
       existingIssueId: undefined,
       existingIssueUrl: undefined,
       confidence: 0,
-      severity: inputData.severity,
+      priority: inputData.priority,
       rootCause: inputData.rootCause,
       suggestedFiles: inputData.suggestedFiles,
       triageSummary: inputData.triageSummary,
@@ -174,7 +175,7 @@ const dedupStep = createStep({
  * Real implementation should:
  * - If dedup found a duplicate, add a comment to the existing issue with new context.
  * - Otherwise, create a new Linear issue with title, body (triage summary),
- *   severity label, file references, and assignee (on-call).
+ *   priority label, file references, and assignee (on-call).
  * - Return the issue ID and URL for downstream steps.
  */
 const ticketStep = createStep({
@@ -185,7 +186,7 @@ const ticketStep = createStep({
     existingIssueId: z.string().optional(),
     existingIssueUrl: z.string().optional(),
     confidence: z.number(),
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
+    priority: prioritySchema,
     rootCause: z.string(),
     suggestedFiles: z.array(z.string()),
     triageSummary: z.string(),
@@ -197,7 +198,7 @@ const ticketStep = createStep({
     issueId: z.string().describe('Linear issue identifier'),
     issueUrl: z.string().describe('Linear issue URL'),
     wasUpdated: z.boolean().describe('True if an existing issue was updated instead of created'),
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
+    priority: prioritySchema,
     rootCause: z.string(),
     triageSummary: z.string(),
     reporterEmail: z.string(),
@@ -208,7 +209,7 @@ const ticketStep = createStep({
     //          - Return the existing issue ID/URL
     //       2. Otherwise:
     //          - Call Linear API to create a new issue
-    //          - Set title, description (triageSummary), priority from severity
+    //          - Set title, description (triageSummary), priority from priority
     //          - Attach labels, file references, assign to on-call
     //       Return placeholder for now.
 
@@ -216,7 +217,7 @@ const ticketStep = createStep({
       issueId: inputData.existingIssueId ?? 'LINEAR-PLACEHOLDER-123',
       issueUrl: inputData.existingIssueUrl ?? 'https://linear.app/team/issue/PLACEHOLDER-123',
       wasUpdated: inputData.isDuplicate,
-      severity: inputData.severity,
+      priority: inputData.priority,
       rootCause: inputData.rootCause,
       triageSummary: inputData.triageSummary,
       reporterEmail: inputData.reporterEmail,
@@ -233,7 +234,7 @@ const ticketStep = createStep({
  *
  * Real implementation should:
  * - Send an email to the reporter (and optionally on-call) with:
- *   - Ticket link, severity, root cause summary, suggested files
+ *   - Ticket link, priority, root cause summary, suggested files
  * - Use Resend, SendGrid, or Mastra's built-in email integration.
  */
 const notifyStep = createStep({
@@ -243,7 +244,7 @@ const notifyStep = createStep({
     issueId: z.string(),
     issueUrl: z.string(),
     wasUpdated: z.boolean(),
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
+    priority: prioritySchema,
     rootCause: z.string(),
     triageSummary: z.string(),
     reporterEmail: z.string(),
@@ -252,12 +253,12 @@ const notifyStep = createStep({
     notificationSent: z.boolean(),
     issueId: z.string(),
     issueUrl: z.string(),
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
+    priority: prioritySchema,
     rootCause: z.string(),
     reporterEmail: z.string(),
   }),
   execute: async ({ inputData }) => {
-    // TODO: 1. Compose email body with ticket link, severity, root cause, summary
+    // TODO: 1. Compose email body with ticket link, priority, root cause, summary
     //       2. Send email to inputData.reporterEmail (and on-call address from config)
     //       3. Handle send failures gracefully (log, retry, or mark as failed)
     //       Return placeholder for now.
@@ -270,7 +271,7 @@ const notifyStep = createStep({
       notificationSent: true,
       issueId: inputData.issueId,
       issueUrl: inputData.issueUrl,
-      severity: inputData.severity,
+      priority: inputData.priority,
       rootCause: inputData.rootCause,
       reporterEmail: inputData.reporterEmail,
     };
@@ -299,14 +300,14 @@ const suspendStep = createStep({
   inputSchema: z.object({
     issueId: z.string(),
     issueUrl: z.string(),
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
+    priority: prioritySchema,
     rootCause: z.string(),
     reporterEmail: z.string(),
   }),
   outputSchema: z.object({
     issueId: z.string(),
     issueUrl: z.string(),
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
+    priority: prioritySchema,
     rootCause: z.string(),
     reporterEmail: z.string(),
     webhookPayload: z.object({
@@ -340,7 +341,7 @@ const suspendStep = createStep({
     return {
       issueId: inputData.issueId,
       issueUrl: inputData.issueUrl,
-      severity: inputData.severity,
+      priority: inputData.priority,
       rootCause: inputData.rootCause,
       reporterEmail: inputData.reporterEmail,
       webhookPayload: {
@@ -370,7 +371,7 @@ const verifyStep = createStep({
   inputSchema: z.object({
     issueId: z.string(),
     issueUrl: z.string(),
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
+    priority: prioritySchema,
     rootCause: z.string(),
     reporterEmail: z.string(),
     webhookPayload: z.object({
@@ -384,7 +385,7 @@ const verifyStep = createStep({
     verificationNotes: z.string().describe('Human-readable explanation of verification result'),
     issueId: z.string(),
     issueUrl: z.string(),
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
+    priority: prioritySchema,
     reporterEmail: z.string(),
   }),
   execute: async ({ inputData }) => {
@@ -399,7 +400,7 @@ const verifyStep = createStep({
       verificationNotes: `TODO: Verify fix for root cause: "${inputData.rootCause}"`,
       issueId: inputData.issueId,
       issueUrl: inputData.issueUrl,
-      severity: inputData.severity,
+      priority: inputData.priority,
       reporterEmail: inputData.reporterEmail,
     };
   },
@@ -425,7 +426,7 @@ const notifyResolutionStep = createStep({
     verificationNotes: z.string(),
     issueId: z.string(),
     issueUrl: z.string(),
-    severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
+    priority: prioritySchema,
     reporterEmail: z.string(),
   }),
   outputSchema: z.object({

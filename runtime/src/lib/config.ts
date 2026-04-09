@@ -45,6 +45,11 @@ export function validateEnv(): EnvConfig {
 }
 
 /**
+ * Validated environment — exported once so imports fail fast during startup.
+ */
+export const env = validateEnv();
+
+/**
  * Model identifiers used across the runtime.
  *
  * - mercury: Fast text generation, research, summarization. TEXT-ONLY.

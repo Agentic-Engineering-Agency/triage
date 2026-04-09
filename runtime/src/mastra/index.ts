@@ -1,23 +1,19 @@
 import { Mastra } from '@mastra/core';
 import { LibSQLStore } from '@mastra/libsql';
 
+import { env } from '../lib/config';
 import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent } from './agents/index';
-import { triageWorkflow } from './workflows/index';
 
 /**
  * Mastra instance — the core runtime for the Triage SRE agent.
  *
- * Registers:
- * - 3 agents: orchestrator (main), triage-agent (analysis), resolution-reviewer (verification)
- * - 1 workflow: triageWorkflow (full E2E intake → resolve pipeline)
- * - LibSQL storage for workflow state, threads, and memory
+ * Registered for the runtime scaffold phase:
+ * - 4 agents: orchestrator (main), triage-agent, resolution-reviewer, code-review-agent
+ * - LibSQL storage for thread/memory state
  *
- * HTTP endpoints exposed by mastra.serve():
- * - POST /api/agents/:agentId/stream    — SSE chat streaming
- * - POST /api/agents/:agentId/generate  — one-shot generation
- * - GET  /health                        — health check
- *
- * The frontend connects to: POST /api/agents/orchestrator/stream
+ * Note: workflows are scaffolded on disk but intentionally NOT registered until
+ * the downstream integrations (Linear, wiki, email) are implemented. This avoids
+ * exposing placeholder workflow steps that would fabricate successful state.
  */
 export const mastra = new Mastra({
   agents: {
@@ -26,11 +22,8 @@ export const mastra = new Mastra({
     'resolution-reviewer': resolutionReviewer,
     'code-review-agent': codeReviewAgent,
   },
-  workflows: {
-    'triage-workflow': triageWorkflow,
-  },
   storage: new LibSQLStore({
     id: 'triage-main',
-    url: process.env.LIBSQL_URL || 'http://libsql:8080',
+    url: env.LIBSQL_URL,
   }),
 });

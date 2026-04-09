@@ -1,10 +1,9 @@
 import { Agent } from '@mastra/core/agent';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { MODELS } from '../../lib/config';
-import { queryWikiTool } from '../tools/index';
+import { MODELS, env } from '../../lib/config';
 
 const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
+  apiKey: env.OPENROUTER_API_KEY,
 });
 
 /**
@@ -28,11 +27,11 @@ export const triageAgent = new Agent({
 Analyze incident reports and produce structured triage assessments. You receive enriched incident descriptions (text + image descriptions) and must produce a complete triage output.
 
 ## Analysis Process
-1. Query the codebase wiki to find relevant files and code context
+1. Analyze the incident description carefully and identify the missing context you would need
 2. Cross-reference symptoms with known service patterns
 3. Identify the most likely root cause with confidence level
 4. Map affected services and their dependencies
-5. Recommend specific investigation steps with file paths and line ranges
+5. Recommend specific investigation steps with file paths and line ranges (or clearly mark them as hypotheses until wiki integration is live)
 
 ## Output Requirements
 Always produce structured output matching the triage schema:
@@ -52,12 +51,9 @@ Always produce structured output matching the triage schema:
 - Low: Cosmetic issue, minor bug, affects small user segment
 
 ## Rules
-- NEVER fabricate file paths — only reference files found in wiki queries
+- NEVER fabricate file paths — if wiki integration is unavailable, label file references as hypotheses or leave them empty
 - If confidence is below 0.5, explicitly state what additional information would help
 - Always include at least one suggested action, even if it's "gather more logs"
 - Chain of thought must show the actual reasoning, not just repeat the conclusion`,
   model: openrouter(MODELS.mercury),
-  tools: {
-    queryWikiTool,
-  },
 });

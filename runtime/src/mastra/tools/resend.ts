@@ -1,19 +1,11 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-
-// ---------------------------------------------------------------------------
-// Inline Zod schemas for email tool I/O.
-// No canonical shared schema for email payloads — these are tool-specific.
-// ---------------------------------------------------------------------------
+import { severitySchema } from '../../lib/schemas';
 
 const emailResultSchema = z.object({
   id: z.string().describe('Resend message ID'),
   success: z.boolean(),
 });
-
-// ---------------------------------------------------------------------------
-// Tools
-// ---------------------------------------------------------------------------
 
 export const sendTicketEmailTool = createTool({
   id: 'send-ticket-email',
@@ -22,7 +14,7 @@ export const sendTicketEmailTool = createTool({
     to: z.string().email().describe('Recipient email address'),
     ticketTitle: z.string().describe('Title of the created ticket'),
     ticketUrl: z.string().url().describe('Direct URL to the Linear issue'),
-    severity: z.string().describe('Severity level (Critical/High/Medium/Low)'),
+    severity: severitySchema.describe('Severity level for the incident'),
     summary: z.string().describe('Brief triage summary for the email body'),
   }),
   outputSchema: emailResultSchema,

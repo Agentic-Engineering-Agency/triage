@@ -16,6 +16,10 @@ export const ticketCreateSchema = z.object({
   severity: severitySchema,
   /** Priority for task scheduling (maps to Linear priority 1-4) */
   priority: prioritySchema,
+  /** Linear team key used when creating the ticket */
+  teamKey: z
+    .string()
+    .describe('Linear team key used for ticket creation, e.g. "TRI"'),
   /** Optional Linear user ID to assign the ticket to */
   assigneeId: z
     .string()

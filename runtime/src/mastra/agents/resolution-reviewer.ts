@@ -1,10 +1,9 @@
 import { Agent } from '@mastra/core/agent';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { MODELS } from '../../lib/config';
-import { queryWikiTool, getLinearIssueTool } from '../tools/index';
+import { MODELS, env } from '../../lib/config';
 
 const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
+  apiKey: env.OPENROUTER_API_KEY,
 });
 
 /**
@@ -26,10 +25,10 @@ export const resolutionReviewer = new Agent({
 Verify whether a deployed fix actually resolves the original incident. Compare the fix against the original triage assessment and determine if the root cause has been addressed.
 
 ## Verification Process
-1. Retrieve the original ticket and its triage data (root cause, affected files, severity)
-2. Query the codebase wiki for the current state of affected files
-3. Compare the fix description / commit summary against the identified root cause
-4. Assess whether the fix is complete, partial, or unrelated
+1. Review the original incident description, triage notes, and fix summary provided in the prompt
+2. Compare the fix description / commit summary against the identified root cause
+3. Assess whether the fix is complete, partial, or unrelated
+4. Call out missing evidence explicitly when ticket/wiki data is not available
 
 ## Output Requirements
 Produce a structured verification result:
@@ -48,8 +47,4 @@ Produce a structured verification result:
 - If you can't determine whether the fix is correct (e.g., no diff info), recommend "monitor"
 - Always explain your reasoning in the analysis field`,
   model: openrouter(MODELS.mercury),
-  tools: {
-    queryWikiTool,
-    getLinearIssueTool,
-  },
 });

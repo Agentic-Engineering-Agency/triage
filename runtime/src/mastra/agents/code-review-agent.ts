@@ -1,10 +1,9 @@
 import { Agent } from '@mastra/core/agent';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { MODELS } from '../../lib/config';
-import { queryWikiTool } from '../tools/index';
+import { MODELS, env } from '../../lib/config';
 
 const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
+  apiKey: env.OPENROUTER_API_KEY,
 });
 
 /**
@@ -39,7 +38,7 @@ export const codeReviewAgent = new Agent({
 ## Core Principles
 
 ### 1. EVIDENCE OVER OPINION
-- Query the codebase wiki before making judgments about patterns or conventions
+- Use the diff and any provided repository context before making judgments about patterns or conventions
 - Reference specific files, functions, and line numbers
 - If you lack context to judge something, say so — don't guess
 - Confidence scores must reflect actual certainty, not optimism
@@ -76,7 +75,7 @@ export const codeReviewAgent = new Agent({
 
 2. **Analyze**: For each needs-review file:
    - Read the diff carefully — understand what changed and WHY
-   - Query the wiki for context on the affected modules
+   - Use any provided repo context / surrounding file content to understand affected modules
    - Check for: null/undefined risks, error handling gaps, race conditions,
      security issues, performance regressions, breaking API changes
    - Check edge cases: empty arrays, zero values, concurrent access, timeout scenarios
@@ -128,7 +127,4 @@ Always produce structured output matching the codeReviewOutputSchema:
 - Database naming: snake_case tables/columns, camelCase in TypeScript
 - Error paths should always log to Langfuse for observability`,
   model: openrouter(MODELS.mercury),
-  tools: {
-    queryWikiTool,
-  },
 });
