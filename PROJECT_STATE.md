@@ -10,6 +10,8 @@
 | SPEC-20260407-001 | infra-docker-k8s-init | CODE | 2026-04-07 | Infrastructure: Docker Compose (9 containers), K8s scaffolding, documentation templates |
 | SPEC-20260408-001 | docker-compose-architecture-alignment | CODE | 2026-04-08 | Docker Compose update: two networks, dev/prod mode, Caddyfile env switching, config.json |
 | SPEC-20260409-001 | better-auth-drizzle-libsql-auth | QA | 2026-04-09 | Better Auth + Drizzle/LibSQL: schema, Better Auth instance, drizzle-kit push, Zod schemas, route mounting in Mastra |
+| SPEC-20260408-002 | linear-resend-integration-tools | CODE | 2026-04-08 | Linear ticketing tools, Resend email tools, shared schemas, and runtime integration tests |
+| SPEC-20260408-003 | langfuse-observability-integration | CODE | 2026-04-08 | OpenRouter Broadcast + Langfuse SDK fallback, Cloudflare tunnel, trace verification |
 
 ## Integration Test Status
 
