@@ -1,13 +1,13 @@
 /**
  * SPEC-20260409-001: Better Auth + Drizzle/LibSQL Authentication
- * TEST STAGE — 35 tests
+ * TEST STAGE — 34 tests
  *
  * Infrastructure:
  *   LibSQL HTTP API at localhost:8080 (docker: triage-fe-runtime-connect-libsql-1)
  *     Endpoint: POST / with { "statements": ["SQL"] }
  *     Returns:   JSON with [0].results.rows
  *   Mastra HTTP API at localhost:4111 (docker: triage-fe-runtime-connect-runtime-1)
- *     Auth route: /auth/* proxied to auth.handler via authRouter in mastra/index.ts
+ *     Auth route: /auth/* mounted via registerApiRoute in mastra/index.ts, delegates to auth.handler()
  *
  * Run with: pnpm test
  * Infra tests auto-skip when services are unreachable.
@@ -42,7 +42,7 @@ const { execSync } = require('child_process');
 const sql = ${JSON.stringify(sql)};
 const encoded = JSON.stringify({ statements: [sql] });
 const output = execSync(
-  \`curl -s --connect-timeout 5 -X POST http://localhost:8080 -H 'Content-Type: application/json' -d \${encoded}\`,
+  \`curl -s --connect-timeout 5 -X POST ${LIBSQL_URL} -H 'Content-Type: application/json' -d \${encoded}\`,
   { timeout: 10000, encoding: 'utf-8' }
 );
 const parsed = JSON.parse(output);
@@ -123,14 +123,14 @@ describe('REQ-A02: drizzle.config.ts with turso Dialect', () => {
 describe('REQ-A03: Auth Schema Tables', () => {
   it('should have four auth tables in LibSQL', () => {
     const rows = runSql("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'auth_%' ORDER BY name");
-    if (!rows) return; // LibSQL not reachable — skip
+    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
     const names = rows.map((r) => r.name).sort();
     expect(names).toEqual(['auth_account', 'auth_session', 'auth_user', 'auth_verification']);
   });
 
   it('should create auth_user table with correct columns', () => {
     const rows = runSql('PRAGMA table_info(auth_user)');
-    if (!rows) return;
+    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
     const cols: Record<string, any> = {};
     for (const row of rows as any[]) cols[row.name] = row;
     expect(cols).toHaveProperty('id');
@@ -145,14 +145,14 @@ describe('REQ-A03: Auth Schema Tables', () => {
 
   it('should enforce UNIQUE constraint on auth_user.email', () => {
     const rows = runSql("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='auth_user' AND sql LIKE '%UNIQUE%'");
-    if (!rows || rows.length === 0) return;
+    if (!rows || rows.length === 0) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
     const hasEmailUnique = rows.some((r: any) => r.sql?.toLowerCase().includes('email'));
     expect(hasEmailUnique).toBe(true);
   });
 
   it('should create auth_session table with correct columns and token UNIQUE index', () => {
     const rows = runSql('PRAGMA table_info(auth_session)');
-    if (!rows) return;
+    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
     const cols: Record<string, any> = {};
     for (const row of rows as any[]) cols[row.name] = row;
     expect(cols).toHaveProperty('id');
@@ -174,7 +174,7 @@ describe('REQ-A03: Auth Schema Tables', () => {
 
   it('should create auth_account table with provider fields', () => {
     const rows = runSql('PRAGMA table_info(auth_account)');
-    if (!rows) return;
+    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
     const colNames = rows.map((r) => r.name);
     expect(colNames).toContain('account_id');
     expect(colNames).toContain('provider_id');
@@ -188,7 +188,7 @@ describe('REQ-A03: Auth Schema Tables', () => {
 
   it('should create auth_verification table with correct columns', () => {
     const rows = runSql('PRAGMA table_info(auth_verification)');
-    if (!rows) return;
+    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
     const colNames = rows.map((r) => r.name);
     expect(colNames).toContain('id');
     expect(colNames).toContain('identifier');
@@ -346,7 +346,7 @@ describe('REQ-A07: /auth/* Route Mounting in Mastra', () => {
 describe('REQ-A08: drizzle-kit push Schema Application', () => {
   it('should have all four auth tables in LibSQL', () => {
     const rows = runSql("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'auth_%'");
-    if (!rows) return;
+    if (!rows) return; // LibSQL unreachable — soft-skip (reports as pass, not skip)
     expect(rows.length).toBe(4);
   });
 

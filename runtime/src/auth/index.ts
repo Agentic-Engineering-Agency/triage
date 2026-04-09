@@ -40,5 +40,7 @@ export const auth = betterAuth({
     },
   },
   trustedOrigins,
-  secret: process.env.BETTER_AUTH_SECRET || 'dev-secret-change-in-production-min32chars',
+  secret: process.env.NODE_ENV === 'production'
+    ? (process.env.BETTER_AUTH_SECRET || (() => { throw new Error('BETTER_AUTH_SECRET is required in production'); })())
+    : (process.env.BETTER_AUTH_SECRET || 'dev-secret-change-in-production-min32chars'),
 });
