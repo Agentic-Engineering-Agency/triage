@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+// ============================================================
+// Core schemas for Linear API integration (from Koki's PR#4)
+// ============================================================
+
 // Priority: 0 (No priority) through 4 (Low)
 export const prioritySchema = z.number().int().min(0).max(4);
 
@@ -175,3 +179,47 @@ export const toolErrorSchema = z.object({
   success: z.literal(false),
   error: z.string(),
 });
+
+// ============================================================
+// Duplicate detection schemas (from Lalo's runtime scaffold)
+// ============================================================
+
+/**
+ * Recommendation action for duplicate ticket detection.
+ */
+export const duplicateRecommendationSchema = z
+  .enum(['create_new', 'update_existing', 'skip'])
+  .describe('Recommended action: create a new ticket, update existing, or skip');
+
+/** Inferred TypeScript type for DuplicateRecommendation */
+export type DuplicateRecommendation = z.infer<typeof duplicateRecommendationSchema>;
+
+/**
+ * Schema for the result of a duplicate ticket check.
+ * Used to prevent filing duplicate incidents and to link related issues.
+ */
+export const duplicateCheckSchema = z.object({
+  /** Whether a duplicate ticket was detected */
+  isDuplicate: z.boolean().describe('Whether a duplicate ticket was detected'),
+  /** Title of the existing duplicate ticket, if found */
+  existingTicketTitle: z
+    .string()
+    .optional()
+    .describe('Title of the existing duplicate ticket, if found'),
+  /** URL of the existing duplicate ticket, if found */
+  existingTicketUrl: z
+    .string()
+    .optional()
+    .describe('URL of the existing duplicate ticket, if found'),
+  /** Similarity score between the new and existing ticket (0 = unrelated, 1 = identical) */
+  similarity: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe('Similarity score, 0.0 (unrelated) to 1.0 (identical)'),
+  /** Recommended action based on the duplicate analysis */
+  recommendation: duplicateRecommendationSchema,
+});
+
+/** Inferred TypeScript type for DuplicateCheck */
+export type DuplicateCheck = z.infer<typeof duplicateCheckSchema>;

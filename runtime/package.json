@@ -4,17 +4,24 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "vitest run",
-    "build": "tsc"
+    "dev": "mastra dev --port 4111",
+    "build": "mastra build",
+    "start": "node .mastra/output/index.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@linear/sdk": "^81.0.0",
+    "@mastra/core": "^1.24.0",
+    "@mastra/libsql": "^1.8.0",
+    "@openrouter/ai-sdk-provider": "^2.5.0",
     "resend": "^6.10.0",
-    "@mastra/core": "^0.1.0",
-    "zod": "^3.23.0"
+    "zod": "^3.25.20"
   },
   "devDependencies": {
-    "vitest": "^3.1.1",
-    "typescript": "^5.8.3"
+    "@types/node": "^22.15.0",
+    "mastra": "^1.4.1",
+    "typescript": "~5.8.3",
+    "vitest": "^3.1.1"
   }
 }

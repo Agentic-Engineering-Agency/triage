@@ -9,3 +9,31 @@ k8s/helm/charts/
 .playwright-mcp/
 frontend/.vite/
 pnpm-lock.yaml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / agent config
+.agent/
+.agents/
+.claude/
+.kilocode/
+.opencode/
+.pi/
+.hermes/
+config/
+
+# Coverage and logs
+coverage/
+*.log
+
+# Temp files
+temp_vision_images/
+
+# Internal planning and hackathon docs (not for public consumption)
+_bmad-output/
+HACKATHON_CONTEXT/
+HACKATHON_BRAINSTORM_OUTPUT/
+docs/drizzle-libsql-reference.md
+config/
