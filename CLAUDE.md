@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development Commands
 
 ```bash
-# Start all 9 containers (dev mode — auto-loads docker-compose.override.yml)
+# Start all 10 containers (dev mode — auto-loads docker-compose.override.yml)
 docker compose up --build
 
 # Production mode (for demo recording — skips override)
@@ -36,12 +36,12 @@ docker compose logs -f frontend
 
 ## Architecture
 
-Two custom containers + 7 infrastructure containers behind a Caddy reverse proxy:
+Two custom containers + 8 infrastructure containers behind a Caddy reverse proxy:
 
 - **Frontend** (Caddy) — TanStack Router SPA + shadcn/ui. Caddy serves static files and reverse-proxies `/api/*` and `/auth/*` to runtime. Single-origin eliminates CORS.
 - **Runtime** (Mastra on Hono) — agents, workflows, tools, Better Auth, webhooks. Mastra IS the HTTP server — no Express. Custom routes (auth, webhooks) register on Mastra.
 - **LibSQL** (sqld) — storage + native F32_BLOB(1536) vector search via DiskANN. Serves 4 roles: workflow state, auth, wiki vectors, fallback tickets.
-- **Langfuse stack** (6 containers) — observability with LangfuseExporter in Mastra.
+- **Langfuse stack** (6 containers) — observability with LangfuseExporter in Mastra. Exposed publicly via a `cloudflared` Cloudflare Tunnel at `https://langfuse.agenticengineering.lat`.
 
 **Docker networks:** `app` (frontend, runtime, libsql) + `langfuse` (observability). Runtime joins both.
 
@@ -108,7 +108,7 @@ All external services have fallback modes. Failures never block triage:
 | `_bmad-output/planning-artifacts/architecture.md` | Complete architecture decisions, patterns, structure |
 | `_bmad-output/planning-artifacts/prd.md` | 52 FRs, 37 NFRs, 5 user journeys |
 | `.env.example` | Canonical env var reference — add new vars here immediately |
-| `docker-compose.yml` | 9 containers, 2 networks, named volume |
+| `docker-compose.yml` | 10 containers, 2 networks, named volume |
 | `docker-compose.override.yml` | Dev mode: Vite HMR + tsx --watch |
 | `Caddyfile` | Reverse proxy, security headers, SPA routing |
 | `PROJECT_STATE.md` | SpecSafe spec status tracker |
