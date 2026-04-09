@@ -1,0 +1,109 @@
+---
+title: Observability
+description: Self-hosted Langfuse stack — LLM trace visibility, latency, and cost tracking
+---
+
+Triage ships a complete self-hosted **Langfuse** observability stack. Every LLM call from the runtime is traced automatically via the `LangfuseExporter` configured in Mastra. No external SaaS account is required.
+
+## The Six Langfuse Containers
+
+| Container | Image | Port | Role |
+|-----------|-------|------|------|
+| `langfuse-web` | `langfuse/langfuse:3.167.0` | 3000 | Web UI and REST API |
+| `langfuse-worker` | `langfuse/langfuse-worker:3.167.0` | 3030 | Async trace ingestion and batch processing |
+| `clickhouse` | `clickhouse/clickhouse-server:24.8.9.95` | 8123, 9000 | OLAP store for trace event data |
+| `redis` | `redis:7.4-alpine` | 6379 | Queue and cache for worker jobs |
+| `minio` | `minio/minio:RELEASE.2025-09-07T02-35-49Z` | 9000 (9090 external), 9001 (9091 external) | S3-compatible media and export storage |
+| `langfuse-postgres` | `postgres:17.9-alpine` | 5432 | Relational metadata (users, projects, settings) |
+
+## Network Isolation
+
+The Langfuse stack runs entirely on the `langfuse` Docker network. The only container that bridges to this network is the `runtime` — it joins both `app` and `langfuse`:
+
+```yaml
+runtime:
+  networks:
+    - app
+    - langfuse
+```
+
+This means Langfuse infrastructure (Postgres, ClickHouse, Redis, MinIO) is completely inaccessible from the frontend or LibSQL containers — only the runtime can reach `langfuse-web`.
+
+## How the Runtime Connects
+
+Mastra's `LangfuseExporter` is initialized with the project keys defined in `.env`:
+
+```bash
+LANGFUSE_PUBLIC_KEY=<from LANGFUSE_INIT_PROJECT_PUBLIC_KEY>
+LANGFUSE_SECRET_KEY=<from LANGFUSE_INIT_PROJECT_SECRET_KEY>
+LANGFUSE_BASEURL=https://langfuse.agenticengineering.lat
+```
+
+The exporter batches and sends traces asynchronously to the Langfuse API. In the default configuration, `LANGFUSE_BASEURL` points to the public Cloudflare Tunnel URL (`https://langfuse.agenticengineering.lat`). When running fully locally without the tunnel, change this to `http://langfuse-web:3000`. Traces include:
+- Full prompt and completion text for each LLM call
+- Model identifier and provider
+- Input/output token counts
+- Latency (time to first token, total duration)
+- Tool invocations and their results
+- Agent step metadata (workflow step names, IDs)
+
+## Headless Initialization
+
+On the first boot, `langfuse-web` runs a headless init that auto-creates the organization, project, and admin user — no manual UI setup required. The init is controlled by environment variables:
+
+```bash
+LANGFUSE_INIT_ORG_ID=triage-org
+LANGFUSE_INIT_ORG_NAME=Triage SRE
+LANGFUSE_INIT_PROJECT_ID=triage-project
+LANGFUSE_INIT_PROJECT_NAME=Triage Agent
+LANGFUSE_INIT_PROJECT_PUBLIC_KEY=<your-public-key>
+LANGFUSE_INIT_PROJECT_SECRET_KEY=<your-secret-key>
+LANGFUSE_INIT_USER_EMAIL=admin@agenticengineering.lat
+LANGFUSE_INIT_USER_NAME=Admin
+LANGFUSE_INIT_USER_PASSWORD=<your-password>
+```
+
+The project public/secret keys created by the init must match `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` used by the runtime. After the first startup, the data persists in `langfuse_postgres_data` — the init vars are idempotent and safe to leave in `.env`.
+
+## Accessing the Dashboard
+
+The Langfuse dashboard is available at **http://localhost:3000** once the stack is running, or at **https://langfuse.agenticengineering.lat** via the Cloudflare Tunnel (`cloudflared` service). Log in with the credentials from `LANGFUSE_INIT_USER_EMAIL` and `LANGFUSE_INIT_USER_PASSWORD`.
+
+### What You Can See
+
+- **Traces** — Every agent run and LLM call, with full prompt/completion text
+- **Sessions** — Grouped by `threadId` for conversation-level views
+- **Generations** — Individual LLM calls with model, tokens, latency, and cost
+- **Scores** — Custom evaluation scores (can be attached programmatically)
+- **Dashboards** — Latency histograms, token usage over time, model cost breakdown
+- **Prompt Management** — Version and compare prompts (optional)
+
+## MinIO Console
+
+The MinIO console is available at **http://localhost:9091** for inspecting stored media files and batch exports. Default credentials come from `MINIO_ROOT_USER` (default: `minio`) and `MINIO_ROOT_PASSWORD`.
+
+## Startup Order and Healthchecks
+
+Langfuse-web and langfuse-worker wait for all four infrastructure services to be healthy before starting:
+
+```yaml
+depends_on:
+  langfuse-postgres: { condition: service_healthy }
+  clickhouse: { condition: service_healthy }
+  redis: { condition: service_healthy }
+  minio: { condition: service_healthy }
+```
+
+Langfuse-web has a 60-second `start_period` and 10 retries because it runs schema migrations on first boot. ClickHouse has a 30-second `start_period` due to its initialization time.
+
+## Disabling Observability
+
+If you don't need observability and want a faster startup, you can disable Langfuse tracing by not setting `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. The runtime checks for these keys before initializing the exporter — if they're absent, tracing is silently skipped.
+
+You can also stop just the Langfuse containers without affecting the application:
+
+```bash
+docker compose stop langfuse-web langfuse-worker clickhouse redis minio langfuse-postgres
+```
+
+The runtime will log warnings about failed trace export but will continue to operate normally.

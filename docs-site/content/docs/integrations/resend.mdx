@@ -1,0 +1,94 @@
+---
+title: Resend
+description: Email notifications — two tools for ticket creation and resolution, with HTML escaping and PII masking
+---
+
+Triage uses [Resend](https://resend.com) to send HTML email notifications at two points in the incident lifecycle: when a ticket is created (to the assignee) and when a resolution is verified (to the reporter).
+
+## Configuration
+
+```bash
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=triage@your-domain.com
+```
+
+Both variables are optional at startup. Email notifications are best-effort — if Resend is not configured or an email fails, the workflow continues without interruption.
+
+`RESEND_FROM_EMAIL` defaults to `triage@agenticengineering.lat` if not set. The address must belong to a domain verified in your Resend dashboard.
+
+## The Two Tools
+
+### `sendTicketEmailTool`
+
+Sends a ticket creation notification to the assigned engineer.
+
+**Triggered by:** The orchestrator after `createLinearIssueTool` succeeds (or the `notify` step in `triage-workflow`).
+
+**Recipient:** The assignee specified during ticket creation.
+
+**Content:**
+- Incident title and severity badge
+- Triage summary
+- Root cause hypothesis
+- File references with line ranges
+- Suggested first actions
+- Link to the Linear ticket
+
+### `sendResolutionEmailTool`
+
+Sends a resolution notification to the original incident reporter.
+
+**Triggered by:** The `resolve` step in `triage-workflow`, after the resolution reviewer produces its verdict.
+
+**Recipient:** `reporterEmail` from the original incident intake.
+
+**Content:**
+- Original incident summary
+- Resolution verdict (verified / not verified)
+- Confidence score
+- Analysis explanation
+- Recommendation (close / reopen / monitor)
+- Link to the Linear ticket
+
+## Security: HTML Escaping and PII Masking
+
+All dynamic content inserted into email HTML is escaped before rendering:
+
+- **HTML escaping** — `<`, `>`, `"`, `'`, and `&` are escaped to prevent XSS in email clients that render HTML
+- **URL safety** — file paths and URLs in email bodies are validated before inclusion
+- **PII masking** — email addresses and API keys in triage output are masked before they appear in notification emails (consistent with the PII redactor in the security processor pipeline)
+
+## Idempotency Keys
+
+Each email send call generates a unique idempotency key composed of the incident ID and the email type (`ticket` or `resolution`). This prevents duplicate notifications if the same workflow step is retried.
+
+## Error Handling
+
+Both tools follow the standard error convention:
+
+```typescript
+// Success
+return { success: true, data: { id: "email-id", from: "...", to: "..." } }
+
+// Failure (Resend unavailable or key not set)
+return { success: false, error: "Resend not configured" }
+```
+
+Errors are logged but do not throw — the calling workflow step handles the `success: false` result and continues.
+
+## Email Templates
+
+Emails are rendered as HTML strings constructed in the tool. Key design decisions:
+
+- **No template engine dependency** — HTML is constructed directly with tagged template literals
+- **Inline styles only** — no external CSS (email client compatibility)
+- **Plain text fallback** — each email includes a text/plain alternative for clients that don't render HTML
+- **Minimal external resources** — no tracking pixels, no external images
+
+## Testing Email in Development
+
+In development, set `RESEND_API_KEY` to a Resend test key to send emails to Resend's test inbox rather than real recipients. Alternatively, leave it unset and check the runtime logs — the full email content is logged on send attempt.
+
+```bash
+docker compose logs -f runtime | grep '\[email\]'
+```

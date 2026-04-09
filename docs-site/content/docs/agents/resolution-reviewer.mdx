@@ -1,0 +1,108 @@
+---
+title: Resolution Reviewer
+description: Mercury-2 fix verifier — webhook-triggered, returns close/reopen/monitor verdict
+---
+
+The resolution reviewer verifies that a deployed fix actually resolves the original incident. It is triggered when a Linear webhook fires (an issue moves to `Done` state), which resumes the suspended `triage-workflow`. The reviewer compares the fix against the original triage assessment and produces a structured verdict.
+
+## Configuration
+
+```typescript
+new Agent({
+  id: 'resolution-reviewer',
+  name: 'resolution-reviewer',
+  model: openrouter(MODELS.mercury),   // inception/mercury-2
+  tools: {
+    queryWikiTool,
+    getLinearIssueTool,
+  },
+})
+```
+
+**Model:** `inception/mercury-2`
+
+**Tools:**
+- `queryWikiTool` — query the codebase wiki for the current state of affected files
+- `getLinearIssueTool` — retrieve the original ticket with triage data
+
+## How It's Triggered
+
+The resolution reviewer is not called directly from the orchestrator. It runs as a step in the `triage-workflow`, which is suspended at the `suspend` step after ticket creation. The flow:
+
+1. Ticket is created in Linear → workflow suspends
+2. Engineer fixes the issue → moves Linear issue to **Done**
+3. Linear fires a webhook to `POST /api/webhooks/linear`
+4. Runtime finds the suspended workflow run by matching `issueId` in the snapshot
+5. Workflow resumes at the `suspend` step with `{ newStatus: "Done", updatedAt: "..." }`
+6. Workflow continues to the `review` step → resolution reviewer runs
+7. Workflow continues to the `resolve` step → resolution email sent
+
+## Verification Process
+
+1. **Retrieve original ticket** — calls `getLinearIssueTool` to fetch the issue with triage data (root cause, affected files, severity, fix description)
+2. **Query current state** — calls `queryWikiTool` for the current state of the files identified in the original triage
+3. **Compare fix to root cause** — analyzes whether the fix description addresses the identified root cause
+4. **Assess completeness** — determines if the fix is complete, partial, or unrelated
+5. **Produce structured verdict**
+
+## Output Schema
+
+```typescript
+{
+  verified: boolean,                         // does the fix resolve the root cause?
+  confidence: number,                        // 0.0 to 1.0
+  analysis: string,                          // detailed explanation
+  remainingRisks: string[],                  // remaining concerns or edge cases
+  recommendation: "close" | "reopen" | "monitor",
+}
+```
+
+### Recommendation Guide
+
+| Recommendation | Meaning |
+|----------------|---------|
+| `close` | Fix fully addresses root cause — safe to close the ticket |
+| `reopen` | Fix does not address root cause, or introduces new issues — reopen required |
+| `monitor` | Fix appears correct but needs an observation period to confirm |
+
+## Skeptical by Design
+
+The resolution reviewer is intentionally skeptical:
+
+- **Partial fixes are common** — checks for edge cases the fix may not handle
+- **File mismatch flagging** — if the fix touches different files than the original root cause suggested, this is flagged explicitly
+- **Uncertainty handling** — if no diff information is available (e.g., the issue was closed without a code reference), the reviewer defaults to `monitor` rather than guessing
+- **Always explains** — the `analysis` field must contain reasoning, not just the verdict
+
+## Email Notification
+
+After the review step, the `resolve` step sends a resolution notification email to the original reporter via `sendResolutionEmailTool`. The email includes:
+- Resolution verdict (verified/not verified)
+- Confidence score
+- Analysis summary
+- Recommendation (close/reopen/monitor)
+- Link to the Linear ticket
+
+If Resend is not configured, the notification is logged and skipped. The workflow does not fail on email errors.
+
+## Graceful Degradation
+
+If the resolution reviewer cannot determine whether the fix is correct:
+- No diff information available → recommendation: `monitor`
+- Linear issue not found → logs error, workflow continues with a default "unable to verify" result
+- Wiki query returns no results → confidence is reduced, analysis notes the lack of context
+
+## Example Output
+
+```json
+{
+  "verified": true,
+  "confidence": 0.82,
+  "analysis": "The fix updates the payment_intent retrieval to handle stale intent IDs by re-fetching from Stripe before processing. This directly addresses the root cause identified in the original triage: cached payment_intent IDs becoming invalid between creation and capture. The fix in app/services/payment_processor.rb (lines 45-67) matches the file reference from the original analysis.",
+  "remainingRisks": [
+    "Does not handle the case where re-fetch also fails — consider adding a fallback to create a new payment_intent",
+    "No test coverage added for the re-fetch path"
+  ],
+  "recommendation": "monitor"
+}
+```
