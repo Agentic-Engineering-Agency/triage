@@ -20,6 +20,10 @@ export default defineConfig({
       "/chat": {
         target: "http://localhost:4111",
         changeOrigin: true,
+        // Only proxy POST (AI streaming) — GET /chat is the SPA route
+        bypass(req) {
+          if (req.method !== "POST") return req.url;
+        },
       },
     },
   },

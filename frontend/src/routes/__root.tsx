@@ -1,7 +1,7 @@
 import { createRootRoute, Link, Navigate, Outlet, useLocation } from "@tanstack/react-router"
 import { TanStackRouterDevtools } from "@tanstack/router-devtools"
-import { MessageSquare, LayoutGrid, Settings, Sun, Moon } from "lucide-react"
-import { useAuth } from "@/hooks/use-auth"
+import { MessageSquare, LayoutGrid, Settings, Sun, Moon, LogOut } from "lucide-react"
+import { useAuth, signOut } from "@/hooks/use-auth"
 import { useTheme } from "@/components/theme-provider"
 
 export const Route = createRootRoute({
@@ -92,6 +92,16 @@ function RootLayout() {
               <p className="text-xs font-medium text-foreground truncate">{user?.name || "User"}</p>
               <p className="text-[10px] text-muted-foreground truncate">{user?.email || ""}</p>
             </div>
+            <button
+              onClick={async () => {
+                await signOut()
+                window.location.href = "/login"
+              }}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              title="Sign out"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
       </aside>
