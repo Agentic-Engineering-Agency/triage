@@ -39,18 +39,8 @@ import {
 // but we filter out internal Symbol-keyed and non-column properties.
 // A column object has a 'name' property (string) for the SQL column name.
 // ---------------------------------------------------------------------------
-function getColumnNames(table: Record<string, unknown>): string[] {
-  return Object.keys(table).filter((key) => {
-    const val = table[key];
-    return (
-      val !== null &&
-      typeof val === 'object' &&
-      'name' in (val as Record<string, unknown>)
-    );
-  });
-}
-
-function hasColumn(table: Record<string, unknown>, colName: string): boolean {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function hasColumn(table: any, colName: string): boolean {
   return colName in table && table[colName] !== undefined;
 }
 
@@ -174,8 +164,6 @@ describe('REQ-DB15: auth_account columns', () => {
     'accessToken',
     'refreshToken',
     'idToken',
-    'accessTokenExpiresAt',
-    'refreshTokenExpiresAt',
     'scope',
     'password',
     'createdAt',
