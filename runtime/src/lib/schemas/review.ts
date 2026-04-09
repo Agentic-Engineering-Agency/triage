@@ -155,6 +155,7 @@ export const codeReviewOutputSchema = z.object({
   /** Top risks — the most important things for the human reviewer to focus on */
   topRisks: z
     .array(z.string())
+    .min(1)
     .max(5)
     .describe('Top 1-5 risks a human reviewer should focus on, ordered by importance'),
 });
