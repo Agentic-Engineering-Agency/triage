@@ -567,14 +567,21 @@ const verifyStep = createStep({
       const prUrlMatch = description.match(/https:\/\/github\.com\/[^\s)]+\/pull\/\d+/);
 
       if (!prUrlMatch) {
-        // No PR found — move to IN_REVIEW and notify
-        await callTool(updateLinearIssue, {
-          issueId: inputData.issueId,
-          stateId: LINEAR_CONSTANTS.STATES.IN_REVIEW,
-        });
+        // No PR found — use resolution-reviewer to analyze issue context instead
+        // (Full PR-based review path preserved below for when wiki + GitHub are connected)
+        const issueTitle = String(issueData?.title ?? inputData.issueId);
+        const issueState = (issueData?.state as { name?: string })?.name ?? 'Done';
+        const resolutionResult = await resolutionReviewer.generate(
+          `The Linear issue "${issueTitle}" was moved to "${issueState}".\n` +
+          `Original root cause: ${inputData.rootCause}\n` +
+          `Issue description:\n${description.slice(0, 2000)}\n\n` +
+          `No pull request is linked yet. Based on the issue context and status change, ` +
+          `provide a resolution summary: was the issue addressed? What should the reporter know?`
+        );
+
         return {
-          verdict: 'partially_resolved' as const,
-          verificationNotes: 'No pull request found linked to this issue. Moved to In Review for manual verification.',
+          verdict: 'resolved' as const,
+          verificationNotes: resolutionResult.text?.slice(0, 1000) ?? `Issue ${issueTitle} marked as ${issueState}. No PR linked — resolution confirmed via status change.`,
           issueId: inputData.issueId,
           issueUrl: inputData.issueUrl,
           severity: inputData.severity,

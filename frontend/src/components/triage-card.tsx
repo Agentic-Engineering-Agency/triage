@@ -38,6 +38,11 @@ export function TriageCard({
   onRetry,
   className,
 }: TriageCardProps) {
+  // Normalize confidence from 0-1 (agent schema) to 0-100 (UI display)
+  const normalizedConfidence = confidence !== undefined
+    ? (confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence))
+    : undefined
+
   if (state === "loading") {
     return (
       <div
@@ -57,7 +62,7 @@ export function TriageCard({
     )
   }
 
-  const isLowConfidence = confidence !== undefined && confidence < 60
+  const isLowConfidence = normalizedConfidence !== undefined && normalizedConfidence < 60
 
   return (
     <div
@@ -75,7 +80,7 @@ export function TriageCard({
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         {severity && <SeverityBadge severity={severity} />}
-        {confidence !== undefined && <ConfidenceScore score={confidence} />}
+        {normalizedConfidence !== undefined && <ConfidenceScore score={normalizedConfidence} />}
       </div>
 
       {/* Title */}
