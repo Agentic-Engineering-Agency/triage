@@ -1,6 +1,6 @@
 import { createRootRoute, Link, Navigate, Outlet, useLocation, useNavigate } from "@tanstack/react-router"
 import { TanStackRouterDevtools } from "@tanstack/router-devtools"
-import { MessageSquare, LayoutGrid, Settings, Sun, Moon, LogOut, Plus, Trash2 } from "lucide-react"
+import { MessageSquare, LayoutGrid, Settings, Sun, Moon, LogOut, Plus, Trash2, Activity } from "lucide-react"
 import { useAuth, signOut } from "@/hooks/use-auth"
 import { useTheme } from "@/components/theme-provider"
 import { ConversationProvider, useConversations } from "@/hooks/use-conversations"
@@ -101,6 +101,16 @@ function AuthenticatedLayout() {
           <NavLink to="/settings" icon={<Settings className="h-4 w-4" />}>
             Settings
           </NavLink>
+
+          <a
+            href="https://langfuse.agenticengineering.lat"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-all hover:text-foreground hover:bg-muted/30"
+          >
+            <Activity className="h-4 w-4" />
+            Observability
+          </a>
         </nav>
 
         {/* Divider */}
