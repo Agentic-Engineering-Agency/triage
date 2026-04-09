@@ -7,18 +7,18 @@ services:
   vite:
     image: node:22-alpine
     working_dir: /app
-    command: npx vite --host 0.0.0.0
+    command: sh -c "npm install && npx vite --host 0.0.0.0"
     ports:
       - "127.0.0.1:5173:5173"
     volumes:
       - ./frontend:/app
-      - /app/node_modules
+      - vite_node_modules:/app/node_modules
     networks:
       - app
 
   frontend:
     environment:
-      FRONTEND_MODE: dev
+      FRONTEND_MODE: static
 
   runtime:
     build:
@@ -26,8 +26,14 @@ services:
       dockerfile: Dockerfile.runtime
       target: builder
     working_dir: /app/runtime
-    command: npx mastra dev
+    command: sh -c "sed -i 's|LIBSQL_URL=.*|LIBSQL_URL=http://libsql:8080|' /app/runtime/.env && node /app/runtime/init-db.mjs && npx mastra dev"
     environment:
       - PORT=4111
+      - LIBSQL_URL=http://libsql:8080
+      - NODE_ENV=development
     volumes:
       - ./runtime/src:/app/runtime/src
+      - ./runtime/init-db.mjs:/app/runtime/init-db.mjs
+
+volumes:
+  vite_node_modules:
