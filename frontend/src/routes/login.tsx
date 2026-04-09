@@ -71,7 +71,7 @@ function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              className="w-full rounded-xl border-0 bg-muted/50 px-4 py-2.5 text-sm text-foreground shadow-neu-inset outline-none placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-primary/30"
+              className="w-full rounded-xl border-0 bg-muted/50 px-4 py-2.5 text-sm text-foreground shadow-neu-inset outline-none placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-foreground/20"
             />
           </div>
 
@@ -89,7 +89,7 @@ function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="w-full rounded-xl border-0 bg-muted/50 px-4 py-2.5 text-sm text-foreground shadow-neu-inset outline-none placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-primary/30"
+              className="w-full rounded-xl border-0 bg-muted/50 px-4 py-2.5 text-sm text-foreground shadow-neu-inset outline-none placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-foreground/20"
             />
           </div>
 
@@ -112,7 +112,7 @@ function LoginPage() {
           Don't have an account?{" "}
           <Link
             to="/register"
-            className="font-medium text-primary hover:underline"
+            className="font-medium text-foreground hover:underline"
           >
             Register
           </Link>
