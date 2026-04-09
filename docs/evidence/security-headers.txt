@@ -1,0 +1,28 @@
+=== Runtime Response Headers ===
+HTTP/1.1 200 OK
+access-control-allow-origin: *
+access-control-expose-headers: Content-Length,X-Requested-With
+content-type: application/json
+Date: Thu, 09 Apr 2026 21:57:31 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+
+=== Caddyfile Security Headers Configuration ===
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'"
+    }
+
+    # --- Backend API routes (all proxied to runtime:4111) ---
+
+    # Mastra built-in API (/api/agents/*, /api/workflows/*, etc.)
+    handle /api/* {
+        reverse_proxy runtime:4111 {
+            flush_interval -1
+        }
+    }
