@@ -1,0 +1,135 @@
+---
+title: Code Review Agent
+description: Mercury-2 sub-agent — CodeRabbit-inspired PR and diff analysis with two review profiles
+---
+
+The code review agent is a sub-agent registered on the orchestrator. It performs structured code review inspired by CodeRabbit's methodology: file triage, severity classification, actionable suggestions with code snippets, and per-file summaries.
+
+## Configuration
+
+```typescript
+new Agent({
+  id: 'code-review-agent',
+  name: 'code-review-agent',
+  description: 'Reviews code diffs for bugs, security issues, performance problems, and best practice violations...',
+  model: openrouter(MODELS.mercury),   // inception/mercury-2
+  tools: {
+    queryWikiTool,                      // context from codebase wiki before judging
+  },
+})
+```
+
+**Model:** `inception/mercury-2`
+
+**Invocation:** Called by the orchestrator as `agent-codeReviewAgent` when a user asks for code review. Also callable directly from workflow steps via `mastra.getAgent('code-review-agent')`.
+
+## Two Review Profiles
+
+| Profile | Use Case | What's Flagged |
+|---------|----------|----------------|
+| **chill** | Quick review, PR merges | Bugs, security issues, error handling gaps, data integrity risks only |
+| **assertive** | Detailed review, architecture review | All of the above plus style, naming, documentation, and best-practice suggestions |
+
+The orchestrator selects the profile based on user intent: "quick review" → chill, "full review" / "detailed review" / "comprehensive review" → assertive.
+
+## Review Process
+
+```
+1. Triage — classify each file: needs-review / approved / skipped
+2. Analyze — for each needs-review file:
+   - Read the diff and understand what changed and why
+   - Query wiki for context on affected modules
+   - Check for: null/undefined risks, error handling gaps, race conditions,
+     security issues, performance regressions, breaking API changes
+3. Comment — for each issue found:
+   - Assign severity: critical > major > minor > trivial > info
+   - Assign category (see below)
+   - Write title, analysis, and actionable suggestion
+4. Summarize — produce overall verdict
+```
+
+### File Triage Classification
+
+| Class | Description |
+|-------|-------------|
+| `needs-review` | Any logic changes, control flow modifications, function signatures, API calls |
+| `approved` | Pure formatting, variable renames, comment-only changes |
+| `skipped` | Generated files, lock files, binary assets |
+
+## Severity Levels
+
+| Severity | Icon | Description |
+|----------|------|-------------|
+| **Critical** | 🔴 | Will cause production incidents — crashes, data loss, security breaches, authentication bypass, SQL injection, unhandled promise rejections in critical paths |
+| **Major** | 🟠 | Significant impact — broken functionality, performance regression >2x, missing validation on user input, incorrect business logic, data race conditions |
+| **Minor** | 🟡 | Should fix but not urgent — missing error messages, suboptimal patterns, incomplete type safety, missing edge case handling |
+| **Trivial** | 🔵 | Low-impact improvements — variable naming, code organization, redundant code, missing JSDoc on internal functions |
+| **Info** | ⚪ | Observations — "this could be simplified later", "consider extracting this" |
+
+## Comment Categories
+
+`bug-risk` | `security` | `performance` | `error-handling` | `logic` | `edge-case` | `race-condition` | `data-integrity` | `maintainability` | `complexity` | `naming` | `documentation` | `style` | `best-practice`
+
+## Output Schema
+
+The code review agent produces output conforming to `codeReviewOutputSchema`:
+
+```typescript
+{
+  summary: string,                    // 2-3 sentence executive summary
+  reviewEffort: 1 | 2 | 3 | 4 | 5,  // complexity score
+  verdict: "approve" | "request-changes" | "comment-only",
+  fileSummaries: Array<{
+    filePath: string,
+    classification: "needs-review" | "approved" | "skipped",
+    summary: string,
+  }>,
+  comments: Array<{
+    filePath: string,
+    lineRange?: string,
+    severity: "critical" | "major" | "minor" | "trivial" | "info",
+    category: string,
+    title: string,          // one line, under 120 chars
+    analysis: string,       // what's wrong + why it matters in production
+    suggestion: string,     // concrete suggestion, code snippet preferred
+    confidence: number,     // 0.0 to 1.0
+  }>,
+  stats: {
+    critical: number,
+    major: number,
+    minor: number,
+    trivial: number,
+    info: number,
+  },
+  topRisks: string[],       // top 1-5 things for the human reviewer to focus on
+}
+```
+
+### Verdict Guide
+
+| Verdict | Condition |
+|---------|-----------|
+| `approve` | No critical or major issues — safe to merge |
+| `request-changes` | Has critical or major issues that must be fixed before merge |
+| `comment-only` | Has suggestions but nothing blocking merge |
+
+## Codebase-Specific Rules
+
+The agent has special rules for the Triage codebase:
+
+- **TypeScript strict mode** — flags any `any` types that could be properly typed
+- **Zod schema contracts** — verifies implementations match declared schemas
+- **Mastra tool structure** — verifies `inputSchema`/`outputSchema` match `execute()` signatures
+- **API response format** — flags any responses not following `{ success, data } | { success, error: { code, message } }`
+- **Database naming** — flags snake_case/camelCase mismatches between DB and TypeScript
+- **Error observability** — error paths should log to Langfuse for trace visibility
+
+## Evidence Over Opinion
+
+The agent queries the codebase wiki before making judgments about patterns or conventions. If it lacks context to judge something, it says so with low confidence rather than guessing. Every finding includes:
+
+1. What the issue is
+2. Why it matters in production (with a concrete failure scenario)
+3. A concrete suggestion — code snippet preferred, copy-pasteable when possible
+
+Comments are framed as improvements, not corrections: "This function doesn't handle the case where `user` is null" not "You forgot to handle null."

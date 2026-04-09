@@ -1,45 +1,20 @@
 # Triage — AI-Powered SRE Incident Triage Agent
 
-> Hackathon build foundation for an observable SRE incident triage system. This branch currently ships the Docker/Langfuse stack, stub app containers, Linear and Resend tool integrations, and automated tests for the integration layer.
+AI agent that triages SRE incidents for Solidus/Rails e-commerce: describe the incident, get a root-cause analysis, a Linear ticket, and an email notification — all in one chat session.
 
-<img src="docs/diagrams/architecture-overview.svg" alt="Architecture Overview" />
+[Demo Video (YouTube)](https://youtube.com/watch?v=TODO) #AgentXHackathon
 
 ## What Is Triage?
 
-Triage is the hackathon project for an SRE incident intake and triage agent. The target system accepts incident reports, analyzes the connected e-commerce codebase, creates or updates a ticket in Linear, and notifies both engineers and reporters through the full resolution loop.
+Triage is an AI-powered incident triage system for on-call SRE engineers working on Solidus/Rails e-commerce platforms. Instead of manually hunting through logs, codebase history, and runbooks under pressure, an engineer describes the incident in plain text (with optional screenshots), and Triage does the rest.
 
-This branch is the implementation foundation for that system. The committed code currently includes:
+The agent queries a codebase knowledge base via vector search (llm-wiki RAG), identifies the root cause with specific file references, scores severity and confidence, and produces a structured triage report. The engineer reviews a TriageCard preview, approves it, and the agent creates a Linear ticket, sends an email notification to the team, and then suspends — waiting for a webhook when the fix ships. When it does, the Resolution Reviewer agent confirms whether the issue is actually resolved and notifies the reporter.
 
-- the 9-container Docker Compose stack with `app` and `langfuse` networks
-- stub frontend and runtime fallbacks so `docker compose up --build` works from a clean clone
-- 5 Linear Mastra tools and 2 Resend Mastra tools in `runtime/src/mastra/tools/`
-- shared Zod contracts in `runtime/src/lib/schemas/ticket.ts`
-- runtime unit tests and infrastructure validation tests
-
-The full chat UI, durable workflow runtime, and resolution webhook path described in the target architecture are not all committed on this branch yet.
-
-**Target E2E flow:** Submit → Triage → Ticket Created → Team Notified → Resolved → Reporter Notified
-
-For agent implementation details, see [`AGENTS_USE.md`](./AGENTS_USE.md). For scaling strategy, see [`SCALING.md`](./SCALING.md). For setup instructions, see [`QUICKGUIDE.md`](./QUICKGUIDE.md).
-
-## Current Status
-
-Implemented now:
-
-- Docker Compose stack with Caddy, LibSQL, Langfuse, and health checks
-- Stub frontend and runtime containers for clean-clone startup
-- Linear ticketing tools and Resend email tools
-- Shared schemas, env/config handling, and sanitized tool error logging
-- Automated test coverage for runtime integrations and Docker/infrastructure configuration
-
-Still required before a full hackathon demo/submission:
-
-- real frontend chat SPA
-- runtime entrypoint and workflow orchestration
-- webhook-driven resolution flow
-- capture of final observability/security evidence and demo video
+The full system runs on a single `docker compose up --build` from a clean clone. Ten containers start behind a Caddy reverse proxy that eliminates CORS and handles all security headers. Observability is provided by a self-hosted Langfuse stack with LLM traces, token cost tracking, and latency metrics — exposed externally via a Cloudflare Tunnel at `https://langfuse.agenticengineering.lat`.
 
 ## Architecture
+
+<img src="docs/diagrams/architecture-overview.svg" alt="Architecture Overview" />
 
 ```mermaid
 graph TD
@@ -55,11 +30,13 @@ graph TD
     langfuse-worker --> redis["redis :6379"]
     langfuse-worker --> minio["minio :9000"]
     langfuse-web --> langfuse-postgres["langfuse-postgres :5432"]
+    cloudflared["cloudflared (Tunnel)"] -->|outbound tunnel| langfuse-web
 ```
 
-**Target topology:** 9 containers on 2 Docker networks (`app` + `langfuse`), all with healthchecks and `depends_on: service_healthy`.
-
-**Current branch behavior:** if `frontend/` or `runtime/src/mastra/index.ts` are absent, Docker builds fall back to the stub containers in `stubs/`. That keeps the infrastructure runnable while the full app is still being wired.
+- **10 containers** on 2 Docker networks (`app` + `langfuse`), all with healthchecks and `depends_on: service_healthy`
+- **Single-origin Caddy reverse proxy** — serves the SPA and proxies `/api/*` and `/auth/*` to the runtime; no CORS required
+- **Mastra durable workflow runtime** — agents, workflows, tools, and Better Auth session handling on a single Hono server
+- **LibSQL with F32_BLOB(1536) vector search** — DiskANN index for codebase wiki RAG; also serves workflow state, auth, and fallback ticket storage
 
 ## Quick Start
 
@@ -70,27 +47,27 @@ cd triage
 
 # 2. Configure environment
 cp .env.example .env
-# Edit .env and replace all CHANGEME values
+# Edit .env — fill in the four mandatory vars at minimum (see below)
 
-# 3. Validate secrets (optional)
-./scripts/check-env.sh
-
-# 4. Run the automated verification suite
-npm test
-
-# Optional: enable live Docker/Helm smoke assertions
-RUN_MANUAL_INFRA_TESTS=1 npm test
-
-# 5. Start all services
+# 3. Start all services
 docker compose up --build
 ```
 
-Open [http://localhost:3001](http://localhost:3001) to access the current frontend container. On this branch it is expected to be a stub status page unless a real `frontend/` app has been added.
-Open [http://localhost:3000](http://localhost:3000) to access the Langfuse observability dashboard.
+Open [http://localhost:3001](http://localhost:3001) for the chat UI.
+Open [http://localhost:3000](http://localhost:3000) for the Langfuse observability dashboard.
 
-## Target Tech Stack
+**Mandatory environment variables:**
 
-The final hackathon deliverable is designed around the stack below. The currently committed branch implements the Docker/observability/tooling foundation and not every runtime/frontend layer yet.
+| Variable | Purpose |
+|----------|---------|
+| `OPENROUTER_API_KEY` | LLM access via OpenRouter |
+| `LINEAR_API_KEY` | Linear ticket creation |
+| `RESEND_API_KEY` | Email notifications |
+| `BETTER_AUTH_SECRET` | Session signing (any 32+ char random string) |
+
+See [`.env.example`](./.env.example) for all 38 documented variables. See [`QUICKGUIDE.md`](./QUICKGUIDE.md) for detailed setup and troubleshooting.
+
+## Tech Stack
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
@@ -99,7 +76,7 @@ The final hackathon deliverable is designed around the stack below. The currentl
 | ORM | [Drizzle](https://orm.drizzle.team) | Type-safe SQL, schema management, migrations |
 | Auth | [Better Auth](https://www.better-auth.com) | Session-based auth with HttpOnly cookies |
 | Observability | [Langfuse](https://langfuse.com) v3 | LLM traces, token cost tracking, latency metrics |
-| LLM Gateway | [OpenRouter](https://openrouter.ai) | Multimodal LLM access (Qwen 3.6 Plus / Mercury) |
+| LLM Gateway | [OpenRouter](https://openrouter.ai) | Multimodal LLM access with 3-model fallback routing |
 | Frontend | [TanStack Router](https://tanstack.com/router) + [React](https://react.dev) | File-based SPA routing with lazy loading |
 | AI UI | [AI SDK](https://sdk.vercel.ai) + [AI SDK Elements](https://sdk.vercel.ai/docs/ai-sdk-ui/chatbot-with-tool-use) | Chat streaming (SSE), generative UI components |
 | Reverse Proxy | [Caddy](https://caddyserver.com) v2 | Single-origin architecture, security headers, SSE support |
@@ -107,17 +84,14 @@ The final hackathon deliverable is designed around the stack below. The currentl
 | Ticketing | [Linear](https://linear.app) SDK | Issue creation, assignment, status tracking, webhooks |
 | Email | [Resend](https://resend.com) | Transactional email notifications |
 
-## Target Agents
+## Agents
 
-The intended hackathon architecture uses 3 specialized agents orchestrated by Mastra durable workflows. That agent runtime is documented, but not fully committed on this branch yet.
-
-| Agent | Role | Key Capabilities |
-|-------|------|-------------------|
-| **Orchestrator** | User-facing conversational agent | Batch detection, workflow routing, streaming responses |
-| **Triage Agent** | Core intelligence | Codebase RAG, root cause analysis, severity scoring |
-| **Resolution Reviewer** | Fix verification | PR/commit analysis, resolution confirmation |
-
-See [`AGENTS_USE.md`](./AGENTS_USE.md) for full agent documentation with architecture diagrams, context engineering details, and security measures.
+| Agent | Model | Role |
+|-------|-------|------|
+| **Orchestrator** | MiniMax M2.7 (3-model fallback) | User-facing conversational agent; batch detection, workflow routing, streaming responses |
+| **Triage Agent** | Mercury-2 | Core intelligence; codebase RAG, root cause analysis, severity scoring, file references |
+| **Resolution Reviewer** | Mercury-2 | Fix verification; PR/commit analysis, resolution confirmation, reporter notification |
+| **Code Review Agent** | Mercury-2 (chill/assertive profiles) | Code quality analysis integrated into the triage workflow |
 
 ## Documentation
 
@@ -125,20 +99,21 @@ See [`AGENTS_USE.md`](./AGENTS_USE.md) for full agent documentation with archite
 |----------|-------------|
 | [`AGENTS_USE.md`](./AGENTS_USE.md) | Agent implementation, architecture, observability, security |
 | [`SCALING.md`](./SCALING.md) | Docker → Kubernetes migration path, cost projections |
-| [`QUICKGUIDE.md`](./QUICKGUIDE.md) | Setup, verification, and troubleshooting for the current branch |
+| [`QUICKGUIDE.md`](./QUICKGUIDE.md) | Setup, verification, and troubleshooting |
 | [`.env.example`](./.env.example) | 38 documented environment variables with placeholders and comments |
 | [`docs/linear-resend-integration-assessment.md`](./docs/linear-resend-integration-assessment.md) | Design and implementation notes for the Linear and Resend tool layer |
+| [Live deployment](https://triage.agenticengineering.lat) | Hosted demo instance |
 
 ## Team
 
 | Name | Role | Focus |
 |------|------|-------|
 | **Lalo** | Lead & Agents | Workflow orchestration, agent design, Linear integration |
-| **Lucy (Fernando)** | Infrastructure | Docker Compose, K8s scaffolding, CI/CD, SpecSafe pipeline |
-| **Coqui (Koki)** | Runtime & Integrations | Mastra setup, wiki pipeline, security processors, Resend |
-| **Chenko** | Frontend | TanStack SPA, chat UI, Kanban board, auth flow |
+| **Fernando** | Infrastructure | Docker Compose, K8s scaffolding, CI/CD, SpecSafe pipeline |
+| **Koki** | Runtime & Integrations | Mastra setup, wiki pipeline, security processors, Resend |
+| **Chenko** | Frontend | TanStack SPA, chat UI, auth flow |
 
-Built for the AgentX Hackathon 2026 🔧
+Built for the AgentX Hackathon 2026.
 
 ## License
 

@@ -53,8 +53,8 @@ function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-navy">
-      <div className="w-full max-w-md rounded-2xl bg-card p-8 shadow-neu-raised">
+    <div className="flex min-h-screen items-center justify-center bg-background dark:bg-background">
+      <div className="w-full max-w-md rounded-2xl bg-card p-8 shadow-xl">
         <div className="mb-8 text-center">
           <h1 className="font-heading text-3xl font-bold text-foreground">
             Triage
