@@ -28,7 +28,7 @@ Browser → Caddy (:3001/auth/*) → Mastra runtime (:4111) → Better Auth → 
 | `runtime/src/auth/index.ts` | Instancia de Better Auth con toda la config |
 | `runtime/src/lib/schemas/auth.ts` | Zod schemas derivados de las tablas Drizzle |
 | `drizzle.config.ts` | Config de drizzle-kit (dialect: 'turso') |
-| `tests/auth-backend.test.ts` | 36 tests (estructurales + integración) |
+| `tests/auth-backend.test.ts` | 34 tests (estructurales + integración) |
 
 ### Archivos modificados
 
@@ -324,7 +324,7 @@ Las cookies son HttpOnly, así que el frontend NO puede leer el token directamen
 
 ## 11. Tests
 
-36 tests en `tests/auth-backend.test.ts`:
+34 tests en `tests/auth-backend.test.ts`:
 
 - **5 tests estructurales** (pasan siempre): verifican que los archivos existen con el contenido correcto
 - **31 tests de integración** (necesitan Docker stack): verifican tablas en LibSQL, drizzle-kit push, endpoints HTTP

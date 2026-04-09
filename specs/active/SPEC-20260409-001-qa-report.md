@@ -9,7 +9,7 @@
 
 ## Test Results
 
-- **Total:** 35 tests
+- **Total:** 34 tests
 - **Passed:** 5 (REQ-A02 ×1, REQ-A09 ×4)
 - **Failed:** 0
 - **Skipped:** 30 (integration tests — require runtime + LibSQL)
