@@ -224,3 +224,13 @@ export const getLinearTeamMembers = createTool({
     }
   },
 });
+
+// ============================================================
+// Aliases for Lalo's agent registrations
+// The orchestrator agent references tools by these names.
+// ============================================================
+export const createLinearIssueTool = createLinearIssue;
+export const updateLinearIssueTool = updateLinearIssue;
+export const getLinearIssueTool = getLinearIssue;
+export const listLinearIssuesTool = searchLinearIssues;
+export const getTeamMembersTool = getLinearTeamMembers;

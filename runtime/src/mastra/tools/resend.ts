@@ -105,3 +105,10 @@ function renderResolutionNotificationHtml(ctx: { originalTitle: string; resoluti
   const prSection = ctx.prLink ? `<p><a href="${safeHref(ctx.prLink)}">View Pull Request</a></p>` : '';
   return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;"><h2>Issue Resolved</h2><p>Your reported issue has been resolved:</p><div style="background:#f0fdf4;padding:16px;border-radius:8px;margin:16px 0;"><h3>${escapeHtml(ctx.originalTitle)}</h3><p><strong>Resolution:</strong></p><div>${escapeHtml(ctx.resolutionSummary)}</div>${prSection}</div><p><a href="${safeHref(ctx.linearUrl)}">View in Linear</a></p><p style="color:#888;font-size:12px;">Sent by Triage (agenticengineering.lat)</p></body></html>`;
 }
+
+// ============================================================
+// Aliases for Lalo's agent registrations
+// The orchestrator agent references tools by these names.
+// ============================================================
+export const sendTicketEmailTool = sendTicketNotification;
+export const sendResolutionEmailTool = sendResolutionNotification;
