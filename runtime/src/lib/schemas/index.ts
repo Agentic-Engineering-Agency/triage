@@ -85,3 +85,12 @@ export type {
   CodeReviewOutput,
   CodeReviewInput,
 } from './review';
+
+// Attachment schemas and types
+export * from './attachments';
+
+// Display schemas and types (TriageCard, DuplicatePrompt)
+export * from './display';
+
+// GitHub schemas and types
+export * from './github';

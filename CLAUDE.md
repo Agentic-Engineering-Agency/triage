@@ -19,11 +19,15 @@ docker compose -f docker-compose.yml up --build
 pnpm test
 pnpm test --coverage
 
-# Database inspection
-cd runtime && npx drizzle-kit studio    # connects via localhost:8080
+# Database: apply schema (idempotent, no migration files)
+cd runtime && pnpm db:push
 
-# Schema changes
+# Database: inspect with Drizzle Studio GUI
+cd runtime && pnpm db:studio
+
+# Database: raw drizzle-kit commands (alternative)
 cd runtime && npx drizzle-kit push      # direct apply, no migration files
+cd runtime && npx drizzle-kit studio    # connects via localhost:8080
 
 # View logs
 docker compose logs -f runtime
@@ -70,6 +74,7 @@ Two custom containers + 7 infrastructure containers behind a Caddy reverse proxy
 - **One file per concern** — all Linear tools in `linear.ts`, not split per function.
 - **Dates:** ISO 8601 strings in APIs. Frontend formats with `Intl.DateTimeFormat`.
 - **Nulls:** `null` for absent values in APIs, never `undefined`.
+- **Drizzle ORM:** dialect is `'turso'` in drizzle.config.ts; runtime imports from `drizzle-orm/libsql`. Better Auth uses `provider: 'sqlite'` (not 'turso').
 
 ### Anti-Patterns
 
@@ -107,6 +112,10 @@ All external services have fallback modes. Failures never block triage:
 | `docker-compose.override.yml` | Dev mode: Vite HMR + tsx --watch |
 | `Caddyfile` | Reverse proxy, security headers, SPA routing |
 | `PROJECT_STATE.md` | SpecSafe spec status tracker |
+| `runtime/src/db/schema.ts` | Drizzle ORM schema: auth tables, wiki_documents, wiki_chunks (F32_BLOB vectors), local_tickets |
+| `runtime/src/db/client.ts` | LibSQL client + Drizzle ORM instance (dialect: turso, import from drizzle-orm/libsql) |
+| `runtime/src/lib/auth.ts` | Better Auth server config (provider: sqlite, backed by LibSQL) |
+| `runtime/drizzle.config.ts` | Drizzle-kit config (dialect: turso, schema path, dbCredentials) |
 
 ## Team & Assignments
 

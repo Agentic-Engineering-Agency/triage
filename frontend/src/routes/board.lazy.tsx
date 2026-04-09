@@ -1,36 +1,117 @@
-import { createLazyFileRoute } from "@tanstack/react-router"
+import { createLazyFileRoute } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
+import { apiFetch } from '@/lib/api';
 
-export const Route = createLazyFileRoute("/board")({
-  component: BoardPage,
-})
+export const Route = createLazyFileRoute('/board')({ component: BoardPage });
 
-function BoardPage() {
-  return (
-    <div className="flex h-full flex-col p-6">
-      <h1 className="font-heading text-2xl font-bold mb-6">Board</h1>
-      <div className="grid flex-1 grid-cols-5 gap-4">
-        <KanbanColumn title="Backlog" count={0} />
-        <KanbanColumn title="Todo" count={0} />
-        <KanbanColumn title="In Progress" count={0} />
-        <KanbanColumn title="In Review" count={0} />
-        <KanbanColumn title="Done" count={0} />
-      </div>
-    </div>
-  )
+interface LinearIssue {
+  id: string;
+  identifier: string;
+  title: string;
+  priority: number;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+  assignee: { id: string; name: string } | null;
+  labels: Array<{ id: string; name: string; color: string }>;
 }
 
-function KanbanColumn({ title, count }: { title: string; count: number }) {
-  return (
-    <div className="flex flex-col rounded-2xl bg-card p-4 shadow-neu-sm">
-      <div className="flex items-center justify-between mb-4 px-1">
-        <h3 className="font-heading text-sm font-semibold">{title}</h3>
-        <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1.5 text-xs font-medium text-muted-foreground">
-          {count}
-        </span>
+type GroupedIssues = Record<string, LinearIssue[]>;
+
+const COLUMN_ORDER = ['Triage', 'Backlog', 'Todo', 'In Progress', 'In Review', 'Done'];
+
+const priorityLabels: Record<number, { text: string; color: string }> = {
+  1: { text: 'Urgent', color: 'bg-red-500/20 text-red-400' },
+  2: { text: 'High', color: 'bg-orange-500/20 text-orange-400' },
+  3: { text: 'Medium', color: 'bg-yellow-500/20 text-yellow-400' },
+  4: { text: 'Low', color: 'bg-blue-500/20 text-blue-400' },
+};
+
+function BoardPage() {
+  const { data, isLoading, error } = useQuery<GroupedIssues>({
+    queryKey: ['linear-issues'],
+    queryFn: () => apiFetch('/linear/issues'),
+    refetchInterval: 30_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="animate-pulse text-muted-foreground">Loading board...</div>
       </div>
-      <div className="flex flex-1 flex-col items-center justify-center text-center py-12">
-        <p className="text-xs text-muted-foreground">No tickets yet</p>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-destructive">Failed to load board: {error.message}</div>
+      </div>
+    );
+  }
+
+  const issues = data ?? {};
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="px-6 py-4 border-b border-border">
+        <h1 className="text-lg font-semibold">Incident Board</h1>
+        <p className="text-sm text-muted-foreground">Linear issues for triage-hackathon team</p>
+      </div>
+      <div className="flex-1 overflow-x-auto p-4">
+        <div className="flex gap-4 h-full min-w-max">
+          {COLUMN_ORDER.map((column) => {
+            const columnIssues = issues[column] ?? [];
+            return (
+              <div key={column} className="w-72 flex-shrink-0 flex flex-col">
+                <div className="flex items-center gap-2 px-3 py-2 mb-2">
+                  <h2 className="text-sm font-medium text-muted-foreground">{column}</h2>
+                  <span className="text-xs bg-muted px-1.5 py-0.5 rounded-full">{columnIssues.length}</span>
+                </div>
+                <div className="flex-1 space-y-2 overflow-y-auto">
+                  {columnIssues.length === 0 ? (
+                    <div className="text-xs text-muted-foreground/50 text-center py-8">No tickets</div>
+                  ) : (
+                    columnIssues.map((issue) => (
+                      <a
+                        key={issue.id}
+                        href={issue.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block p-3 bg-card border border-border rounded-lg hover:border-primary/40 transition-colors"
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <span className="text-xs text-muted-foreground font-mono">{issue.identifier}</span>
+                          {issue.priority > 0 && issue.priority <= 4 && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${priorityLabels[issue.priority]?.color ?? ''}`}>
+                              {priorityLabels[issue.priority]?.text ?? ''}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm font-medium leading-snug mb-2">{issue.title}</p>
+                        <div className="flex items-center justify-between">
+                          <div className="flex gap-1 flex-wrap">
+                            {issue.labels.slice(0, 3).map((label) => (
+                              <span key={label.id} className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
+                                {label.name}
+                              </span>
+                            ))}
+                          </div>
+                          {issue.assignee && (
+                            <span className="text-[10px] w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center font-medium">
+                              {issue.assignee.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                            </span>
+                          )}
+                        </div>
+                      </a>
+                    ))
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
-  )
+  );
 }
