@@ -26,7 +26,7 @@ services:
       dockerfile: Dockerfile.runtime
       target: builder
     working_dir: /app/runtime
-    command: sh -c "sed -i 's|LIBSQL_URL=.*|LIBSQL_URL=http://libsql:8080|' /app/runtime/.env && node /app/runtime/init-db.mjs && npx mastra dev"
+    command: sh -c "node /app/runtime/init-db.mjs && npx mastra dev"
     environment:
       - PORT=4111
       - LIBSQL_URL=http://libsql:8080

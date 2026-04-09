@@ -60,12 +60,19 @@ export const mastra = new Mastra({
 
               const assigneeNode = await issue.assignee;
               const labelsConnection = await issue.labels();
+              let projectName: string | null = null;
+              try {
+                const proj = await issue.project;
+                if (proj) projectName = proj.name;
+              } catch { /* project may not exist */ }
 
               grouped[stateName].push({
                 id: issue.id,
                 identifier: issue.identifier,
                 title: issue.title,
                 priority: issue.priority,
+                estimate: issue.estimate ?? null,
+                project: projectName,
                 url: issue.url,
                 createdAt: issue.createdAt?.toISOString?.() ?? String(issue.createdAt),
                 updatedAt: issue.updatedAt?.toISOString?.() ?? String(issue.updatedAt),
@@ -75,6 +82,45 @@ export const mastra = new Mastra({
             }
 
             return c.json({ success: true, data: grouped });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
+          }
+        },
+      },
+
+      // GET /api/linear/cycle/active — current active cycle with progress
+      {
+        path: '/api/linear/cycle/active',
+        method: 'GET' as const,
+        handler: async (c: Context) => {
+          try {
+            if (!linearClient) {
+              return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
+            }
+
+            const team = await linearClient.team(LINEAR_CONSTANTS.TEAM_ID);
+            const cyclesConnection = await team.cycles({ filter: { isActive: { eq: true } }, first: 1 });
+            const activeCycle = cyclesConnection.nodes[0];
+
+            if (!activeCycle) {
+              return c.json({ success: true, data: null });
+            }
+
+            return c.json({
+              success: true,
+              data: {
+                id: activeCycle.id,
+                name: activeCycle.name ?? `Cycle ${activeCycle.number}`,
+                number: activeCycle.number,
+                startsAt: activeCycle.startsAt?.toISOString?.() ?? String(activeCycle.startsAt ?? ''),
+                endsAt: activeCycle.endsAt?.toISOString?.() ?? String(activeCycle.endsAt ?? ''),
+                progress: activeCycle.progress ?? 0,
+                scopeCount: (activeCycle as Record<string, unknown>).scopeCount ?? 0,
+                completedScopeCount: (activeCycle as Record<string, unknown>).completedScopeCount ?? 0,
+                startedScopeCount: (activeCycle as Record<string, unknown>).startedScopeCount ?? 0,
+              },
+            });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
