@@ -1,4 +1,7 @@
-# AGENTS_USE.md — How We Use AI Agents in Triage
+---
+title: AGENTS_USE.md
+description: How Triage uses AI agents — architecture, orchestration, context engineering, use cases, observability, security, scalability, and lessons learned.
+---
 
 ## 1. Agent Overview
 
@@ -19,7 +22,7 @@ The system is built on Mastra v1.23 running on Hono, with all agents registered 
 
 ## 2. Agent Capabilities
 
-### Agent: Orchestrator
+### Orchestrator
 
 | Field | Value |
 |---|---|
@@ -33,6 +36,7 @@ The system is built on Mastra v1.23 running on Hono, with all agents registered 
 | Context window | `maxTokens: 8192`; persistent memory via `MemoryLibSQL` for conversation history |
 
 The Orchestrator follows a deterministic analysis flow for every incident:
+
 1. Call `process-attachments` first if files are present (images described by Gemma 4 31B vision model)
 2. Call `query-wiki` with the enriched description to retrieve relevant codebase context
 3. Call `list-linear-issues` to check for duplicates using keyword overlap similarity scoring
@@ -41,7 +45,7 @@ The Orchestrator follows a deterministic analysis flow for every incident:
 6. If similarity < 0.70: call `displayTriage` with state=`pending` to render the triage preview card
 7. Wait for user approval before calling `createLinearIssueTool`
 
-### Agent: Triage Agent
+### Triage Agent
 
 | Field | Value |
 |---|---|
@@ -60,7 +64,7 @@ Severity classifications:
 
 The agent is instructed never to fabricate file paths — all file references must come from wiki query results. If confidence is below 0.5, the output explicitly states what additional information would improve the assessment.
 
-### Agent: Resolution Reviewer
+### Resolution Reviewer
 
 | Field | Value |
 |---|---|
@@ -73,7 +77,7 @@ The agent is instructed never to fabricate file paths — all file references mu
 
 The reviewer is skeptical by design: partial fixes are common, and the agent explicitly checks whether the PR touches the files identified in the original triage output. If no PR link is found in the issue, it recommends `monitor` and moves the ticket to `In Review` for manual verification.
 
-### Agent: Code Review Agent
+### Code Review Agent
 
 | Field | Value |
 |---|---|
@@ -289,7 +293,7 @@ All file references in triage output come exclusively from wiki query results �
 
 ### Tracing — Langfuse
 
-The Mastra instance is configured with a `LangfuseExporter` that emits traces for every agent call, tool invocation, and workflow step. The runtime container joins both the `app` network (for LibSQL and frontend communication) and the `langfuse` network (for trace emission to `langfuse-web`), as defined in `docker-compose.yml`. The `LANGFUSE_BASEURL` defaults to `https://langfuse.agenticengineering.lat` (exposed via the `cloudflared` Cloudflare Tunnel).
+The Mastra instance is configured with a `LangfuseExporter` that emits traces for every agent call, tool invocation, and workflow step. The runtime container joins both the `app` network (for LibSQL and frontend communication) and the `langfuse` network (for trace emission to `langfuse-web`), as defined in `docker-compose.yml`. The Langfuse dashboard is also reachable externally at `https://langfuse.agenticengineering.lat` via the `cloudflared` Cloudflare Tunnel (`LANGFUSE_BASEURL` defaults to that URL).
 
 The Langfuse stack consists of 6 containers:
 
@@ -302,11 +306,11 @@ The Langfuse stack consists of 6 containers:
 | `minio` | Object storage for large trace payloads and media |
 | `postgres` | Relational store for Langfuse project/user metadata |
 
-All 10 containers (frontend, runtime, libsql, langfuse-web, langfuse-worker, clickhouse, redis, minio, postgres, cloudflared) define Docker `healthcheck` directives (cloudflared uses `restart: always` in lieu of a healthcheck). The infrastructure test suite in `tests/infra-docker/architecture-alignment.test.ts` asserts network membership, healthcheck presence, and Langfuse service configuration.
+All 10 containers define Docker `healthcheck` directives (cloudflared uses `restart: always`). The infrastructure test suite in `tests/infra-docker/architecture-alignment.test.ts` asserts network membership, healthcheck presence, and Langfuse service configuration.
 
 ### Structured Logging
 
-- `linear.ts`: Every tool invocation logs at the start (`[Linear] API error: <message slice(0,200)>`) with truncated error messages. Raw objects and API keys are never logged.
+- `linear.ts`: Every tool invocation logs at the start with truncated error messages. Raw objects and API keys are never logged.
 - `resend.ts`: Uses `maskEmail(e: string) => e.replace(/^(.)(.*)(@.*)$/, '$1***$3')` before any log line involving email addresses. PII stays out of log output.
 - `triage-workflow.ts`: Each step logs errors with a `[step-id] Error:` prefix for correlation.
 - `mastra/index.ts`: The Linear webhook handler logs received payloads truncated to 500 chars, matched runIds, and resume errors.
@@ -320,61 +324,9 @@ All 10 containers (frontend, runtime, libsql, langfuse-web, langfuse-worker, cli
 ### Test Evidence
 
 - `tests/infra-observability/*.test.ts` — validates Langfuse container configuration, network membership, and exporter wiring
-- `tests/infra-docker/architecture-alignment.test.ts` — asserts Langfuse-related service definitions, network segmentation between `app` and `langfuse` networks, and Caddy/runtime integration points
+- `tests/infra-docker/architecture-alignment.test.ts` — asserts Langfuse-related service definitions, network segmentation, and Caddy/runtime integration points
 - `tests/infra-docker/docker-compose.test.ts` — validates compose parsing and environment failure behavior
 - `tests/infra-docker/dockerfiles.test.ts` — enforces the image-size constraint for the hackathon stack
-
-### Screenshots
-
-**Langfuse Dashboard — Project Overview (model costs, trace count, usage graph):**
-
-![Langfuse Dashboard](docs/evidence/04-langfuse-dashboard.png)
-
-**Langfuse Traces — End-to-end trace listing with agent calls:**
-
-![Langfuse Traces](docs/evidence/05-langfuse-traces.png)
-
-**Docker Container Health — All 10 containers running with healthchecks:**
-
-```
-NAME                         STATUS
-triage-clickhouse-1          Up 2 hours (healthy)
-triage-cloudflared-1         Up About an hour
-triage-langfuse-postgres-1   Up 2 hours (healthy)
-triage-langfuse-web-1        Up 2 minutes (health: starting)
-triage-langfuse-worker-1     Up 2 minutes (health: starting)
-triage-libsql-1              Up 6 minutes (healthy)
-triage-minio-1               Up 2 hours (healthy)
-triage-redis-1               Up 2 hours (healthy)
-triage-runtime-1             Up 4 minutes (healthy)
-triage-vite-1                Up 6 minutes
-```
-
-### Screenshots
-
-**Langfuse Dashboard — Project Overview (model costs, trace count, usage graph):**
-
-![Langfuse Dashboard](docs/evidence/04-langfuse-dashboard.png)
-
-**Langfuse Traces — End-to-end trace listing with agent calls:**
-
-![Langfuse Traces](docs/evidence/05-langfuse-traces.png)
-
-**Docker Container Health — All 10 containers running with healthchecks:**
-
-```
-NAME                         STATUS
-triage-clickhouse-1          Up 2 hours (healthy)
-triage-cloudflared-1         Up About an hour
-triage-langfuse-postgres-1   Up 2 hours (healthy)
-triage-langfuse-web-1        Up 2 minutes (health: starting)
-triage-langfuse-worker-1     Up 2 minutes (health: starting)
-triage-libsql-1              Up 6 minutes (healthy)
-triage-minio-1               Up 2 hours (healthy)
-triage-redis-1               Up 2 hours (healthy)
-triage-runtime-1             Up 4 minutes (healthy)
-triage-vite-1                Up 6 minutes
-```
 
 ---
 
@@ -403,7 +355,7 @@ Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'
 
 Single-origin architecture: Caddy reverse-proxies `/api/*`, `/chat`, `/health`, and `/auth/*` to `runtime:4111` on the internal Docker network. The browser sees only one origin — no CORS configuration needed, and session cookies work without SameSite exceptions.
 
-### Email Security (resend.ts)
+### Email Security
 
 - **HTML escaping:** `escapeHtml(s)` replaces `&`, `<`, `>`, `"`, `'` with HTML entities in all user-supplied strings before they enter email templates, preventing XSS via email content
 - **URL safety validation:** `safeHref(url)` enforces that all links start with `https://`; any other scheme is replaced with `#`
@@ -433,62 +385,6 @@ External service failures never block triage:
 - `runtime/src/mastra/tools/resend.test.ts` — verifies graceful degradation when API key is absent, idempotency-key usage, and PII masking in log output
 - `tests/infra-docker/env-config.test.ts` — verifies documented integration env vars and missing-key behavior at startup
 - `tests/infra-docker/*.test.ts` — validates infrastructure security properties: network isolation, port binding, healthcheck presence, and container configuration
-
-### Screenshots
-
-**Caddy Security Headers (from Caddyfile — applied to all responses):**
-
-```
-Strict-Transport-Security "max-age=31536000; includeSubDomains"
-X-Content-Type-Options "nosniff"
-X-Frame-Options "DENY"
-Referrer-Policy "strict-origin-when-cross-origin"
-Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'"
-```
-
-**Login Page — Better Auth with email/password, HttpOnly session cookies:**
-
-![Login Page](docs/evidence/01-login-page.png)
-
-**Chat UI — Multimodal input with file attachments, error boundary on agent failure:**
-
-![Chat UI](docs/evidence/07-chat-incident-submitted.png)
-
-**Kanban Board — Linear integration with live issue data:**
-
-![Kanban Board](docs/evidence/08-board-kanban.png)
-
-**Test Suite Results (484 passing, 17 skipped due to missing helm binary):**
-
-Full test output in `docs/evidence/test-results.txt`.
-
-### Screenshots
-
-**Caddy Security Headers (from Caddyfile — applied to all responses):**
-
-```
-Strict-Transport-Security "max-age=31536000; includeSubDomains"
-X-Content-Type-Options "nosniff"
-X-Frame-Options "DENY"
-Referrer-Policy "strict-origin-when-cross-origin"
-Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'"
-```
-
-**Login Page — Better Auth with email/password, HttpOnly session cookies:**
-
-![Login Page](docs/evidence/01-login-page.png)
-
-**Chat UI — Multimodal input with file attachments, error boundary on agent failure:**
-
-![Chat UI](docs/evidence/07-chat-incident-submitted.png)
-
-**Kanban Board — Linear integration with live issue data:**
-
-![Kanban Board](docs/evidence/08-board-kanban.png)
-
-**Test Suite Results (484 passing, 17 skipped due to missing helm binary):**
-
-Full test output in `docs/evidence/test-results.txt`.
 
 ---
 

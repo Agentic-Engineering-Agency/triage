@@ -1,0 +1,131 @@
+---
+title: OpenRouter
+description: LLM API routing — model chains, fallback strategies, and vision model configuration
+---
+
+All LLM calls in Triage go through [OpenRouter](https://openrouter.ai). OpenRouter provides a unified API for 200+ models, automatic fallback routing, and per-model cost tracking. A single `OPENROUTER_API_KEY` covers all models used by all agents.
+
+## Configuration
+
+```bash
+OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+This is the **only required** environment variable. The runtime exits immediately at startup if it is not set.
+
+## Model Chains
+
+Models are defined in `runtime/src/lib/config.ts` and organized into three fallback chains:
+
+### Orchestrator Chain
+
+Used by the main orchestrator agent.
+
+| Position | Model ID | Notes |
+|----------|----------|-------|
+| Primary | `minimax/minimax-m2.7-20260318` | MiniMax M2.7 — long context, strong reasoning |
+| Fallback 1 | `qwen/qwen3-235b-a22b:free` | Qwen3 235B (free tier) — strong fallback |
+| Fallback 2 | `minimax/minimax-m2.5-20260211:free` | MiniMax M2.5 (free tier) — last resort |
+
+### Sub-Agent Chain
+
+Used by all three Mercury-based agents (triage-agent, resolution-reviewer, code-review-agent).
+
+| Position | Model ID | Notes |
+|----------|----------|-------|
+| Primary | `inception/mercury-2` | Mercury-2 — fast, structured output, text-only |
+| Fallback | `openrouter/auto` | OpenRouter auto-router — picks the best available free model |
+
+### Vision Chain
+
+Used for multimodal processing (attachment descriptions, screenshot analysis).
+
+| Position | Model ID | Notes |
+|----------|----------|-------|
+| Primary | `google/gemma-4-31b-it:free` | Gemma 4 31B (free tier) — multimodal |
+| Fallback 1 | `google/gemma-4-31b-it` | Gemma 4 31B (paid) — when free tier is rate-limited |
+| Fallback 2 | `openrouter/auto` | OpenRouter auto-router |
+
+## Fallback Strategy
+
+The orchestrator uses OpenRouter's native `route: 'fallback'` strategy, which is passed as extra body parameters:
+
+```typescript
+model: openrouter(MODELS.orchestrator, {
+  extraBody: {
+    models: MODEL_CHAINS.orchestrator,  // ['minimax/minimax-m2.7-20260318', ...]
+    route: 'fallback',
+  },
+})
+```
+
+With `route: 'fallback'`, OpenRouter automatically tries the next model in the `models` array if the previous one returns a rate limit error or is unavailable. This happens transparently at the OpenRouter API level — no retry logic is needed in the application code.
+
+Sub-agents use the `subAgent` chain in the same way:
+
+```typescript
+model: openrouter(MODELS.mercury)
+// Sub-agent fallback is handled by the MODEL_CHAINS.subAgent array
+```
+
+## Model Notes
+
+### MiniMax M2.7 (`minimax/minimax-m2.7-20260318`)
+
+The primary orchestrator model. Selected for:
+- Long context window (supports 8192 token `maxTokens` output)
+- Strong multi-turn conversation capability
+- Good tool-calling reliability
+- Support for the `models` + `route: 'fallback'` extra body
+
+### Mercury-2 (`inception/mercury-2`)
+
+The primary model for all sub-agents. Selected for:
+- Fast inference (low latency for structured output generation)
+- Strong structured JSON output (critical for triage schema compliance)
+- Text-only (does not attempt image processing)
+- Suitable for reasoning-intensive tasks (root cause analysis, code review)
+
+### Gemma 4 31B (`google/gemma-4-31b-it:free`)
+
+The vision model for image and attachment processing. Selected for:
+- Native multimodal support (text + images)
+- Free tier availability with paid fallback
+- Sufficient capability for screenshot and dashboard description
+
+### OpenRouter Auto (`openrouter/auto`)
+
+The last-resort fallback router. OpenRouter selects the best available free model dynamically. Used when all primary/fallback models are unavailable.
+
+## Cost Tracking
+
+Because all models route through OpenRouter, token usage and costs are visible in:
+1. **OpenRouter dashboard** — per-model cost breakdown
+2. **Langfuse traces** — per-generation token counts (if Langfuse is configured)
+
+Each LLM call's token count is recorded in the Langfuse trace, enabling cost attribution by agent, workflow step, and incident.
+
+## Adding a New Model
+
+To add a new model to a fallback chain, update `MODEL_CHAINS` in `runtime/src/lib/config.ts`:
+
+```typescript
+export const MODEL_CHAINS = {
+  orchestrator: [
+    MODELS.orchestrator,
+    MODELS.orchestratorFallback1,
+    MODELS.orchestratorFallback2,
+    'new-model/model-id',              // add here
+  ],
+  // ...
+}
+```
+
+Then add a named constant to `MODELS` for discoverability:
+
+```typescript
+export const MODELS = {
+  // ...
+  newModel: 'new-model/model-id',
+}
+```

@@ -1,0 +1,13 @@
+{
+  "title": "Triage Docs",
+  "pages": [
+    "index",
+    "hackathon",
+    "getting-started",
+    "architecture",
+    "agents",
+    "integrations",
+    "reference"
+  ]
+}
+

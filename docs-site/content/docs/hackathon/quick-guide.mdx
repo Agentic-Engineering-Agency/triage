@@ -1,4 +1,7 @@
-# Quick Start Guide — Triage
+---
+title: QUICKGUIDE.md
+description: Get the full Triage system running locally in about 5 minutes — step-by-step setup, verification checklist, and troubleshooting.
+---
 
 Get the full Triage system running locally in about 5 minutes.
 
@@ -39,7 +42,7 @@ Open `.env` and set at minimum these four variables:
 | `RESEND_API_KEY` | Yes | [resend.com](https://resend.com) → API Keys |
 | `BETTER_AUTH_SECRET` | Yes | Any random 32+ character string |
 | `RESEND_FROM_EMAIL` | Recommended | A verified sender address on your Resend domain |
-| `CLOUDFLARE_TUNNEL_TOKEN` | Optional | Cloudflare Tunnel token for exposing Langfuse publicly. Get with: `cloudflared tunnel token triage-hackathon` |
+| `CLOUDFLARE_TUNNEL_TOKEN` | Optional | Cloudflare Tunnel token for public Langfuse access. Get with: `cloudflared tunnel token triage-hackathon` |
 
 The full `.env.example` documents all 38 variables with descriptions and defaults.
 
@@ -98,22 +101,29 @@ Connects to the LibSQL instance at `localhost:8080` for schema inspection and di
 ## Troubleshooting
 
 **Port conflict on 3001 or 3000**
+
 Change `CADDY_PORT` or `LANGFUSE_PORT` in `.env` before starting.
 
 **Docker build fails**
+
 Ensure Docker Desktop is running with at least 4 GB RAM allocated. On Linux, confirm the Docker daemon is active: `systemctl status docker`.
 
 **A container is unhealthy or keeps restarting**
+
 Check its logs: `docker compose logs -f <service-name>`. The most common cause is a missing or incorrect env var.
 
 **`CHANGEME` values still in .env**
+
 The runtime will refuse to start if required secrets are not set. Search your `.env` for `CHANGEME` and replace every occurrence.
 
 **Database connection errors on first boot**
+
 LibSQL takes a few seconds to initialize. Wait 10–15 seconds after all containers report healthy, then retry.
 
 **Email not arriving**
+
 Verify `RESEND_API_KEY` is valid and `RESEND_FROM_EMAIL` matches a verified sender domain in your Resend account.
 
 **Linear ticket not created**
+
 Check that `LINEAR_API_KEY` has write access and that `LINEAR_TEAM_ID` in `.env` matches an existing team. If Linear is unreachable, Triage falls back to storing tickets in the local `local_tickets` table — check the runtime logs for the fallback message.

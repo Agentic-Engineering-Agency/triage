@@ -1,8 +1,13 @@
+---
+title: README.md
+description: Project overview, architecture, quick start, tech stack, agents, and team for Triage.
+---
+
 # Triage — AI-Powered SRE Incident Triage Agent
 
 AI agent that triages SRE incidents for Solidus/Rails e-commerce: describe the incident, get a root-cause analysis, a Linear ticket, and an email notification — all in one chat session.
 
-[Demo Video (YouTube)](https://youtube.com/watch?v=TODO) #AgentXHackathon
+[Demo Video (YouTube)](https://youtube.com/watch?v=TODO) — #AgentXHackathon
 
 ## What Is Triage?
 
@@ -13,8 +18,6 @@ The agent queries a codebase knowledge base via vector search (llm-wiki RAG), id
 The full system runs on a single `docker compose up --build` from a clean clone. Ten containers start behind a Caddy reverse proxy that eliminates CORS and handles all security headers. Observability is provided by a self-hosted Langfuse stack with LLM traces, token cost tracking, and latency metrics — exposed externally via a Cloudflare Tunnel at `https://langfuse.agenticengineering.lat`.
 
 ## Architecture
-
-<img src="docs/diagrams/architecture-overview.svg" alt="Architecture Overview" />
 
 ```mermaid
 graph TD
@@ -65,24 +68,24 @@ Open [http://localhost:3000](http://localhost:3000) for the Langfuse observabili
 | `RESEND_API_KEY` | Email notifications |
 | `BETTER_AUTH_SECRET` | Session signing (any 32+ char random string) |
 
-See [`.env.example`](./.env.example) for all 38 documented variables. See [`QUICKGUIDE.md`](./QUICKGUIDE.md) for detailed setup and troubleshooting.
+See `.env.example` for all 38 documented variables. See the [Quick Guide](/docs/hackathon/quick-guide) for detailed setup and troubleshooting.
 
 ## Tech Stack
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Agent Framework | [Mastra](https://mastra.ai) v1.23 | Multi-agent orchestration, durable workflows, tool system |
-| Database | [LibSQL](https://turso.tech/libsql) (sqld) | App data, vector embeddings (F32_BLOB + DiskANN), workflow state |
-| ORM | [Drizzle](https://orm.drizzle.team) | Type-safe SQL, schema management, migrations |
-| Auth | [Better Auth](https://www.better-auth.com) | Session-based auth with HttpOnly cookies |
-| Observability | [Langfuse](https://langfuse.com) v3 | LLM traces, token cost tracking, latency metrics |
-| LLM Gateway | [OpenRouter](https://openrouter.ai) | Multimodal LLM access with 3-model fallback routing |
-| Frontend | [TanStack Router](https://tanstack.com/router) + [React](https://react.dev) | File-based SPA routing with lazy loading |
-| AI UI | [AI SDK](https://sdk.vercel.ai) + [AI SDK Elements](https://sdk.vercel.ai/docs/ai-sdk-ui/chatbot-with-tool-use) | Chat streaming (SSE), generative UI components |
-| Reverse Proxy | [Caddy](https://caddyserver.com) v2 | Single-origin architecture, security headers, SSE support |
-| UI Components | [shadcn/ui](https://ui.shadcn.com) | Radix-based accessible component library |
-| Ticketing | [Linear](https://linear.app) SDK | Issue creation, assignment, status tracking, webhooks |
-| Email | [Resend](https://resend.com) | Transactional email notifications |
+| Agent Framework | Mastra v1.23 | Multi-agent orchestration, durable workflows, tool system |
+| Database | LibSQL (sqld) | App data, vector embeddings (F32_BLOB + DiskANN), workflow state |
+| ORM | Drizzle | Type-safe SQL, schema management, migrations |
+| Auth | Better Auth | Session-based auth with HttpOnly cookies |
+| Observability | Langfuse v3 | LLM traces, token cost tracking, latency metrics |
+| LLM Gateway | OpenRouter | Multimodal LLM access with 3-model fallback routing |
+| Frontend | TanStack Router + React | File-based SPA routing with lazy loading |
+| AI UI | AI SDK + AI SDK Elements | Chat streaming (SSE), generative UI components |
+| Reverse Proxy | Caddy v2 | Single-origin architecture, security headers, SSE support |
+| UI Components | shadcn/ui | Radix-based accessible component library |
+| Ticketing | Linear SDK | Issue creation, assignment, status tracking, webhooks |
+| Email | Resend | Transactional email notifications |
 
 ## Agents
 
@@ -97,11 +100,9 @@ See [`.env.example`](./.env.example) for all 38 documented variables. See [`QUIC
 
 | Document | Description |
 |----------|-------------|
-| [`AGENTS_USE.md`](./AGENTS_USE.md) | Agent implementation, architecture, observability, security |
-| [`SCALING.md`](./SCALING.md) | Docker → Kubernetes migration path, cost projections |
-| [`QUICKGUIDE.md`](./QUICKGUIDE.md) | Setup, verification, and troubleshooting |
-| [`.env.example`](./.env.example) | 38 documented environment variables with placeholders and comments |
-| [`docs/linear-resend-integration-assessment.md`](./docs/linear-resend-integration-assessment.md) | Design and implementation notes for the Linear and Resend tool layer |
+| [Agents & Implementation](/docs/hackathon/agents-use) | Agent implementation, architecture, observability, security |
+| [Scaling](/docs/hackathon/scaling) | Docker → Kubernetes migration path, cost projections |
+| [Quick Guide](/docs/hackathon/quick-guide) | Setup, verification, and troubleshooting |
 | [Live deployment](https://triage.agenticengineering.lat) | Hosted demo instance |
 
 ## Team
@@ -114,7 +115,3 @@ See [`.env.example`](./.env.example) for all 38 documented variables. See [`QUIC
 | **Chenko** | Frontend | TanStack SPA, chat UI, auth flow |
 
 Built for the AgentX Hackathon 2026.
-
-## License
-
-[MIT](./LICENSE)

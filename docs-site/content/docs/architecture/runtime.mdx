@@ -1,0 +1,181 @@
+---
+title: Runtime
+description: Mastra v1.24 on Hono — agents, workflows, tools, and API routes
+---
+
+The runtime is the backend of Triage. It runs **Mastra** (a TypeScript agent framework) on its built-in **Hono** HTTP server. There is no Express layer — Mastra IS the server.
+
+## Technology Stack
+
+| Technology | Version | Role |
+|------------|---------|------|
+| Mastra | v1.24 | Agent framework, workflow engine, HTTP server |
+| Hono | (via Mastra) | HTTP framework underlying Mastra's server |
+| TypeScript | 5+ | Language, strict mode |
+| Zod | 3+ | Schema validation at all data boundaries |
+| Better Auth | Latest | Authentication (session management, user accounts) |
+| LibSQL (`@mastra/libsql`) | Latest | Storage driver for workflow state and conversation memory |
+| OpenRouter AI SDK | Latest | LLM provider abstraction |
+
+## Registered Agents
+
+Four agents are registered in `runtime/src/mastra/index.ts`:
+
+```typescript
+agents: {
+  orchestrator,
+  'triage-agent': triageAgent,
+  'resolution-reviewer': resolutionReviewer,
+  'code-review-agent': codeReviewAgent,
+}
+```
+
+| Agent Key | Model | Role |
+|-----------|-------|------|
+| `orchestrator` | MiniMax M2.7 (3-model fallback) | Main entry point; routes user messages, calls tools, presents triage cards |
+| `triage-agent` | Mercury-2 | Deep incident analysis via RAG; produces structured triage output |
+| `resolution-reviewer` | Mercury-2 | Webhook-triggered fix verification; returns close/reopen/monitor verdict |
+| `code-review-agent` | Mercury-2 | CodeRabbit-inspired PR and diff review; two review profiles |
+
+## Registered Workflow
+
+One workflow is registered:
+
+```typescript
+workflows: {
+  'triage-workflow': triageWorkflow,
+}
+```
+
+The `triage-workflow` steps: `intake` → `triage` → `dedup` → `ticket` → `notify` → `suspend` → `review` → `resolve`.
+
+## Storage
+
+```typescript
+storage: new LibSQLStore({
+  id: 'triage-main',
+  url: process.env.LIBSQL_URL || 'http://libsql:8080',
+})
+```
+
+`LibSQLStore` persists workflow run snapshots to LibSQL, enabling the `suspend` → `resume` pattern used for webhook-triggered resolution review.
+
+## Conversation Memory
+
+The orchestrator uses `MemoryLibSQL` for per-thread conversation history:
+
+```typescript
+const memory = new MemoryLibSQL({
+  url: process.env.LIBSQL_URL || 'http://libsql:8080',
+});
+```
+
+Each chat session gets a `threadId`. Messages are stored in LibSQL and retrieved on subsequent requests, giving the orchestrator context across multiple turns.
+
+## Model Configuration
+
+Models are defined in `runtime/src/lib/config.ts`:
+
+```typescript
+export const MODELS = {
+  orchestrator: 'minimax/minimax-m2.7-20260318',
+  orchestratorFallback1: 'qwen/qwen3-235b-a22b:free',
+  orchestratorFallback2: 'minimax/minimax-m2.5-20260211:free',
+  mercury: 'inception/mercury-2',
+  vision: 'google/gemma-4-31b-it:free',
+  visionFallback: 'google/gemma-4-31b-it',
+  freeRouter: 'openrouter/auto',
+}
+```
+
+Fallback chains:
+
+| Chain | Models (in order) |
+|-------|------------------|
+| `orchestrator` | MiniMax M2.7 → Qwen3 235B (free) → MiniMax M2.5 (free) |
+| `subAgent` | Mercury-2 → openrouter/auto |
+| `vision` | Gemma 4 31B (free) → Gemma 4 31B (paid) → openrouter/auto |
+
+## API Routes
+
+Eleven routes are registered on the Mastra server (see [API Routes reference](/docs/reference/api-routes) for full details):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/chat` | AI SDK streaming chat — connects to orchestrator |
+| ALL | `/auth/*` | Better Auth handler (login, register, session) |
+| GET | `/api/linear/issues` | Fetch issues grouped by state |
+| GET | `/api/linear/cycle/active` | Current active cycle with progress |
+| GET | `/api/linear/members` | Team members list |
+| POST | `/api/wiki/generate` | Start wiki generation from a repo URL |
+| GET | `/api/wiki/status` | Wiki generation progress |
+| POST | `/api/linear/webhook/setup` | Register Linear webhook for this deployment |
+| POST | `/api/webhooks/linear` | Receive Linear webhooks and resume suspended workflows |
+| POST | `/api/workflows/triage-workflow/trigger` | Trigger triage workflow directly |
+
+## Orchestrator Configuration
+
+The orchestrator is the most fully-featured agent with 11 registered tools and one sub-agent:
+
+```typescript
+new Agent({
+  model: openrouter(MODELS.orchestrator, {
+    extraBody: {
+      models: MODEL_CHAINS.orchestrator,  // fallback chain
+      route: 'fallback',
+    },
+  }),
+  memory,                                  // MemoryLibSQL for conversation history
+  defaultGenerateOptions: {
+    maxTokens: 8192,
+  },
+  agents: {
+    codeReviewAgent,                       // callable as tool: agent-codeReviewAgent
+  },
+  tools: {
+    createLinearIssueTool,
+    updateLinearIssueTool,
+    getLinearIssueTool,
+    listLinearIssuesTool,
+    getTeamMembersTool,
+    sendTicketEmailTool,
+    sendResolutionEmailTool,
+    queryWikiTool,
+    processAttachmentsTool,
+    displayTriageTool,
+    displayDuplicateTool,
+  },
+})
+```
+
+## Error Handling Convention
+
+Every Mastra tool wraps its body in a `try/catch` and returns a typed error object on failure:
+
+```typescript
+// Success
+return { success: true, data: result }
+
+// Failure
+return { success: false, error: "Human-readable error message" }
+```
+
+Internal code can throw freely — there is one catch per tool, not one per database query. This keeps error handling readable and avoids deeply nested try/catch blocks.
+
+## Environment Validation
+
+The runtime validates all required environment variables at startup via Zod:
+
+```typescript
+const envSchema = z.object({
+  PORT: z.string().default('4111'),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('production'),
+  LIBSQL_URL: z.string().url().default('http://libsql:8080'),
+  OPENROUTER_API_KEY: z.string().min(1, 'OPENROUTER_API_KEY is required'),
+  LINEAR_API_KEY: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  // ...
+})
+```
+
+If `OPENROUTER_API_KEY` is missing, the process exits with a clear error message before accepting any requests.

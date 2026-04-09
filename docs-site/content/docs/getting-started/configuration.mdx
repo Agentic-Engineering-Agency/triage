@@ -1,0 +1,137 @@
+---
+title: Configuration
+description: All environment variables for the Triage stack, grouped by category
+---
+
+Triage is configured entirely through environment variables defined in `.env`. Copy `.env.example` to `.env` and fill in the values for your environment. Variables marked **Required** will cause the runtime to exit on startup if missing or invalid — validated via Zod at boot time.
+
+## App Configuration
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `PORT` | Optional | HTTP port for the Mastra runtime | `4111` |
+| `NODE_ENV` | Optional | Runtime environment (`development`, `production`, `test`) | `production` |
+| `LIBSQL_URL` | Optional | LibSQL HTTP endpoint | `http://libsql:8080` |
+| `FRONTEND_MODE` | Optional | Caddy mode: `static` (prod, serves built SPA) or `dev` (proxies to Vite HMR) | `static` |
+| `CADDY_PORT` | Optional | Port Caddy listens on | `3001` |
+| `RUNTIME_HOST` | Optional | Hostname Caddy reverse-proxies to | `runtime` |
+| `RUNTIME_PORT` | Optional | Port Caddy reverse-proxies to | `4111` |
+
+## Authentication (Better Auth)
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `BETTER_AUTH_SECRET` | **Required** | Secret key for Better Auth session signing. Generate with `openssl rand -hex 32` | — |
+| `BETTER_AUTH_URL` | Optional | Public URL of the app, used for auth redirects | `http://localhost:3001` |
+
+## LLM / AI (OpenRouter)
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `OPENROUTER_API_KEY` | **Required** | OpenRouter API key. All LLM calls go through OpenRouter. Get one at openrouter.ai/settings/keys | — |
+
+## Integrations: Linear
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `LINEAR_API_KEY` | Optional | Linear Personal API key. Required for ticket creation and management. Without it, tickets fall back to the local `local_tickets` LibSQL table | — |
+
+## Integrations: GitHub
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `GITHUB_TOKEN` | Optional | GitHub Personal Access Token (repo scope). Used by the Code Review agent for PR-aware triage context | — |
+
+## Integrations: Resend (Email)
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `RESEND_API_KEY` | Optional | Resend API key. Required for email notifications to assignees and reporters | — |
+| `RESEND_FROM_EMAIL` | Optional | Verified sender address for outbound notifications. Must be a valid email from a domain verified in Resend | `triage@agenticengineering.lat` |
+
+## Integrations: Slack (Stub)
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `SLACK_BOT_TOKEN` | Optional | Slack bot OAuth token. Stub integration — not yet active | — |
+| `SLACK_CHANNEL_ID` | Optional | Slack channel for incident notifications | — |
+| `SLACK_SIGNING_SECRET` | Optional | Slack signing secret for webhook verification | — |
+
+## Integrations: Jira (Stub)
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `JIRA_BASE_URL` | Optional | Jira instance URL (e.g. `https://your-domain.atlassian.net`). Stub integration | — |
+| `JIRA_EMAIL` | Optional | Jira account email | — |
+| `JIRA_API_TOKEN` | Optional | Jira API token | — |
+
+## Langfuse Core
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `LANGFUSE_PUBLIC_KEY` | Optional | Langfuse project public key (from the init vars below) | — |
+| `LANGFUSE_SECRET_KEY` | Optional | Langfuse project secret key | — |
+| `LANGFUSE_BASEURL` | Optional | Langfuse base URL the runtime connects to | `https://langfuse.agenticengineering.lat` |
+| `ENCRYPTION_KEY` | **Required** | 64-char hex key for Langfuse data encryption. Generate with `openssl rand -hex 32` | — |
+| `SALT` | **Required** | 64-char hex salt for Langfuse password hashing | — |
+| `NEXTAUTH_SECRET` | **Required** | Secret for Langfuse's NextAuth sessions | — |
+| `NEXTAUTH_URL` | Optional | Public URL of the Langfuse web UI | `http://localhost:3000` |
+| `TELEMETRY_ENABLED` | Optional | Enable Langfuse usage telemetry | `true` |
+| `LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES` | Optional | Enable Langfuse experimental features | `false` |
+
+## Langfuse Headless Init
+
+These variables auto-create an org, project, and admin user on first boot. After the first startup, they can be removed (the data persists in Postgres).
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `LANGFUSE_INIT_ORG_ID` | Optional | Organization ID to create | `triage-org` |
+| `LANGFUSE_INIT_ORG_NAME` | Optional | Organization display name | `Triage SRE` |
+| `LANGFUSE_INIT_PROJECT_ID` | Optional | Project ID to create | `triage-project` |
+| `LANGFUSE_INIT_PROJECT_NAME` | Optional | Project display name | `Triage Agent` |
+| `LANGFUSE_INIT_PROJECT_PUBLIC_KEY` | Optional | Public key to assign to the project. Use this as `LANGFUSE_PUBLIC_KEY` | — |
+| `LANGFUSE_INIT_PROJECT_SECRET_KEY` | Optional | Secret key to assign to the project. Use this as `LANGFUSE_SECRET_KEY` | — |
+| `LANGFUSE_INIT_USER_EMAIL` | Optional | Admin user email | `admin@agenticengineering.lat` |
+| `LANGFUSE_INIT_USER_NAME` | Optional | Admin user display name | `Admin` |
+| `LANGFUSE_INIT_USER_PASSWORD` | Optional | Admin user password | — |
+
+## Langfuse Infrastructure
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `CLICKHOUSE_PASSWORD` | **Required** | ClickHouse server password | — |
+| `REDIS_AUTH` | **Required** | Redis authentication password | — |
+| `MINIO_ROOT_USER` | Optional | MinIO root user name | `minio` |
+| `MINIO_ROOT_PASSWORD` | **Required** | MinIO root password | — |
+| `LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` | **Required** | MinIO secret key for event uploads | — |
+| `LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY` | **Required** | MinIO secret key for media uploads | — |
+| `LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY` | **Required** | MinIO secret key for batch exports | — |
+| `LANGFUSE_S3_BATCH_EXPORT_ENABLED` | Optional | Enable S3 batch export | `false` |
+
+## Postgres (Langfuse Backend)
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `POSTGRES_USER` | Optional | Postgres superuser name | `postgres` |
+| `POSTGRES_PASSWORD` | **Required** | Postgres superuser password | — |
+| `POSTGRES_DB` | Optional | Database name | `langfuse` |
+
+## Cloudflare Tunnel
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `CLOUDFLARE_TUNNEL_TOKEN` | Optional | Token for the `cloudflared` container. Exposes Langfuse at `https://langfuse.agenticengineering.lat`. Obtain with: `cloudflared tunnel token triage-hackathon` | — |
+
+## Generating Secrets
+
+Several variables require strong random values. Use OpenSSL to generate them:
+
+```bash
+# 32-byte hex string (recommended for most secrets)
+openssl rand -hex 32
+
+# Generate multiple at once
+for var in BETTER_AUTH_SECRET ENCRYPTION_KEY SALT NEXTAUTH_SECRET; do
+  echo "$var=$(openssl rand -hex 32)"
+done
+```

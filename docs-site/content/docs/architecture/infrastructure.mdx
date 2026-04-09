@@ -1,0 +1,242 @@
+---
+title: Infrastructure
+description: Docker Compose deep-dive — all ten services, networks, volumes, and healthchecks
+---
+
+All infrastructure is defined in `docker-compose.yml` at the project root, with `docker-compose.override.yml` applied automatically in dev mode.
+
+## Services
+
+### frontend
+
+```yaml
+build: { context: ., dockerfile: Dockerfile.frontend }
+ports: ["127.0.0.1:3001:3001"]
+depends_on:
+  runtime: { condition: service_healthy }
+healthcheck:
+  test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3001"]
+  interval: 10s | timeout: 5s | retries: 3
+networks: [app]
+volumes: [./config.json:/srv/config.json:ro]
+```
+
+Caddy serves the React SPA on port 3001. In production mode, Caddy reads pre-built static files from the image. In dev mode (via override), Caddy reverse-proxies to the Vite HMR server. The `config.json` volume provides runtime configuration to the browser.
+
+### runtime
+
+```yaml
+build: { context: ., dockerfile: Dockerfile.runtime }
+ports: ["127.0.0.1:4111:4111"]
+depends_on:
+  libsql: { condition: service_healthy }
+env_file: [.env]
+healthcheck:
+  test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:4111/health"]
+  interval: 10s | timeout: 5s | retries: 5 | start_period: 15s
+networks: [app, langfuse]
+```
+
+The runtime joins both networks: `app` for LibSQL access and `langfuse` for sending traces to Langfuse. The 15-second `start_period` accounts for TypeScript compilation or dependency initialization time.
+
+### libsql
+
+```yaml
+image: ghcr.io/tursodatabase/libsql-server:v0.24.32
+platform: linux/amd64
+ports:
+  - "127.0.0.1:8080:8080"   # HTTP API
+  - "127.0.0.1:5001:5001"   # gRPC
+environment:
+  SQLD_NODE: primary
+  SQLD_HTTP_LISTEN_ADDR: 0.0.0.0:8080
+  SQLD_GRPC_LISTEN_ADDR: 0.0.0.0:5001
+volumes: [libsql_data:/var/lib/sqld]
+healthcheck:
+  test: bash -c 'echo > /dev/tcp/127.0.0.1/8080'
+  interval: 10s | timeout: 5s | retries: 5 | start_period: 10s
+networks: [app]
+```
+
+LibSQL runs as a primary node. Data is persisted in the named volume `libsql_data`. The healthcheck uses a TCP connection test rather than HTTP — LibSQL's HTTP API is not always immediately available during cold starts.
+
+### langfuse-web
+
+```yaml
+image: langfuse/langfuse:3.167.0
+ports: ["127.0.0.1:3000:3000"]
+depends_on:
+  langfuse-postgres: healthy
+  clickhouse: healthy
+  redis: healthy
+  minio: healthy
+healthcheck:
+  test: curl -sf http://127.0.0.1:3000/api/public/health
+  interval: 15s | timeout: 5s | retries: 10 | start_period: 60s
+networks: [langfuse]
+```
+
+Langfuse web UI and REST API. The 60-second `start_period` is intentional — Langfuse runs database migrations and headless init on first boot, which takes time. The headless init vars (`LANGFUSE_INIT_*`) auto-create the org, project, and admin user.
+
+### langfuse-worker
+
+```yaml
+image: langfuse/langfuse-worker:3.167.0
+ports: ["127.0.0.1:3030:3030"]
+depends_on: (same as langfuse-web)
+healthcheck:
+  test: curl -sf http://127.0.0.1:3030/api/health
+  interval: 15s | timeout: 5s | retries: 10 | start_period: 30s
+networks: [langfuse]
+```
+
+Background job processor for Langfuse. Handles async trace ingestion, batch exports, and media uploads.
+
+### clickhouse
+
+```yaml
+image: clickhouse/clickhouse-server:24.8.9.95
+ports:
+  - "127.0.0.1:8123:8123"   # HTTP interface
+  - "127.0.0.1:9000:9000"   # native TCP interface
+environment:
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+volumes:
+  - langfuse_clickhouse_data:/var/lib/clickhouse
+  - langfuse_clickhouse_logs:/var/log/clickhouse-server
+healthcheck:
+  test: wget --spider http://127.0.0.1:8123/ping
+  interval: 10s | timeout: 5s | retries: 3 | start_period: 30s
+networks: [langfuse]
+```
+
+OLAP database used by Langfuse to store trace event data. ClickHouse is optimized for large-scale time-series and analytical queries over LLM traces.
+
+### redis
+
+```yaml
+image: redis:7.4-alpine
+ports: ["127.0.0.1:6379:6379"]
+command: redis-server --requirepass ${REDIS_AUTH} --maxmemory-policy noeviction
+volumes: [langfuse_redis_data:/data]
+healthcheck:
+  test: redis-cli -a ${REDIS_AUTH} --no-auth-warning ping
+  interval: 10s | timeout: 5s | retries: 3
+networks: [langfuse]
+```
+
+Redis serves as the queue and cache layer for the Langfuse worker. `noeviction` policy ensures data is never silently dropped under memory pressure.
+
+### minio
+
+```yaml
+image: minio/minio:RELEASE.2025-09-07T02-35-49Z
+ports:
+  - "127.0.0.1:9090:9000"   # S3 API
+  - "127.0.0.1:9091:9001"   # MinIO console UI
+command: -c "mkdir -p /data/langfuse && minio server --address ':9000' --console-address ':9001' /data"
+volumes: [langfuse_minio_data:/data]
+healthcheck:
+  test: curl -f http://127.0.0.1:9000/minio/health/ready
+  interval: 10s | timeout: 5s | retries: 3
+networks: [langfuse]
+```
+
+S3-compatible object storage for Langfuse media uploads (screenshots, attachments) and batch exports. The `mkdir -p /data/langfuse` in the entrypoint ensures the bucket directory exists before MinIO starts.
+
+### langfuse-postgres
+
+```yaml
+image: postgres:17.9-alpine
+ports: ["127.0.0.1:5432:5432"]
+volumes: [langfuse_postgres_data:/var/lib/postgresql/data]
+environment:
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_DB: ${POSTGRES_DB:-langfuse}
+  TZ: UTC
+  PGTZ: UTC
+healthcheck:
+  test: pg_isready -U postgres
+  interval: 10s | timeout: 5s | retries: 3
+networks: [langfuse]
+```
+
+Relational database for Langfuse metadata: users, projects, organizations, settings. Timezone is explicitly set to UTC to ensure consistent timestamp handling.
+
+### cloudflared
+
+```yaml
+image: cloudflare/cloudflared:latest
+command: tunnel --protocol http2 run
+environment:
+  CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+depends_on:
+  langfuse-web: { condition: service_healthy }
+networks: [langfuse]
+restart: always
+```
+
+Cloudflare Tunnel that exposes Langfuse at `https://langfuse.agenticengineering.lat`. The tunnel is outbound-only — no ports are exposed to the host or the internet. Traffic enters via Cloudflare's global network and is forwarded to `langfuse-web:3000` inside the `langfuse` Docker network. Requires `CLOUDFLARE_TUNNEL_TOKEN` in `.env`, obtained by running `cloudflared tunnel token triage-hackathon`.
+
+## Networks
+
+```yaml
+networks:
+  app:
+    driver: bridge
+  langfuse:
+    driver: bridge
+```
+
+Two isolated bridge networks:
+- **`app`** — `frontend`, `runtime`, `libsql`
+- **`langfuse`** — `langfuse-web`, `langfuse-worker`, `clickhouse`, `redis`, `minio`, `langfuse-postgres`, `cloudflared`
+
+The `runtime` joins **both** networks, acting as the bridge between the application stack and the observability stack.
+
+## Named Volumes
+
+```yaml
+volumes:
+  libsql_data:
+  langfuse_postgres_data:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_minio_data:
+  langfuse_redis_data:
+```
+
+All stateful data uses named Docker volumes for persistence across container restarts. To reset the entire state (useful for development):
+
+```bash
+docker compose down -v    # removes all named volumes
+docker compose up --build
+```
+
+## Dev Mode Override
+
+`docker-compose.override.yml` is auto-applied when running `docker compose up` without specifying `-f`. It enables:
+
+```yaml
+# frontend: proxy to Vite HMR instead of serving static files
+environment:
+  FRONTEND_MODE: dev
+
+# runtime: tsx --watch for TypeScript hot reload
+command: npx tsx --watch src/index.ts
+```
+
+To use production mode locally (e.g., for demo recording):
+
+```bash
+docker compose -f docker-compose.yml up --build
+```
+
+## Restart Policy
+
+All services use `restart: always`. This means they automatically restart after crashes or Docker daemon restarts. In production, consider using `restart: unless-stopped` to prevent auto-start after manual `docker compose stop`.
+
+## Port Binding
+
+All ports are bound to `127.0.0.1` (localhost only). No ports are exposed on `0.0.0.0` — this means all services are inaccessible from external networks without explicit port forwarding or a reverse proxy in front of the host.
