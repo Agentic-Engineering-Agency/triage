@@ -106,7 +106,7 @@ services:
       - app
 
   langfuse-web:
-    image: langfuse/langfuse:3.22.0
+    image: langfuse/langfuse:3.167.0
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
@@ -141,7 +141,7 @@ services:
       - langfuse
 
   langfuse-worker:
-    image: langfuse/langfuse-worker:3.22.0
+    image: langfuse/langfuse-worker:3.167.0
     ports:
       - "127.0.0.1:3030:3030"
     depends_on:
@@ -166,7 +166,7 @@ services:
       - langfuse
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8.6
+    image: clickhouse/clickhouse-server:24.8.9.95
     ports:
       - "127.0.0.1:8123:8123"
       - "127.0.0.1:9000:9000"
@@ -202,7 +202,7 @@ services:
       - langfuse
 
   minio:
-    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     entrypoint: /bin/sh
     command: -c "mkdir -p /data/langfuse && minio server --address ':9000' --console-address ':9001' /data"
     ports:
@@ -223,7 +223,7 @@ services:
       - langfuse
 
   langfuse-postgres:
-    image: postgres:17.2-alpine
+    image: postgres:17.9-alpine
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
@@ -239,6 +239,18 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-langfuse}
       TZ: UTC
       PGTZ: UTC
+    restart: always
+    networks:
+      - langfuse
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --protocol http2 run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      langfuse-web:
+        condition: service_started
     restart: always
     networks:
       - langfuse
