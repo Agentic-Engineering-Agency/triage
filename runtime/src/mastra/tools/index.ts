@@ -35,3 +35,19 @@ export {
 export { queryWikiTool } from './wiki-query';
 
 export { generateWikiTool } from './wiki-generate';
+
+export {
+  createJiraIssue,
+  getJiraIssue,
+  updateJiraIssue,
+  transitionJiraIssue,
+  addJiraComment,
+  searchJiraIssues,
+  // Aliases for agent registrations
+  createJiraIssueTool,
+  getJiraIssueTool,
+  updateJiraIssueTool,
+  transitionJiraIssueTool,
+  addJiraCommentTool,
+  searchJiraIssuesTool,
+} from './jira';

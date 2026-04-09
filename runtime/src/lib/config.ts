@@ -24,6 +24,11 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().email().optional(),
 
+  // Jira Cloud (optional — required when Jira tools are actually called)
+  JIRA_BASE_URL: z.string().url().optional(),
+  JIRA_EMAIL: z.string().email().optional(),
+  JIRA_API_TOKEN: z.string().optional(),
+
   // Langfuse (optional — observability is not required for core function)
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_SECRET_KEY: z.string().optional(),
@@ -86,6 +91,11 @@ export const config = {
   LINEAR_API_KEY: process.env.LINEAR_API_KEY || undefined,
   RESEND_API_KEY: process.env.RESEND_API_KEY || undefined,
   RESEND_FROM_EMAIL: (fromEmail && z.string().email().safeParse(fromEmail).success) ? fromEmail : 'triage@agenticengineering.lat',
+
+  // Jira Cloud
+  JIRA_BASE_URL: process.env.JIRA_BASE_URL || undefined,
+  JIRA_EMAIL: process.env.JIRA_EMAIL || undefined,
+  JIRA_API_TOKEN: process.env.JIRA_API_TOKEN || undefined,
 };
 
 // ============================================================
