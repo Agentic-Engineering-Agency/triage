@@ -82,7 +82,29 @@ function ChatPage() {
             if (typeof content === "string") {
               parts = [{ type: "text", text: content }]
             } else if (content && typeof content === "object" && Array.isArray(content.parts)) {
-              parts = content.parts
+              // Convert DB format to UI format
+              parts = content.parts.flatMap((p: Record<string, unknown>) => {
+                // tool-invocation → tool-{toolName} (matches streaming format)
+                if (p.type === "tool-invocation") {
+                  const ti = p.toolInvocation as Record<string, unknown> | undefined
+                  if (!ti?.toolName) return []
+                  return [{
+                    type: `tool-${ti.toolName}`,
+                    state: ti.state === "result" ? "output-available" : "input-available",
+                    ...(ti.result !== undefined ? { output: ti.result } : {}),
+                  }]
+                }
+                // reasoning — extract text from details
+                if (p.type === "reasoning") {
+                  const details = p.details as Array<Record<string, unknown>> | undefined
+                  const text = details?.filter((d) => d.type === "text").map((d) => d.text).join("") || (p.reasoning as string) || ""
+                  if (!text) return []
+                  return [{ type: "reasoning", text }]
+                }
+                // skip step-start and other internal parts
+                if (p.type === "step-start" || p.type === "source") return []
+                return [p]
+              })
             } else if (content && typeof content === "object" && typeof content.content === "string") {
               parts = [{ type: "text", text: content.content }]
             } else {
