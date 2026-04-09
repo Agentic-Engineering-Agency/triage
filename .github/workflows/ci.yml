@@ -33,6 +33,8 @@ jobs:
           helm dependency build k8s/helm
       - run: npm ci
       - run: cd runtime && npm ci
+      - name: Apply DB schema
+        run: LIBSQL_URL=http://localhost:8080 ./runtime/node_modules/.bin/drizzle-kit push --config drizzle.config.ts --force
       - run: npm run test:infra
 
   runtime-tests:
