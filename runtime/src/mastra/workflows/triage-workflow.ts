@@ -1,5 +1,28 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows';
 import { z } from 'zod';
+import { triageAgent } from '../agents/triage-agent';
+import { resolutionReviewer } from '../agents/resolution-reviewer';
+import { codeReviewAgent } from '../agents/code-review-agent';
+import {
+  createLinearIssue,
+  updateLinearIssue,
+  getLinearIssue,
+  searchLinearIssues,
+  sendTicketNotification,
+  sendResolutionNotification,
+  commentOnGitHubPRTool,
+  queryWikiTool,
+} from '../tools/index';
+import { LINEAR_CONSTANTS } from '../../lib/config';
+
+// Helper to call tool.execute safely
+// Mastra tools accept (inputData, context) but the type signature varies.
+// We use 'as any' to bypass strict typing — this is a workflow-internal helper.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function callTool(tool: { execute?: (...args: any[]) => Promise<any> }, input: Record<string, unknown>): Promise<any> {
+  if (!tool.execute) return null;
+  return tool.execute({ context: input }, {});
+}
 
 // ---------------------------------------------------------------------------
 // Shared schemas
@@ -23,11 +46,8 @@ const incidentReportSchema = z.object({
 /**
  * **intake** – Receive and validate the incoming incident report.
  *
- * Real implementation should:
- * - Validate the incident payload (description is non-empty, images are valid URLs/base64).
- * - If images are present, call a vision model (e.g. GPT-4o / Claude) to produce
- *   a textual description of each image and append it to the incident description.
- * - Normalise the combined text into a canonical "enriched description" for downstream steps.
+ * The orchestrator handles attachments BEFORE the workflow, so this step
+ * simply validates and passes through.
  */
 const intakeStep = createStep({
   id: 'intake',
@@ -40,18 +60,22 @@ const intakeStep = createStep({
     hasImages: z.boolean(),
   }),
   execute: async ({ inputData }) => {
-    // TODO: If inputData.images exist, iterate and call a vision model to describe each image.
-    //       Concatenate those descriptions with inputData.description to form enrichedDescription.
-    //       For now, pass through the raw description.
-
-    const enrichedDescription = inputData.description; // placeholder
-
-    return {
-      enrichedDescription,
-      reporterEmail: inputData.reporterEmail,
-      repository: inputData.repository,
-      hasImages: (inputData.images?.length ?? 0) > 0,
-    };
+    try {
+      return {
+        enrichedDescription: inputData.description,
+        reporterEmail: inputData.reporterEmail,
+        repository: inputData.repository,
+        hasImages: (inputData.images?.length ?? 0) > 0,
+      };
+    } catch (error) {
+      console.error('[intake] Error:', error);
+      return {
+        enrichedDescription: inputData.description,
+        reporterEmail: inputData.reporterEmail,
+        repository: inputData.repository,
+        hasImages: false,
+      };
+    }
   },
 });
 
@@ -62,11 +86,8 @@ const intakeStep = createStep({
 /**
  * **triage** – Analyse the incident against the codebase wiki (RAG).
  *
- * Real implementation should:
- * - Query the codebase-wiki vector store (RAG) with the enriched description.
- * - Use an LLM to classify severity (P0–P4), identify likely root cause,
- *   and suggest relevant source files / modules.
- * - Return structured triage output for ticket creation.
+ * Queries the codebase-wiki vector store and uses an LLM to classify severity,
+ * identify likely root cause, and suggest relevant source files.
  */
 const triageStep = createStep({
   id: 'triage',
@@ -87,20 +108,55 @@ const triageStep = createStep({
     repository: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
-    // TODO: 1. Query RAG vector store with inputData.enrichedDescription
-    //       2. Feed retrieved context + description into LLM with triage prompt
-    //       3. Parse structured output (severity, root cause, files)
-    //       Return placeholder values for now.
+    try {
+      const wikiResult = await callTool(queryWikiTool, { query: inputData.enrichedDescription });
+      const wikiContext = wikiResult && typeof wikiResult === 'object' && 'results' in wikiResult
+        ? JSON.stringify((wikiResult as Record<string, unknown>).results)
+        : '';
 
-    return {
-      severity: 'P2' as const,
-      rootCause: 'TODO: LLM-determined root cause',
-      suggestedFiles: [],
-      triageSummary: `Triage summary for: ${inputData.enrichedDescription.slice(0, 120)}…`,
-      enrichedDescription: inputData.enrichedDescription,
-      reporterEmail: inputData.reporterEmail,
-      repository: inputData.repository,
-    };
+      const triageSchema = z.object({
+        severity: z.enum(['Critical', 'High', 'Medium', 'Low']),
+        rootCause: z.string(),
+        suggestedFiles: z.array(z.string()),
+        triageSummary: z.string(),
+      });
+
+      const result = await triageAgent.generate(
+        `Analyze this incident and produce a structured triage assessment.
+
+## Incident Report
+${inputData.enrichedDescription}
+
+## Codebase Context
+${wikiContext}
+
+Respond with a JSON object containing: severity (Critical/High/Medium/Low), rootCause, suggestedFiles (array of file paths), and triageSummary.`,
+        { structuredOutput: { schema: triageSchema } }
+      );
+
+      const parsed = result.object ?? { severity: 'Medium' as const, rootCause: 'Unable to determine', suggestedFiles: [] as string[], triageSummary: inputData.enrichedDescription };
+      const severityToP: Record<string, string> = { Critical: 'P0', High: 'P1', Medium: 'P2', Low: 'P3' };
+      return {
+        severity: (severityToP[parsed.severity] ?? 'P2') as 'P0'|'P1'|'P2'|'P3'|'P4',
+        rootCause: parsed.rootCause,
+        suggestedFiles: parsed.suggestedFiles,
+        triageSummary: parsed.triageSummary,
+        enrichedDescription: inputData.enrichedDescription,
+        reporterEmail: inputData.reporterEmail,
+        repository: inputData.repository,
+      };
+    } catch (error) {
+      console.error('[triage] Error:', error);
+      return {
+        severity: 'P2' as const,
+        rootCause: 'Unable to determine root cause (triage error)',
+        suggestedFiles: [],
+        triageSummary: `Triage summary for: ${inputData.enrichedDescription.slice(0, 120)}`,
+        enrichedDescription: inputData.enrichedDescription,
+        reporterEmail: inputData.reporterEmail,
+        repository: inputData.repository,
+      };
+    }
   },
 });
 
@@ -111,10 +167,8 @@ const triageStep = createStep({
 /**
  * **dedup** – Check Linear for duplicate / similar existing tickets.
  *
- * Real implementation should:
- * - Search Linear issues (via API or MCP tool) using keywords from the triage summary.
- * - Use embedding similarity or fuzzy text matching to score duplicates.
- * - Return the best matching issue (if any) and a confidence score.
+ * Searches Linear issues using keywords from the triage summary and uses
+ * keyword overlap similarity to score duplicates.
  */
 const dedupStep = createStep({
   id: 'dedup',
@@ -143,24 +197,61 @@ const dedupStep = createStep({
     repository: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
-    // TODO: 1. Call Linear API / MCP tool to search issues matching triageSummary keywords
-    //       2. Compute similarity scores against existing open issues
-    //       3. If confidence > threshold (e.g. 0.85), mark as duplicate
-    //       Return no-duplicate placeholder for now.
+    try {
+      const searchResult = await callTool(searchLinearIssues, {
+        query: inputData.triageSummary,
+        teamId: LINEAR_CONSTANTS.TEAM_ID,
+        limit: 5,
+      });
 
-    return {
-      isDuplicate: false,
-      existingIssueId: undefined,
-      existingIssueUrl: undefined,
-      confidence: 0,
-      severity: inputData.severity,
-      rootCause: inputData.rootCause,
-      suggestedFiles: inputData.suggestedFiles,
-      triageSummary: inputData.triageSummary,
-      enrichedDescription: inputData.enrichedDescription,
-      reporterEmail: inputData.reporterEmail,
-      repository: inputData.repository,
-    };
+      let bestMatch: { id: string; url: string; title: string; similarity: number } | null = null;
+
+      if (searchResult && typeof searchResult === 'object' && 'success' in searchResult && (searchResult as Record<string, unknown>).success) {
+        const data = (searchResult as Record<string, unknown>).data as { issues?: Array<{ id: string; url: string; title: string }> } | undefined;
+        const issues = data?.issues ?? [];
+
+        // Simple keyword overlap for similarity
+        const newKeywords = new Set(inputData.triageSummary.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+        for (const issue of issues) {
+          const issueKeywords = new Set(issue.title.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+          const intersection = [...newKeywords].filter(k => issueKeywords.has(k));
+          const union = new Set([...newKeywords, ...issueKeywords]);
+          const similarity = union.size > 0 ? intersection.length / union.size : 0;
+          if (!bestMatch || similarity > bestMatch.similarity) {
+            bestMatch = { id: issue.id, url: issue.url, title: issue.title, similarity };
+          }
+        }
+      }
+
+      return {
+        isDuplicate: bestMatch ? bestMatch.similarity > 0.85 : false,
+        existingIssueId: bestMatch?.id,
+        existingIssueUrl: bestMatch?.url,
+        confidence: bestMatch?.similarity ?? 0,
+        severity: inputData.severity,
+        rootCause: inputData.rootCause,
+        suggestedFiles: inputData.suggestedFiles,
+        triageSummary: inputData.triageSummary,
+        enrichedDescription: inputData.enrichedDescription,
+        reporterEmail: inputData.reporterEmail,
+        repository: inputData.repository,
+      };
+    } catch (error) {
+      console.error('[dedup] Error:', error);
+      return {
+        isDuplicate: false,
+        existingIssueId: undefined,
+        existingIssueUrl: undefined,
+        confidence: 0,
+        severity: inputData.severity,
+        rootCause: inputData.rootCause,
+        suggestedFiles: inputData.suggestedFiles,
+        triageSummary: inputData.triageSummary,
+        enrichedDescription: inputData.enrichedDescription,
+        reporterEmail: inputData.reporterEmail,
+        repository: inputData.repository,
+      };
+    }
   },
 });
 
@@ -171,11 +262,8 @@ const dedupStep = createStep({
 /**
  * **ticket** – Create (or update) a Linear ticket with the structured triage output.
  *
- * Real implementation should:
- * - If dedup found a duplicate, add a comment to the existing issue with new context.
- * - Otherwise, create a new Linear issue with title, body (triage summary),
- *   severity label, file references, and assignee (on-call).
- * - Return the issue ID and URL for downstream steps.
+ * If dedup found a duplicate, updates the existing issue with new context.
+ * Otherwise, creates a new Linear issue with severity labels and file references.
  */
 const ticketStep = createStep({
   id: 'ticket',
@@ -203,24 +291,68 @@ const ticketStep = createStep({
     reporterEmail: z.string(),
   }),
   execute: async ({ inputData }) => {
-    // TODO: 1. If inputData.isDuplicate && inputData.existingIssueId:
-    //          - Call Linear API to add a comment with new triage context
-    //          - Return the existing issue ID/URL
-    //       2. Otherwise:
-    //          - Call Linear API to create a new issue
-    //          - Set title, description (triageSummary), priority from severity
-    //          - Attach labels, file references, assign to on-call
-    //       Return placeholder for now.
+    try {
+      const severityToPriority: Record<string, number> = { P0: 1, P1: 2, P2: 3, P3: 4, P4: 4 };
+      const severityToLabel: Record<string, string> = {
+        P0: LINEAR_CONSTANTS.SEVERITY_LABELS.CRITICAL,
+        P1: LINEAR_CONSTANTS.SEVERITY_LABELS.HIGH,
+        P2: LINEAR_CONSTANTS.SEVERITY_LABELS.MEDIUM,
+        P3: LINEAR_CONSTANTS.SEVERITY_LABELS.LOW,
+        P4: LINEAR_CONSTANTS.SEVERITY_LABELS.LOW,
+      };
 
-    return {
-      issueId: inputData.existingIssueId ?? 'LINEAR-PLACEHOLDER-123',
-      issueUrl: inputData.existingIssueUrl ?? 'https://linear.app/team/issue/PLACEHOLDER-123',
-      wasUpdated: inputData.isDuplicate,
-      severity: inputData.severity,
-      rootCause: inputData.rootCause,
-      triageSummary: inputData.triageSummary,
-      reporterEmail: inputData.reporterEmail,
-    };
+      if (inputData.isDuplicate && inputData.existingIssueId) {
+        // Update existing issue with new context
+        await callTool(updateLinearIssue, {
+          issueId: inputData.existingIssueId,
+          description: `[Updated] Additional context:\n${inputData.triageSummary}`,
+        });
+        return {
+          issueId: inputData.existingIssueId,
+          issueUrl: inputData.existingIssueUrl ?? '',
+          wasUpdated: true,
+          severity: inputData.severity,
+          rootCause: inputData.rootCause,
+          triageSummary: inputData.triageSummary,
+          reporterEmail: inputData.reporterEmail,
+        };
+      }
+
+      // Create new issue
+      const createResult = await callTool(createLinearIssue, {
+        title: inputData.triageSummary.slice(0, 120),
+        description: `## Root Cause\n${inputData.rootCause}\n\n## Details\n${inputData.enrichedDescription}\n\n## Suggested Files\n${inputData.suggestedFiles.join('\n')}`,
+        teamId: LINEAR_CONSTANTS.TEAM_ID,
+        priority: severityToPriority[inputData.severity] ?? 3,
+        stateId: LINEAR_CONSTANTS.STATES.TRIAGE,
+        labelIds: [severityToLabel[inputData.severity], LINEAR_CONSTANTS.CATEGORY_LABELS.BUG].filter(Boolean),
+      });
+
+      const created = createResult && typeof createResult === 'object' && 'data' in createResult
+        ? (createResult as Record<string, unknown>).data as { id?: string; url?: string } | undefined
+        : undefined;
+
+      return {
+        issueId: created?.id ?? 'unknown',
+        issueUrl: created?.url ?? '',
+        wasUpdated: false,
+        severity: inputData.severity,
+        rootCause: inputData.rootCause,
+        triageSummary: inputData.triageSummary,
+        reporterEmail: inputData.reporterEmail,
+      };
+    } catch (error) {
+      console.error('[ticket] Error:', error);
+      return {
+        issueId: 'error',
+        issueUrl: '',
+        wasUpdated: false,
+        severity: inputData.severity,
+        rootCause: inputData.rootCause,
+        triageSummary: inputData.triageSummary,
+        reporterEmail: inputData.reporterEmail,
+      };
+    }
   },
 });
 
@@ -231,10 +363,7 @@ const ticketStep = createStep({
 /**
  * **notify** – Send email notification about the new/updated ticket.
  *
- * Real implementation should:
- * - Send an email to the reporter (and optionally on-call) with:
- *   - Ticket link, severity, root cause summary, suggested files
- * - Use Resend, SendGrid, or Mastra's built-in email integration.
+ * Sends an email to the reporter with ticket link, severity, root cause summary.
  */
 const notifyStep = createStep({
   id: 'notify',
@@ -257,23 +386,37 @@ const notifyStep = createStep({
     reporterEmail: z.string(),
   }),
   execute: async ({ inputData }) => {
-    // TODO: 1. Compose email body with ticket link, severity, root cause, summary
-    //       2. Send email to inputData.reporterEmail (and on-call address from config)
-    //       3. Handle send failures gracefully (log, retry, or mark as failed)
-    //       Return placeholder for now.
-
-    console.log(
-      `[notify] Would send email to ${inputData.reporterEmail} about ${inputData.issueUrl}`,
-    );
-
-    return {
-      notificationSent: true,
-      issueId: inputData.issueId,
-      issueUrl: inputData.issueUrl,
-      severity: inputData.severity,
-      rootCause: inputData.rootCause,
-      reporterEmail: inputData.reporterEmail,
-    };
+    try {
+      const severityMap: Record<string, 'Critical'|'High'|'Medium'|'Low'> = { P0: 'Critical', P1: 'High', P2: 'Medium', P3: 'Low', P4: 'Low' };
+      await callTool(sendTicketNotification, {
+        to: inputData.reporterEmail,
+        ticketTitle: inputData.triageSummary.slice(0, 120),
+        severity: severityMap[inputData.severity] ?? 'Medium',
+        priority: ({ P0: 1, P1: 2, P2: 3, P3: 4, P4: 4 } as Record<string, number>)[inputData.severity] ?? 3,
+        summary: inputData.triageSummary,
+        linearUrl: inputData.issueUrl,
+        assigneeName: 'Team',
+        linearIssueId: inputData.issueId,
+      });
+      return {
+        notificationSent: true,
+        issueId: inputData.issueId,
+        issueUrl: inputData.issueUrl,
+        severity: inputData.severity,
+        rootCause: inputData.rootCause,
+        reporterEmail: inputData.reporterEmail,
+      };
+    } catch (error) {
+      console.error('[notify] Error:', error);
+      return {
+        notificationSent: false,
+        issueId: inputData.issueId,
+        issueUrl: inputData.issueUrl,
+        severity: inputData.severity,
+        rootCause: inputData.rootCause,
+        reporterEmail: inputData.reporterEmail,
+      };
+    }
   },
 });
 
@@ -359,10 +502,8 @@ const suspendStep = createStep({
 /**
  * **verify** – Run resolution verification after the fix is deployed.
  *
- * Real implementation should:
- * - Compare the deployed fix (PR diff, commit message) against the identified root cause.
- * - Optionally run automated checks (smoke tests, metric queries) to confirm resolution.
- * - Produce a verification verdict: resolved / partially resolved / unresolved.
+ * Checks for PR attachments, runs resolution-reviewer and code-review-agent
+ * in parallel, and produces a verification verdict.
  */
 const verifyStep = createStep({
   id: 'verify',
@@ -388,20 +529,88 @@ const verifyStep = createStep({
     reporterEmail: z.string(),
   }),
   execute: async ({ inputData }) => {
-    // TODO: 1. Fetch PR / commit diff from deploy URL or Linear issue metadata
-    //       2. Compare against inputData.rootCause using LLM analysis
-    //       3. Optionally run automated smoke tests / metric queries
-    //       4. Return verdict
-    //       Return placeholder for now.
+    try {
+      // 1. Get the Linear issue to check for PR attachments
+      const issueResult = await callTool(getLinearIssue, { issueId: inputData.issueId });
+      const issueData = issueResult && typeof issueResult === 'object' && 'data' in issueResult
+        ? (issueResult as Record<string, unknown>).data as Record<string, unknown> | undefined
+        : undefined;
 
-    return {
-      verdict: 'resolved' as const,
-      verificationNotes: `TODO: Verify fix for root cause: "${inputData.rootCause}"`,
-      issueId: inputData.issueId,
-      issueUrl: inputData.issueUrl,
-      severity: inputData.severity,
-      reporterEmail: inputData.reporterEmail,
-    };
+      // Check for PR links in the issue description or attachments
+      const description = String(issueData?.description ?? '');
+      const prUrlMatch = description.match(/https:\/\/github\.com\/[^\s)]+\/pull\/\d+/);
+
+      if (!prUrlMatch) {
+        // No PR found — move to IN_REVIEW and notify
+        await callTool(updateLinearIssue, {
+          issueId: inputData.issueId,
+          stateId: LINEAR_CONSTANTS.STATES.IN_REVIEW,
+        });
+        return {
+          verdict: 'partially_resolved' as const,
+          verificationNotes: 'No pull request found linked to this issue. Moved to In Review for manual verification.',
+          issueId: inputData.issueId,
+          issueUrl: inputData.issueUrl,
+          severity: inputData.severity,
+          reporterEmail: inputData.reporterEmail,
+        };
+      }
+
+      // 2. Run resolution-reviewer and code-review-agent in parallel
+      const prUrl = prUrlMatch[0];
+      const [resolutionResult, codeReviewResult] = await Promise.all([
+        resolutionReviewer.generate(
+          `Verify if this fix resolves the incident.\nOriginal root cause: ${inputData.rootCause}\nPR: ${prUrl}\nIssue: ${inputData.issueUrl}`
+        ),
+        codeReviewAgent.generate(
+          `Review the code changes in this PR for quality and correctness.\nPR: ${prUrl}\nContext: This PR should fix: ${inputData.rootCause}`
+        ),
+      ]);
+
+      const hasIssues = codeReviewResult.text?.toLowerCase().includes('request-changes') ||
+        codeReviewResult.text?.toLowerCase().includes('critical') ||
+        codeReviewResult.text?.toLowerCase().includes('major');
+
+      if (hasIssues) {
+        // Post comments on the PR and move to IN_REVIEW
+        await callTool(commentOnGitHubPRTool, {
+          prUrl,
+          body: `## Automated Code Review\n\n${codeReviewResult.text}\n\n---\n*Review by Triage SRE Agent*`,
+        });
+        await callTool(updateLinearIssue, {
+          issueId: inputData.issueId,
+          stateId: LINEAR_CONSTANTS.STATES.IN_REVIEW,
+        });
+        return {
+          verdict: 'partially_resolved' as const,
+          verificationNotes: `Code review found issues. PR: ${prUrl}. ${resolutionResult.text?.slice(0, 500) ?? ''}`,
+          issueId: inputData.issueId,
+          issueUrl: inputData.issueUrl,
+          severity: inputData.severity,
+          reporterEmail: inputData.reporterEmail,
+        };
+      }
+
+      // 3. All good — mark as resolved
+      return {
+        verdict: 'resolved' as const,
+        verificationNotes: `Fix verified. ${resolutionResult.text?.slice(0, 500) ?? ''}`,
+        issueId: inputData.issueId,
+        issueUrl: inputData.issueUrl,
+        severity: inputData.severity,
+        reporterEmail: inputData.reporterEmail,
+      };
+    } catch (error) {
+      console.error('[verify] Error:', error);
+      return {
+        verdict: 'partially_resolved' as const,
+        verificationNotes: `Verification encountered an error: ${error instanceof Error ? error.message : String(error)}`,
+        issueId: inputData.issueId,
+        issueUrl: inputData.issueUrl,
+        severity: inputData.severity,
+        reporterEmail: inputData.reporterEmail,
+      };
+    }
   },
 });
 
@@ -412,10 +621,8 @@ const verifyStep = createStep({
 /**
  * **notify-resolution** – Send final email about the resolution status.
  *
- * Real implementation should:
- * - Send an email to the reporter (and on-call) with the verification verdict,
- *   notes, and a link to the ticket.
- * - If unresolved, include guidance on next steps or re-opening the ticket.
+ * Sends an email to the reporter with the verification verdict, notes,
+ * and a link to the ticket.
  */
 const notifyResolutionStep = createStep({
   id: 'notify-resolution',
@@ -435,21 +642,29 @@ const notifyResolutionStep = createStep({
     issueUrl: z.string(),
   }),
   execute: async ({ inputData }) => {
-    // TODO: 1. Compose resolution email with verdict, notes, ticket link
-    //       2. If verdict is "unresolved", include re-open instructions
-    //       3. Send email to inputData.reporterEmail (and on-call)
-    //       Return placeholder for now.
-
-    console.log(
-      `[notify-resolution] Would send resolution email to ${inputData.reporterEmail} – verdict: ${inputData.verdict}`,
-    );
-
-    return {
-      notificationSent: true,
-      verdict: inputData.verdict,
-      issueId: inputData.issueId,
-      issueUrl: inputData.issueUrl,
-    };
+    try {
+      await callTool(sendResolutionNotification, {
+        to: inputData.reporterEmail,
+        originalTitle: `Issue ${inputData.issueId}`,
+        resolutionSummary: `Verdict: ${inputData.verdict}. ${inputData.verificationNotes}`,
+        linearUrl: inputData.issueUrl,
+        linearIssueId: inputData.issueId,
+      });
+      return {
+        notificationSent: true,
+        verdict: inputData.verdict,
+        issueId: inputData.issueId,
+        issueUrl: inputData.issueUrl,
+      };
+    } catch (error) {
+      console.error('[notify-resolution] Error:', error);
+      return {
+        notificationSent: false,
+        verdict: inputData.verdict,
+        issueId: inputData.issueId,
+        issueUrl: inputData.issueUrl,
+      };
+    }
   },
 });
 
