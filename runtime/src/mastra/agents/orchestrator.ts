@@ -1,6 +1,7 @@
 import { Agent } from '@mastra/core/agent';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { MODELS } from '../../lib/config';
+import { codeReviewAgent } from './code-review-agent';
 import {
   createLinearIssueTool,
   updateLinearIssueTool,
@@ -57,8 +58,12 @@ You have access to a codebase wiki (RAG-backed vector search) and Linear project
 - Use query-wiki to find relevant code before making assessments
 - Use create-linear-issue to create tickets after triage analysis
 - Use send-ticket-email to notify stakeholders
-- Use list-linear-issues to check for existing similar tickets before creating duplicates`,
+- Use list-linear-issues to check for existing similar tickets before creating duplicates
+- Delegate code review requests to the code-review-agent — it produces structured review comments with severity, categories, and actionable suggestions`,
   model: openrouter(MODELS.mercury),
+  agents: {
+    codeReviewAgent,
+  },
   tools: {
     createLinearIssueTool,
     updateLinearIssueTool,

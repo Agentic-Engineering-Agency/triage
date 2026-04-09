@@ -8,6 +8,7 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "declaration": true,
     "isolatedModules": true,
@@ -16,5 +17,5 @@
     }
   },
   "include": ["src"],
-  "exclude": ["node_modules", "dist", ".mastra"]
+  "exclude": ["node_modules", "dist", ".mastra", "**/*.test.ts"]
 }

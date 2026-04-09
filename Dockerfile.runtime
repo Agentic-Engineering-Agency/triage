@@ -2,7 +2,7 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
 COPY . .
-RUN if [ -f runtime/package.json ]; then \
+RUN if [ -f runtime/src/mastra/index.ts ]; then \
       cd runtime && npm ci && npx mastra build && \
       cp -r .mastra/output /app/output; \
     else \

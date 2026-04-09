@@ -27,15 +27,27 @@ export type {
 
 // Ticket schemas and types
 export {
+  prioritySchema as ticketPrioritySchema,
   ticketCreateSchema,
   ticketResponseSchema,
+  ticketUpdateSchema,
+  issueDetailSchema,
+  issueSearchSchema,
+  issueSearchResultSchema,
+  teamMemberSchema,
+  teamMembersResponseSchema,
+  ticketNotificationSchema,
+  resolutionNotificationSchema,
+  issueIdInputSchema,
+  teamIdInputSchema,
+  emailResponseSchema,
+  toolSuccessSchema,
+  toolErrorSchema,
   duplicateRecommendationSchema,
   duplicateCheckSchema,
 } from './ticket';
 
 export type {
-  TicketCreate,
-  TicketResponse,
   DuplicateRecommendation,
   DuplicateCheck,
 } from './ticket';
@@ -54,3 +66,22 @@ export type {
   WikiQueryChunk,
   WikiQueryResult,
 } from './wiki';
+
+// Code review schemas and types
+export {
+  reviewSeveritySchema,
+  reviewCategorySchema,
+  reviewCommentSchema,
+  fileReviewSummarySchema,
+  codeReviewOutputSchema,
+  codeReviewInputSchema,
+} from './review';
+
+export type {
+  ReviewSeverity,
+  ReviewCategory,
+  ReviewComment,
+  FileReviewSummary,
+  CodeReviewOutput,
+  CodeReviewInput,
+} from './review';

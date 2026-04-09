@@ -1,7 +1,7 @@
 import { Mastra } from '@mastra/core';
 import { LibSQLStore } from '@mastra/libsql';
 
-import { orchestrator, triageAgent, resolutionReviewer } from './agents/index';
+import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent } from './agents/index';
 import { triageWorkflow } from './workflows/index';
 
 /**
@@ -24,6 +24,7 @@ export const mastra = new Mastra({
     orchestrator,
     'triage-agent': triageAgent,
     'resolution-reviewer': resolutionReviewer,
+    'code-review-agent': codeReviewAgent,
   },
   workflows: {
     'triage-workflow': triageWorkflow,
