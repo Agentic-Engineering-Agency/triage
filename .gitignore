@@ -39,3 +39,4 @@ HACKATHON_BRAINSTORM_OUTPUT/
 docs/drizzle-libsql-reference.md
 config/
 *.bak
+test-results/
