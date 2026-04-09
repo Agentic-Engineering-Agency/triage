@@ -7,7 +7,10 @@ const trustedOrigins = (() => {
   const origins: string[] = [];
   const devOrigin = process.env.BETTER_AUTH_URL || 'http://localhost:3001';
   if (process.env.NODE_ENV === 'production') {
-    origins.push(process.env.BETTER_AUTH_URL || 'https://triage.example.com');
+    if (!process.env.BETTER_AUTH_URL) {
+      throw new Error('BETTER_AUTH_URL is required in production');
+    }
+    origins.push(process.env.BETTER_AUTH_URL);
   } else {
     origins.push(devOrigin);
   }

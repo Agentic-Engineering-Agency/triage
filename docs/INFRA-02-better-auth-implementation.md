@@ -11,7 +11,7 @@
 
 Autenticación con email/password para la app Triage usando Better Auth, con datos persistidos en LibSQL (el mismo container que usa Mastra para storage). El flujo es:
 
-```
+```text
 Browser → Caddy (:3001/auth/*) → Mastra runtime (:4111) → Better Auth → LibSQL (:8080)
 ```
 
@@ -157,7 +157,7 @@ Usa `drizzle-orm/zod` (NO el paquete deprecado `drizzle-zod`). Exporta schemas s
 
 En `runtime/package.json`:
 
-```
+```text
 better-auth: ^1.0.0
 @better-auth/drizzle-adapter: ^1.0.0
 drizzle-kit: ^0.30.0

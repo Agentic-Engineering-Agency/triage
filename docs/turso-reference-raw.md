@@ -139,12 +139,12 @@ alternatives: a short form and a _BLOB suffix form.
 
 | Type                      | Storage (bytes) | Description                                       |
 |---------------------------|-----------------|---------------------------------------------------|
-| FLOAT64 | F64_BLOB        | 8D+1            | IEEE 754 double precision (64-bit)                |
-| FLOAT32 | F32_BLOB        | 4D              | IEEE 754 single precision (32-bit) — RECOMMENDED  |
-| FLOAT16 | F16_BLOB        | 2D+1            | IEEE 754-2008 half precision (16-bit)             |
-| FLOATB16 | FB16_BLOB      | 2D+1            | bfloat16 (16-bit) — faster ops, lower precision   |
-| FLOAT8 | F8_BLOB          | D+14            | LibSQL-specific, each component as single u8 byte |
-| FLOAT1BIT | F1BIT_BLOB    | ceil(D/8)+3     | LibSQL-specific, 1-bit per component — most compact|
+| FLOAT64 \| F64_BLOB        | 8D+1            | IEEE 754 double precision (64-bit)                |
+| FLOAT32 \| F32_BLOB        | 4D              | IEEE 754 single precision (32-bit) — RECOMMENDED  |
+| FLOAT16 \| F16_BLOB        | 2D              | IEEE 754-2008 half precision (16-bit)             |
+| FLOATB16 \| FB16_BLOB      | 2D+1            | bfloat16 (16-bit) — faster ops, lower precision   |
+| FLOAT8 \| F8_BLOB          | D+14            | LibSQL-specific, each component as single u8 byte |
+| FLOAT1BIT \| F1BIT_BLOB    | ceil(D/8)+3     | LibSQL-specific, 1-bit per component — most compact|
 
 D = number of dimensions
 

@@ -206,7 +206,7 @@ describe('REQ-A03: Auth Schema Tables', () => {
       );
       expect(true).toBe(true);
     } catch (err: any) {
-      expect([0, 1]).toContain(err.status ?? 0);
+      expect(err.status ?? 0).toBe(0);
     }
   });
 
@@ -327,7 +327,7 @@ describe('REQ-A07: /auth/* Route Mounting in Mastra', () => {
 
   it('should return error on malformed sign-in request', infraIt(async () => {
     try {
-      const res = await fetch(`${RUNTIME_URL}/auth/sign-in`, {
+      const res = await fetch(`${RUNTIME_URL}/auth/sign-in/email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{ invalid json }',
@@ -358,7 +358,7 @@ describe('REQ-A08: drizzle-kit push Schema Application', () => {
       );
       expect(true).toBe(true);
     } catch (err: any) {
-      expect([0, 1]).toContain(err.status ?? 0);
+      expect(err.status ?? 0).toBe(0);
     }
   });
 
