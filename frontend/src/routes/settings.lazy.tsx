@@ -12,7 +12,7 @@ interface TeamMember {
   displayName: string;
 }
 
-const FALLBACK_EMAIL = 'user@agenticengineering.lat';
+const FALLBACK_EMAIL = '';
 
 function SettingsPage() {
   const queryClient = useQueryClient();
@@ -116,13 +116,13 @@ function SettingsPage() {
           <div className="bg-card border border-border rounded-lg p-4 space-y-3">
             <div>
               <label className="text-sm font-medium block mb-1">Reporter Email</label>
-              <p className="text-xs text-muted-foreground mb-2">Incident notifications and resolution emails will be sent here.</p>
+              <p className="text-xs text-muted-foreground mb-2">When a ticket is resolved in Linear, a resolution notification will be sent to this email. If not configured, the agent will ask during triage.</p>
               <div className="flex gap-2">
                 <input
                   type="email"
                   value={notifyEmail}
                   onChange={(e) => { setNotifyEmail(e.target.value); setEmailSaved(false); }}
-                  placeholder={FALLBACK_EMAIL}
+                  placeholder="your-email@company.com"
                   className="flex-1 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
                 />
                 <button

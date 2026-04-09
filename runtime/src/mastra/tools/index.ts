@@ -16,12 +16,14 @@ export {
   getLinearIssue,
   searchLinearIssues,
   getLinearTeamMembers,
+  listLinearCycles,
   // Aliases for Lalo's agents
   createLinearIssueTool,
   updateLinearIssueTool,
   getLinearIssueTool,
   listLinearIssuesTool,
   getTeamMembersTool,
+  listLinearCyclesTool,
 } from './linear';
 
 export {
