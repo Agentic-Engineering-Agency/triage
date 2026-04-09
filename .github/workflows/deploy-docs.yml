@@ -9,6 +9,11 @@ on:
       - 'AGENTS_USE.md'
       - 'SCALING.md'
       - 'QUICKGUIDE.md'
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'docs-site/**'
+      - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
 
 jobs:
@@ -39,6 +44,7 @@ jobs:
         run: pnpm build
 
       - name: Deploy to Cloudflare Pages
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
