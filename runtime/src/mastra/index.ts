@@ -1,4 +1,5 @@
 import { Mastra } from '@mastra/core';
+import { registerApiRoute } from '@mastra/core/server';
 import { LibSQLStore } from '@mastra/libsql';
 import { chatRoute } from '@mastra/ai-sdk';
 import { registerApiRoute } from '@mastra/core/server';
