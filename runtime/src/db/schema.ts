@@ -2,7 +2,13 @@ import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 import { relations } from 'drizzle-orm';
 import { float32Array } from './custom-types';
 
-// ─── Auth Tables ────────────────────────────────────────────────
+/**
+ * Better Auth + Drizzle/LibSQL Authentication Schema
+ * Tables: auth_user, auth_session, auth_account, auth_verification
+ * Prefixed with "auth_" to avoid conflict with Mastra's existing "account" table.
+ *
+ * Additional: wiki_documents, wiki_chunks (RAG vectors), local_tickets (graceful degradation)
+ */
 
 export const authUser = sqliteTable('auth_user', {
   id: text('id').primaryKey(),
