@@ -1,5 +1,7 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows';
 import { z } from 'zod';
+import crypto from 'crypto';
+import { createClient } from '@libsql/client';
 import { queryWiki } from '../../lib/wiki-rag';
 import { createLinearIssue, searchLinearIssues } from '../tools/linear';
 import { sendTicketNotification, sendResolutionNotification } from '../tools/resend';
@@ -19,6 +21,8 @@ const incidentReportSchema = z.object({
   reporterEmail: z.string().email().describe('Reporter email address'),
   /** Optional repo context (org/repo) for RAG lookup */
   repository: z.string().optional().describe('GitHub org/repo for codebase wiki lookup'),
+  /** Optional project ID (from local projects table) for evidence lookup later */
+  projectId: z.string().uuid().optional().describe('Local project ID for later GitHub evidence lookup'),
 });
 
 // ---------------------------------------------------------------------------
@@ -39,6 +43,7 @@ const intakeStep = createStep({
     enrichedDescription: z.string().describe('Combined text + image descriptions'),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
     hasImages: z.boolean(),
   }),
   execute: async ({ inputData }) => {
@@ -50,6 +55,7 @@ const intakeStep = createStep({
       enrichedDescription,
       reporterEmail: inputData.reporterEmail,
       repository: inputData.repository,
+      projectId: inputData.projectId,
       hasImages: (inputData.images?.length ?? 0) > 0,
     };
   },
@@ -72,6 +78,7 @@ const triageStep = createStep({
     enrichedDescription: z.string(),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
     hasImages: z.boolean(),
   }),
   outputSchema: z.object({
@@ -82,6 +89,7 @@ const triageStep = createStep({
     enrichedDescription: z.string(),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     // 1. Query wiki RAG for relevant code context
@@ -145,6 +153,7 @@ const triageStep = createStep({
       enrichedDescription: inputData.enrichedDescription,
       reporterEmail: inputData.reporterEmail,
       repository: inputData.repository,
+      projectId: inputData.projectId,
     };
   },
 });
@@ -170,6 +179,7 @@ const dedupStep = createStep({
     enrichedDescription: z.string(),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
   }),
   outputSchema: z.object({
     isDuplicate: z.boolean(),
@@ -184,6 +194,7 @@ const dedupStep = createStep({
     enrichedDescription: z.string(),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     let isDuplicate = false;
@@ -241,6 +252,7 @@ const dedupStep = createStep({
       enrichedDescription: inputData.enrichedDescription,
       reporterEmail: inputData.reporterEmail,
       repository: inputData.repository,
+      projectId: inputData.projectId,
     };
   },
 });
@@ -270,6 +282,7 @@ const ticketStep = createStep({
     enrichedDescription: z.string(),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
   }),
   outputSchema: z.object({
     issueId: z.string().describe('Linear issue identifier'),
@@ -330,6 +343,37 @@ const ticketStep = createStep({
       if (result && typeof result === 'object' && 'success' in result && result.success) {
         const data = (result as { success: true; data: { id: string; identifier: string; url: string; title: string } }).data;
         console.log(`[ticket] Created Linear issue: ${data.identifier}`);
+
+        // Persist a local_tickets row so the In Review webhook handler can
+        // recover the reporter email + project context later. Best-effort:
+        // a failure here must NOT block the workflow.
+        try {
+          const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+          const now = Date.now();
+          await db.execute({
+            sql: `INSERT INTO local_tickets
+                  (id, linear_issue_id, title, description, severity, priority, status, assignee_id, project_id, reporter_email, created_at, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [
+              crypto.randomUUID(),
+              data.id,
+              title,
+              inputData.triageSummary,
+              inputData.severity,
+              priority,
+              'in_triage',
+              null,
+              inputData.projectId ?? null,
+              inputData.reporterEmail,
+              now,
+              now,
+            ],
+          });
+          console.log(`[ticket] Persisted local_tickets row for ${data.identifier}`);
+        } catch (dbErr) {
+          console.error('[ticket] local_tickets insert failed (non-fatal):', dbErr instanceof Error ? dbErr.message : dbErr);
+        }
+
         return {
           issueId: data.id,
           issueUrl: data.url,
