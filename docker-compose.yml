@@ -94,7 +94,7 @@ services:
       SQLD_HTTP_LISTEN_ADDR: 0.0.0.0:8080
       SQLD_GRPC_LISTEN_ADDR: 0.0.0.0:5001
     volumes:
-      - libsql_data:/var/lib/sqld
+      - /var/lib/sqld
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8080'"]
       interval: 10s
@@ -179,8 +179,8 @@ services:
       retries: 3
       start_period: 30s
     volumes:
-      - langfuse_clickhouse_data:/var/lib/clickhouse
-      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+      - /var/lib/clickhouse
+      - /var/log/clickhouse-server
     restart: always
     networks:
       - langfuse
@@ -196,7 +196,7 @@ services:
       timeout: 5s
       retries: 3
     volumes:
-      - langfuse_redis_data:/data
+      - /data
     restart: always
     networks:
       - langfuse
@@ -214,7 +214,7 @@ services:
       timeout: 5s
       retries: 3
     volumes:
-      - langfuse_minio_data:/data
+      - /data
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -232,7 +232,7 @@ services:
       timeout: 5s
       retries: 3
     volumes:
-      - langfuse_postgres_data:/var/lib/postgresql/data
+      - /var/lib/postgresql/data
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -261,10 +261,6 @@ networks:
   langfuse:
     driver: bridge
 
-volumes:
-  libsql_data:
-  langfuse_postgres_data:
-  langfuse_clickhouse_data:
-  langfuse_clickhouse_logs:
-  langfuse_minio_data:
-  langfuse_redis_data:
+
+# No named volumes — all data is ephemeral (recreated on restart).
+# Wiki vectors regenerate via Projects page, Langfuse auto-seeds from env vars.
