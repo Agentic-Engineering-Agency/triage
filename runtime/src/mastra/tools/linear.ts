@@ -272,6 +272,44 @@ export const listLinearCycles = createTool({
   },
 });
 
+// ---------- Tool 7: getLinearIssueComments ----------
+export const getLinearIssueComments = createTool({
+  id: 'get-linear-issue-comments',
+  description: 'Fetch all comments on a Linear issue. Used by the In Review evidence check to determine whether a ticket has human-provided evidence of completion.',
+  inputSchema: issueIdInputSchema,
+  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+    const ctx = (input as Record<string, unknown>)?.context ?? input;
+    if (!linearClient) {
+      return { success: false, error: 'LINEAR_API_KEY not configured' };
+    }
+    try {
+      const issue = await linearClient.issue((ctx as Record<string, unknown>).issueId as string);
+      const commentsConnection = await issue.comments();
+      const comments = await Promise.all(
+        commentsConnection.nodes.map(async (c) => {
+          let userInfo: { name: string | null; email: string | null } = { name: null, email: null };
+          try {
+            const user = await c.user;
+            if (user) {
+              userInfo = { name: user.name ?? null, email: user.email ?? null };
+            }
+          } catch { /* user may not be resolvable */ }
+          return {
+            id: c.id,
+            body: c.body ?? '',
+            user: userInfo,
+            createdAt: c.createdAt instanceof Date ? c.createdAt.toISOString() : String(c.createdAt ?? ''),
+          };
+        }),
+      );
+      return { success: true, data: { comments } };
+    } catch (error: unknown) {
+      console.error('[Linear] API error:', error instanceof Error ? error.message.slice(0, 200) : 'Unknown error');
+      return { success: false, error: `Linear API error: ${error instanceof Error ? error.message.slice(0, 200) : 'Unknown error'}` };
+    }
+  },
+});
+
 // ============================================================
 // Aliases for Lalo's agent registrations
 // The orchestrator agent references tools by these names.
@@ -282,3 +320,4 @@ export const getLinearIssueTool = getLinearIssue;
 export const listLinearIssuesTool = searchLinearIssues;
 export const getTeamMembersTool = getLinearTeamMembers;
 export const listLinearCyclesTool = listLinearCycles;
+export const getLinearIssueCommentsTool = getLinearIssueComments;
