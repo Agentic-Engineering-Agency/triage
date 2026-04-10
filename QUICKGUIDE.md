@@ -1,6 +1,9 @@
 # Quick Start Guide — Triage
 
-Get the full Triage system running locally in about 5 minutes.
+> **Demo video:** <!-- TODO: demo video URL --> _coming soon_ — #AgentXHackathon
+> _Last updated: 2026-04-10_
+
+Get the full Triage system running locally in about 5 minutes on a clean machine.
 
 ## Prerequisites
 
@@ -64,21 +67,20 @@ The first run pulls base images and builds both app containers — allow about 2
 - `http://localhost:3001/health` returns `OK`
 - The chat UI loads at `http://localhost:3001/chat`
 
-## Try It Out
+## Try It Out (recommended demo flow)
 
-1. Go to `http://localhost:3001/register` to create an account, then log in
-2. In the chat, describe an incident:
-   > "We're seeing 500 errors on the checkout page starting 20 minutes ago. The payment service logs show a timeout connecting to the order processor."
-3. The agent triages the incident and displays a **TriageCard** with severity, confidence score, root cause, and affected file references
-4. Click **Create Ticket** to approve — the agent creates a Linear issue and sends email + Slack notifications to the team
-5. When a fix ships, the webhook triggers the Resolution Reviewer agent to confirm resolution and notify the reporter
-
-## Optional: Connect a Codebase (Projects)
-
-1. Navigate to `http://localhost:3001/projects`
-2. Click **Add Project** and enter a Git repository URL (e.g., `https://github.com/solidusio/solidus`) and branch
-3. The Wiki/RAG pipeline clones the repo, chunks source files, and generates vector embeddings — progress shows in real time
-4. Once status shows **Ready**, the Triage Agent will use this codebase for grounded root-cause analysis
+1. Go to `http://localhost:3001/register` to create an account, then log in.
+2. **Connect the Solidus codebase first.** Navigate to `http://localhost:3001/projects`, click **New Project**, and enter:
+   - **Repository URL:** `https://github.com/solidusio/solidus.git`
+   - **Name:** `Solidus`
+   - **Branch:** `main`
+   - Click **Create & Generate Wiki**. The Wiki/RAG pipeline clones the repo, chunks source files, and generates ~3,740 embeddings via OpenRouter. Expect **5–10 minutes** on the first run and **~$0.029** of OpenRouter credit. The card flips to **Ready** when done.
+3. In the chat (`/chat`), describe an incident, for example:
+   > "We're seeing a reflected XSS on the Solidus checkout when the `notice` query parameter contains HTML. Repro: visit `/checkout?notice=<script>alert(1)</script>`."
+4. The orchestrator queries the Solidus wiki, renders a **TriageCard** with severity, confidence, root cause, and affected file references.
+5. Click **Create Ticket** to approve — the orchestrator creates a real Linear issue in the SOL team, assigns it, and sends email + Slack notifications.
+6. Open `/board` to see the five-column Kanban (Backlog → Todo → In Progress → In Review → Done) fed live from Linear. Your new ticket appears in the appropriate column.
+7. (Optional) When a fix ships, moving the Linear ticket to **In Review** triggers the evidence-check webhook (Use Case 5 in [AGENTS_USE.md](./AGENTS_USE.md)); moving to **Done** notifies the reporter. Both require a Cloudflare Tunnel pointing at the runtime and a one-time click of **Register Webhook** on the Settings page.
 
 ## Optional: Run Tests
 
@@ -92,9 +94,31 @@ To include live infrastructure smoke checks:
 RUN_MANUAL_INFRA_TESTS=1 pnpm test
 ```
 
-## Optional: Langfuse Observability Dashboard
+## OpenRouter Broadcast Setup (observability in 7 clicks)
 
-Open [http://localhost:3000](http://localhost:3000) to view LLM traces, token costs, and latency metrics for every agent invocation. On first load you will be prompted to create a local admin account.
+Triage ships with **zero runtime code** for LLM tracing. Instead, it relies on OpenRouter's workspace-level **Broadcast** feature to forward every chat completion to our self-hosted Langfuse automatically.
+
+To replicate the observability story, do this **once** in your OpenRouter dashboard:
+
+1. Open [https://openrouter.ai/workspaces/default/observability](https://openrouter.ai/workspaces/default/observability)
+2. Click **Add Destination** → pick **Langfuse**
+3. **Public Key:** paste the value of `LANGFUSE_PUBLIC_KEY` from your `.env`
+4. **Secret Key:** paste the value of `LANGFUSE_SECRET_KEY` from your `.env`
+5. **Base URL:** `https://langfuse.agenticengineering.lat` (or your own Langfuse instance URL if self-hosting)
+6. Set **Privacy Mode = OFF** and **Sampling Rate = 1** (100%), then **Save**
+7. At the top of the page, toggle **Enable Broadcast** to ON
+
+Every subsequent chat completion your OpenRouter workspace makes — from the Orchestrator, Triage Agent, Resolution Reviewer, or Code Review Agent — will now appear in Langfuse with full prompt / completion / token usage / latency / cost. No SDK code, no restart.
+
+> **Known limitation:** OpenRouter Broadcast only covers **chat completions**, not embeddings. The wiki RAG ingestion pipeline consumes ~$0.029 of OpenRouter credit to embed the Solidus codebase (4,123 calls) but those calls will **not** appear in Langfuse. They are visible on the OpenRouter dashboard itself.
+
+## Langfuse Dashboard — localhost caveat for the demo
+
+The Triage sidebar has an **Observability** link. For the hackathon demo it points at **`http://localhost:3000`** — the local Langfuse container — instead of the public tunnel URL `https://langfuse.agenticengineering.lat`. That's deliberate.
+
+Why: the Cloudflare Tunnel that publishes Langfuse rewrites the HTTP `Host` header to the internal service name, which breaks Auth.js interactive login on the Langfuse dashboard. Broadcast ingestion is unaffected because it uses bearer-token auth to `/api/public/ingestion`, not Auth.js.
+
+**Fix for production:** set **HTTP Host Header = `langfuse.agenticengineering.lat`** on the tunnel's Public Hostname ingress rule in the Cloudflare Zero Trust dashboard. For a local `docker compose up` run, just use `http://localhost:3000` and log in there — on first load you will be prompted to create a local admin account.
 
 ## Optional: Database Studio
 
