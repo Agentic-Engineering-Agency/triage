@@ -86,7 +86,7 @@ services:
       - langfuse
     volumes:
       - /Users/agent/hackathon:/opt/repos:ro
-      - repos:/data/repos
+      - /data/repos
 
   libsql:
     image: ghcr.io/tursodatabase/libsql-server:v0.24.32
@@ -265,12 +265,3 @@ networks:
     driver: bridge
   langfuse:
     driver: bridge
-
-volumes:
-  libsql_data:
-  repos:
-  langfuse_postgres_data:
-  langfuse_clickhouse_data:
-  langfuse_clickhouse_logs:
-  langfuse_minio_data:
-  langfuse_redis_data:
