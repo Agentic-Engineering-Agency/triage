@@ -73,11 +73,11 @@ export const orchestrator = new Agent({
       generateTitle: true,
     },
   }),
-  model: openrouter(MODELS.orchestrator, {
+  model: openrouter(MODELS.mercury, {
     extraBody: {
-      models: MODEL_CHAINS.orchestrator,
+      models: [MODELS.mercury, MODELS.orchestratorFallback1],
       route: 'fallback',
-      max_tokens: 4096,
+      max_tokens: 2000,
       include_reasoning: true,
     },
   }),
