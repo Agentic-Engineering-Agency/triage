@@ -84,6 +84,9 @@ The first run pulls base images and builds both app containers — allow about 2
 4. The orchestrator queries the Solidus wiki, renders a **TriageCard** with severity, confidence, root cause, and affected file references.
 5. Click **Create Ticket** to approve — the orchestrator creates a real Linear issue in the SOL team, assigns it, and sends email + Slack notifications.
 6. Open `/board` to see the five-column Kanban (Backlog → Todo → In Progress → In Review → Done) fed live from Linear. Your new ticket appears in the appropriate column.
+
+> **⚠️ Note:** The In Review evidence check is fully wired end-to-end in code but will not trigger for tickets created via the chat orchestrator path in this build. The chat path calls `createLinearIssueTool` directly and does not currently write to `local_tickets`, which the webhook handler uses to look up reporter email and project context. To exercise the evidence check end-to-end, use the workflow-driven ticket path or wait for a post-hackathon follow-up that unifies the two paths through a shared `persistLocalTicket` helper. Moving a chat-created ticket to In Review in Linear will still update the kanban board via the live Linear sync — it just won't fire the automated evidence check or notification bounce-back.
+
 7. (Optional) When a fix ships, moving the Linear ticket to **In Review** triggers the evidence-check webhook (Use Case 5 in [AGENTS_USE.md](/docs/hackathon/agents-use)); moving to **Done** notifies the reporter. Both require a Cloudflare Tunnel pointing at the runtime and a one-time click of **Register Webhook** on the Settings page.
 
 ## Optional: Run Tests
