@@ -9,6 +9,7 @@ import { TriageCard } from "@/components/triage-card"
 import { getDraft, saveDraft, clearDraft } from "@/lib/chat-draft"
 import { useAuth } from "@/hooks/use-auth"
 import { useConversations } from "@/hooks/use-conversations"
+import { apiFetch } from "@/lib/api"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -316,19 +317,58 @@ function ChatPage() {
   )
 
   // ---- Ticket actions ----
-  // When user clicks "Create Ticket" on the triage card, send a message
-  // to the agent so it creates the Linear issue with full context.
-  const handleCreateTicket = (_triageData: Record<string, unknown>, cardKey: string) => {
-    setCardStates((prev) => ({ ...prev, [cardKey]: { state: "confirmed" } }))
-    sendMessage({ text: "Confirmed. Create the Linear ticket with the details above." })
+  // When user clicks "Create Ticket" on the triage card, trigger the workflow directly
+  const handleCreateTicket = async (triageData: Record<string, unknown>, cardKey: string) => {
+    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat'
+    setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'submitting' } }))
+    try {
+      await apiFetch('/workflows/triage-workflow/trigger', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: triageData.summary ?? '',
+          reporterEmail,
+          repository: 'Agentic-Engineering-Agency/triage',
+        }),
+      })
+      setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'confirmed' } }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to create ticket'
+      setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'error', errorMessage: message } }))
+    }
   }
 
-  const handleUpdateExisting = (dupData: Record<string, unknown>) => {
-    sendMessage({ text: `Update the existing ticket: ${dupData.existingTicketTitle ?? ""}` })
+  const handleUpdateExisting = async (dupData: Record<string, unknown>) => {
+    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat'
+    try {
+      await apiFetch('/workflows/triage-workflow/trigger', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: `Update existing ticket: ${dupData.existingTicketTitle ?? ''}`,
+          reporterEmail,
+          repository: 'Agentic-Engineering-Agency/triage',
+        }),
+      })
+      console.log('[chat] Update existing triggered')
+    } catch (error) {
+      console.error('[chat] Update existing failed:', error)
+    }
   }
 
-  const handleCreateNew = (_dupData: Record<string, unknown>) => {
-    sendMessage({ text: "Ignore the duplicate, create a new ticket with the triage details above." })
+  const handleCreateNew = async (_dupData: Record<string, unknown>) => {
+    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat'
+    try {
+      await apiFetch('/workflows/triage-workflow/trigger', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: _dupData.summary ?? '',
+          reporterEmail,
+          repository: 'Agentic-Engineering-Agency/triage',
+        }),
+      })
+      console.log('[chat] Create new triggered')
+    } catch (error) {
+      console.error('[chat] Create new failed:', error)
+    }
   }
 
   const hasMessages = messages.length > 0
