@@ -33,7 +33,7 @@ export const sendTicketNotification = createTool({
     const ctx = (input?.context ?? input) as Record<string, unknown>;
     if (!resendClient) {
       console.log(`[Resend] Skipping ticket notification to ${maskEmail(ctx.to as string)}: "${ctx.ticketTitle}" (RESEND_API_KEY not configured)`);
-      return { success: true };
+      return { success: true, skipped: true, to: ctx.to as string, assigneeName: ctx.assigneeName as string, reason: 'RESEND_API_KEY not configured' };
     }
     try {
       const { data, error } = await resendClient.emails.send({
@@ -51,7 +51,7 @@ export const sendTicketNotification = createTool({
         return { success: false, error: `Resend error: ${error.message}` };
       }
 
-      return { success: true, emailId: data?.id };
+      return { success: true, emailId: data?.id, to: ctx.to as string, assigneeName: ctx.assigneeName as string };
     } catch (error: unknown) {
       console.error('[Resend] API error:', error instanceof Error ? error.message.slice(0, 200) : 'Unknown error');
       return { success: false, error: `Resend error: ${error instanceof Error ? error.message.slice(0, 200) : 'Unknown error'}` };

@@ -16,12 +16,14 @@ export {
   getLinearIssue,
   searchLinearIssues,
   getLinearTeamMembers,
+  listLinearCycles,
   // Aliases for Lalo's agents
   createLinearIssueTool,
   updateLinearIssueTool,
   getLinearIssueTool,
   listLinearIssuesTool,
   getTeamMembersTool,
+  listLinearCyclesTool,
 } from './linear';
 
 export {
@@ -35,3 +37,8 @@ export {
 export { queryWikiTool } from './wiki-query';
 
 export { generateWikiTool } from './wiki-generate';
+
+export { processAttachmentsTool } from './attachments';
+export { displayTriageTool } from './display-triage';
+export { displayDuplicateTool } from './display-duplicate';
+export { commentOnGitHubPRTool } from './github';

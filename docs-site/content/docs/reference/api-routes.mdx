@@ -1,0 +1,241 @@
+---
+title: API Routes
+description: All 11 API routes registered on the Mastra server with examples
+---
+
+The runtime registers 11 routes on the Mastra/Hono server. Routes are defined in `runtime/src/mastra/index.ts`. All routes are reverse-proxied through Caddy at port 3001 — the runtime's direct port (4111) is bound to localhost only.
+
+## Route Summary
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/chat` | Session | AI SDK streaming chat — connects to orchestrator agent |
+| ALL | `/auth/*` | — | Better Auth handler (login, register, session, signout) |
+| GET | `/api/linear/issues` | — | Fetch all team issues grouped by state |
+| GET | `/api/linear/cycle/active` | — | Current active cycle with progress metrics |
+| GET | `/api/linear/members` | — | Active team members |
+| POST | `/api/wiki/generate` | — | Start wiki generation from a repo URL |
+| GET | `/api/wiki/status` | — | Wiki generation progress |
+| POST | `/api/linear/webhook/setup` | — | Register Linear webhook for this deployment |
+| POST | `/api/webhooks/linear` | — | Receive Linear webhooks (resume suspended workflow) |
+| POST | `/api/workflows/triage-workflow/trigger` | — | Trigger triage workflow directly |
+
+## Route Details
+
+### POST `/chat`
+
+AI SDK streaming endpoint — connects to the orchestrator agent. Registered via `chatRoute` from `@mastra/ai-sdk`.
+
+**Request:**
+```json
+{
+  "messages": [
+    { "role": "user", "content": "Checkout is returning 500 errors since 14:23 UTC..." }
+  ],
+  "threadId": "thread_abc123"
+}
+```
+
+**Response:** Server-Sent Events stream (Vercel AI SDK protocol). Includes streaming text tokens, tool invocation events, and tool result events. When `displayTriage` or `displayDuplicate` tools are called, a structured tool result is included in the stream for the frontend to render as generative UI.
+
+---
+
+### ALL `/auth/*`
+
+Delegated to Better Auth. Handles:
+- `POST /auth/sign-in/email`
+- `POST /auth/sign-up/email`
+- `POST /auth/sign-out`
+- `GET /auth/session`
+- `GET /auth/get-session`
+
+---
+
+### GET `/api/linear/issues`
+
+Fetches all issues for the configured team (`LINEAR_CONSTANTS.TEAM_ID`), grouped by state name.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "Triage": [
+      {
+        "id": "TRI-42",
+        "identifier": "TRI-42",
+        "title": "Checkout 500 on Stripe payment_intent mismatch",
+        "priority": 2,
+        "estimate": null,
+        "project": null,
+        "url": "https://linear.app/...",
+        "createdAt": "2026-04-09T14:23:00.000Z",
+        "updatedAt": "2026-04-09T14:23:00.000Z",
+        "assignee": { "id": "...", "name": "Fernando" },
+        "labels": [{ "id": "...", "name": "High", "color": "#F97316" }]
+      }
+    ],
+    "In Progress": [...],
+    "Done": [...]
+  }
+}
+```
+
+**Error (no Linear key):**
+```json
+{
+  "success": false,
+  "error": { "code": "NO_LINEAR_KEY", "message": "LINEAR_API_KEY not configured" }
+}
+```
+
+---
+
+### GET `/api/linear/cycle/active`
+
+Returns the currently active cycle. Returns `data: null` if no active cycle exists.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "cycle_abc123",
+    "name": "Cycle 5",
+    "number": 5,
+    "startsAt": "2026-04-07T00:00:00.000Z",
+    "endsAt": "2026-04-14T00:00:00.000Z",
+    "progress": 0.43,
+    "scopeCount": 12,
+    "completedScopeCount": 5,
+    "startedScopeCount": 3
+  }
+}
+```
+
+---
+
+### GET `/api/linear/members`
+
+Returns active, non-guest team members.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "members": [
+      {
+        "id": "90b16a9c-3f47-49fc-8d98-abf3aa6ecb13",
+        "name": "Fernando",
+        "email": "fernando@example.com",
+        "displayName": "Fernando"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### POST `/api/wiki/generate`
+
+Initiates wiki generation for a repository. Currently logs the request and returns a `started` status — full implementation (git clone, file walk, vector embedding) is pending.
+
+**Request:**
+```json
+{ "repoUrl": "https://github.com/org/repo" }
+```
+
+**Response:**
+```json
+{ "success": true, "data": { "status": "started", "repoUrl": "https://github.com/org/repo" } }
+```
+
+---
+
+### GET `/api/wiki/status`
+
+Returns current wiki generation status.
+
+**Response:**
+```json
+{ "success": true, "data": { "total": 0, "processed": 0, "done": true } }
+```
+
+---
+
+### POST `/api/linear/webhook/setup`
+
+Registers a webhook on the configured Linear team for `Issue` resource events.
+
+**Request:**
+```json
+{ "url": "https://your-public-url.example/api/webhooks/linear" }
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": { "id": "webhook_abc123", "url": "https://...", "enabled": true }
+}
+```
+
+---
+
+### POST `/api/webhooks/linear`
+
+Receives Linear webhook payloads. Only processes `action: "update"` events on `Issue` resources where the new state `type` is `"completed"`.
+
+**Request (from Linear):**
+```json
+{
+  "action": "update",
+  "type": "Issue",
+  "data": {
+    "id": "issue_abc123",
+    "state": { "name": "Done", "type": "completed" },
+    "updatedAt": "2026-04-09T16:00:00.000Z"
+  }
+}
+```
+
+**Response (matched and resumed):**
+```json
+{
+  "success": true,
+  "data": { "received": true, "matched": true, "runId": "run_abc123" }
+}
+```
+
+**Response (skipped — not a completed state):**
+```json
+{
+  "success": true,
+  "data": { "received": true, "skipped": true, "reason": "state not completed" }
+}
+```
+
+---
+
+### POST `/api/workflows/triage-workflow/trigger`
+
+Triggers the `triage-workflow` directly. Useful for programmatic intake from monitoring alerts.
+
+**Request:**
+```json
+{
+  "description": "Checkout is returning 500 errors since 14:23 UTC",
+  "reporterEmail": "oncall@example.com",
+  "images": [],
+  "repository": "org/repo"
+}
+```
+
+**Response:**
+```json
+{ "success": true, "data": { "runId": "run_abc123", "status": "started" } }
+```
+
+The workflow starts in the background. Use the `runId` to track progress (via Langfuse traces or direct LibSQL query).

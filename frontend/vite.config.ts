@@ -11,4 +11,13 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    allowedHosts: true,
+    proxy: {
+      '/api': 'http://runtime:4111',
+      '/auth': 'http://runtime:4111',
+      '/chat': 'http://runtime:4111',
+      '/health': 'http://runtime:4111',
+    },
+  },
 })

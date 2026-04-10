@@ -28,6 +28,9 @@ const envSchema = z.object({
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_SECRET_KEY: z.string().optional(),
   LANGFUSE_BASEURL: z.string().optional(),
+
+  // GitHub (optional — used for repo-aware triage)
+  GITHUB_TOKEN: z.string().optional(),
 });
 
 /** Validated and typed environment config */
@@ -56,17 +59,42 @@ export function validateEnv(): EnvConfig {
 /**
  * Model identifiers used across the runtime.
  *
+ * All orchestrator/agent models MUST support tool/function calling via OpenRouter.
+ *
+ * - orchestrator: Qwen 3.6 Plus (1M context, tools + vision, paid).
+ * - orchestratorFallback1: Qwen3 235B MoE (free, 131K context, tools confirmed).
+ * - orchestratorFallback2: DeepSeek V3 (free, 131K context, tools confirmed).
  * - mercury: Fast text generation, research, summarization. TEXT-ONLY.
- * - vision: Multimodal understanding (images, screenshots). Gemma 4 31B.
+ * - vision: Gemma 4 31B (free) — dedicated multimodal for image analysis.
  * - visionFallback: Paid Gemma 4 — used when free tier is rate-limited.
+ * - freeRouter: OpenRouter auto-router fallback.
  */
 export const MODELS = {
+  /** qwen/qwen3.6-plus — primary orchestrator (1M context, tools + vision) */
+  orchestrator: 'qwen/qwen3.6-plus',
+  /** qwen/qwen3-235b-a22b:free — orchestrator fallback 1 (MoE 235B, tools confirmed) */
+  orchestratorFallback1: 'qwen/qwen3-235b-a22b:free',
+  /** deepseek/deepseek-chat-v3-0324:free — orchestrator fallback 2 (tools confirmed) */
+  orchestratorFallback2: 'deepseek/deepseek-chat-v3-0324:free',
   /** inception/mercury-2 — fast text, structured output, reasoning. TEXT-ONLY. */
-  mercury: 'inception/mercury-2' as const,
+  mercury: 'inception/mercury-2',
   /** google/gemma-4-31b-it:free — multimodal vision (free tier) */
-  vision: 'google/gemma-4-31b-it:free' as const,
+  vision: 'google/gemma-4-31b-it:free',
   /** google/gemma-4-31b-it — multimodal vision (paid fallback) */
-  visionFallback: 'google/gemma-4-31b-it' as const,
+  visionFallback: 'google/gemma-4-31b-it',
+  /** openrouter/auto — free router fallback */
+  freeRouter: 'openrouter/auto',
+} as const;
+
+/**
+ * Fallback chains for each model role.
+ * OpenRouter tries models in order until one succeeds.
+ * Max 4 models per chain (OpenRouter limit).
+ */
+export const MODEL_CHAINS = {
+  orchestrator: [MODELS.orchestrator, MODELS.orchestratorFallback1, MODELS.orchestratorFallback2],
+  subAgent: [MODELS.mercury, MODELS.freeRouter],
+  vision: [MODELS.vision, MODELS.visionFallback, MODELS.freeRouter],
 } as const;
 
 // ============================================================
@@ -86,6 +114,7 @@ export const config = {
   LINEAR_API_KEY: process.env.LINEAR_API_KEY || undefined,
   RESEND_API_KEY: process.env.RESEND_API_KEY || undefined,
   RESEND_FROM_EMAIL: (fromEmail && z.string().email().safeParse(fromEmail).success) ? fromEmail : 'triage@agenticengineering.lat',
+  GITHUB_TOKEN: process.env.GITHUB_TOKEN || undefined,
 };
 
 // ============================================================

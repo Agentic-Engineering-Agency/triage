@@ -1,0 +1,61 @@
+---
+title: Integrations
+description: Linear, Resend, OpenRouter, and Langfuse — how Triage connects to external services
+---
+
+Triage connects to four external services. All integrations are optional at startup — the runtime validates their keys lazily (when a tool actually calls the service). This means the stack starts and runs even if no integrations are configured, with graceful degradation at each level.
+
+## Integration Overview
+
+| Integration | Purpose | Required? | Fallback |
+|-------------|---------|-----------|---------|
+| [Linear](/docs/integrations/linear) | Issue tracking — ticket creation, updates, webhooks | Optional | Tickets stored in `local_tickets` LibSQL table |
+| [Resend](/docs/integrations/resend) | Email notifications to assignees and reporters | Optional | Notification logged and skipped |
+| [OpenRouter](/docs/integrations/openrouter) | LLM API router — all model calls | **Required** | 3-model fallback chains (no hard failure) |
+| [Langfuse](/docs/integrations/langfuse) | LLM observability — traces, latency, cost | Optional | Tracing silently skipped |
+
+## Graceful Degradation Details
+
+### Linear Unavailable
+
+When `LINEAR_API_KEY` is not set or when Linear API calls fail:
+- `createLinearIssueTool` writes to the `local_tickets` LibSQL table instead
+- `updateLinearIssueTool`, `getLinearIssueTool`, `listLinearIssuesTool` return a `NO_LINEAR_KEY` error
+- The board view (`GET /api/linear/issues`) returns `{ success: false, error: { code: 'NO_LINEAR_KEY' } }`
+- The Linear webhook endpoint (`POST /api/webhooks/linear`) still accepts requests but cannot resume workflow runs without a matching issue ID
+
+All of these errors are surfaced in the UI so the user knows the degraded state.
+
+### Resend Unavailable
+
+When `RESEND_API_KEY` is not set or when Resend API calls fail:
+- `sendTicketEmailTool` logs the failure and returns `{ success: false, error: "..." }`
+- `sendResolutionEmailTool` behaves the same
+- The workflow and triage process continue normally — email is best-effort
+
+### OpenRouter Rate Limits
+
+OpenRouter is the only required integration. When the primary model is rate-limited:
+- OpenRouter's `route: 'fallback'` strategy automatically tries the next model in the chain
+- Orchestrator chain: MiniMax M2.7 → Qwen3 235B (free) → MiniMax M2.5 (free)
+- Sub-agent chain: Mercury-2 → openrouter/auto
+- Vision chain: Gemma 4 31B (free) → Gemma 4 31B (paid) → openrouter/auto
+
+### Langfuse Unavailable
+
+When `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are not set:
+- `LangfuseExporter` is not initialized
+- All LLM calls proceed without tracing
+- No errors are surfaced to the user
+
+When Langfuse is configured but unreachable:
+- The exporter retries in the background and logs failures
+- LLM calls are not blocked — traces are best-effort
+
+## GitHub Integration (Stub)
+
+`GITHUB_TOKEN` is validated in the env schema but the GitHub integration is currently a stub. It is referenced in tool definitions for future PR-aware triage context. Set it now to ensure compatibility when it becomes active.
+
+## Slack and Jira (Stubs)
+
+`SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`, `SLACK_SIGNING_SECRET`, `JIRA_BASE_URL`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` are defined in `.env.example` for future use. They are not currently wired to any tool or agent.

@@ -13,15 +13,17 @@ import { TriageCard } from "./triage-card"
  * Add new tool types here as they are implemented in runtime/src/mastra/tools/.
  */
 export const toolComponents: Record<string, ComponentType<any>> = {
-  displayTriage: TriageCard,
-  displayDuplicate: DuplicatePrompt,
+  // Keys must match the object keys in orchestrator's `tools: { ... }`.
+  // Mastra uses the object key (not the tool's `id`) as the tool name in the stream.
+  displayTriageTool: TriageCard,
+  displayDuplicateTool: DuplicatePrompt,
 }
 
 /**
  * Duplicate detection prompt card.
  * Renders when the agent detects a similar existing ticket.
  */
-function DuplicatePrompt({
+export function DuplicatePrompt({
   existingTicketTitle,
   existingTicketUrl,
   similarity,

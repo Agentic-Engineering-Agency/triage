@@ -1,0 +1,183 @@
+---
+title: Linear
+description: Issue tracking integration — 5 tools, webhook flow, and LOCAL_CONSTANTS UUIDs
+---
+
+Linear is the primary issue tracking integration. Triage creates, updates, and searches Linear issues using the official `@linear/sdk` client. A webhook from Linear to the runtime triggers the resolution review phase of the triage workflow.
+
+## Configuration
+
+```bash
+LINEAR_API_KEY=lin_api_...
+```
+
+The key is optional at startup — the runtime instantiates a `LinearClient` singleton only if the key is set:
+
+```typescript
+const linearClient = config.LINEAR_API_KEY
+  ? new LinearClient({ apiKey: config.LINEAR_API_KEY })
+  : null;
+```
+
+All endpoints that require Linear return `{ success: false, error: { code: 'NO_LINEAR_KEY' } }` if the key is not set.
+
+## Team Configuration
+
+Issue creation and queries are scoped to a single team defined in `LINEAR_CONSTANTS`:
+
+```typescript
+export const LINEAR_CONSTANTS = {
+  TEAM_ID: '645a639b-39e2-4abe-8ded-3346d2f79f9f',   // triage-hackathon team
+  // ...
+}
+```
+
+## States
+
+| State | UUID |
+|-------|------|
+| Triage | `582398ee-98b0-406b-b2f6-8bca23c1b607` |
+| Backlog | `b4bc738c-c3a5-4355-a3fe-72d183ec21ee` |
+| Todo | `3b9b9b60-e6eb-4914-9e1d-f3c8ce1eba0c` |
+| In Progress | `889e861e-3bd6-4f98-888d-3e976ee583e9` |
+| In Review | `1b1e7e58-03e7-4bb9-be10-669444e7b377` |
+| Done | `0b0ac11a-a9c1-46d9-a10a-dabb935b53af` |
+| Duplicate | `5a98d91e-773d-4301-a966-1398ae99b906` |
+| Canceled | `19d1f436-5f3e-420b-a197-f31cfd2636f6` |
+
+New incidents are created in **Triage** state. The webhook triggers when an issue enters a state with `type: "completed"` (the Done state).
+
+## Severity Labels
+
+| Label | UUID |
+|-------|------|
+| Critical | `60a50b72-d1c2-4823-9111-f85f345138d7` |
+| High | `500cd0cb-2501-43e9-ad91-fba598d40a54` |
+| Medium | `bca8aa2f-e32b-49a3-9bc4-18a33c4c832e` |
+| Low | `28fe88b4-88fa-4cd5-a35d-dcec4e4df82d` |
+
+## Category Labels
+
+| Label | UUID |
+|-------|------|
+| Bug | `f599da19-8743-4569-a110-a666dc588811` |
+| Feature | `909d247a-40f4-48d5-a104-c238cc2ab45b` |
+| Improvement | `50756390-d166-4b79-a740-ceefb203751f` |
+
+## Team Members
+
+| Member | UUID |
+|--------|------|
+| Fernando | `90b16a9c-3f47-49fc-8d98-abf3aa6ecb13` |
+| Koki | `c3f725e4-aa51-45d3-af43-d29a87077226` |
+| Chenko | `7d177d95-4df7-4dff-a3df-710f49eba663` |
+| Lalo | `b17c4757-ceef-4a13-b3c4-fc2ae09d50de` |
+
+## The Five Tools
+
+### `createLinearIssueTool`
+
+Creates a new Linear issue. This is the only tool that requires user approval before being called by the orchestrator — the user must explicitly approve the triage card first.
+
+**Creates:** A new issue in the `Triage` state with appropriate severity label, title, description (full triage output), and assignee.
+
+**Fallback:** If `LINEAR_API_KEY` is not set or the API call fails, the issue is written to the `local_tickets` LibSQL table instead.
+
+### `updateLinearIssueTool`
+
+Updates an existing Linear issue. Used to change state, assignee, labels, or priority.
+
+### `getLinearIssueTool`
+
+Fetches a specific Linear issue by ID. Used by the resolution reviewer to retrieve the original triage data when verifying a fix.
+
+### `listLinearIssuesTool` / `searchLinearIssues`
+
+Searches and lists issues filtered by team, state, or text. Used by the orchestrator for duplicate detection before running triage.
+
+### `getTeamMembersTool`
+
+Returns active, non-guest team members. Used by the orchestrator to suggest assignees for new incidents.
+
+## API Routes
+
+Three Linear-related routes are registered directly on the Mastra server:
+
+### `GET /api/linear/issues`
+
+Fetches all team issues and groups them by state name. Returns:
+
+```json
+{
+  "success": true,
+  "data": {
+    "Triage": [...],
+    "In Progress": [...],
+    "Done": [...]
+  }
+}
+```
+
+Each issue object includes `id`, `identifier`, `title`, `priority`, `estimate`, `project`, `url`, `createdAt`, `updatedAt`, `assignee`, and `labels`.
+
+### `GET /api/linear/cycle/active`
+
+Returns the currently active cycle with progress metrics:
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "...",
+    "name": "Cycle 5",
+    "number": 5,
+    "startsAt": "2026-04-07T00:00:00.000Z",
+    "endsAt": "2026-04-14T00:00:00.000Z",
+    "progress": 0.43,
+    "scopeCount": 12,
+    "completedScopeCount": 5,
+    "startedScopeCount": 3
+  }
+}
+```
+
+### `GET /api/linear/members`
+
+Returns active, non-guest team members:
+
+```json
+{
+  "success": true,
+  "data": {
+    "members": [
+      { "id": "...", "name": "Fernando", "email": "...", "displayName": "Fernando" }
+    ]
+  }
+}
+```
+
+## Webhook Flow
+
+### Setting Up the Webhook
+
+Register the Linear webhook via the setup endpoint:
+
+```bash
+curl -X POST http://localhost:4111/api/linear/webhook/setup \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://your-public-url.example/api/webhooks/linear"}'
+```
+
+This registers a webhook on your Linear team for `Issue` resource type events.
+
+### Receiving Webhooks
+
+`POST /api/webhooks/linear` receives Linear webhook payloads. The handler:
+
+1. Filters for `action: "update"`, `type: "Issue"` events only
+2. Checks if the new state has `type: "completed"` — skips all others
+3. Searches suspended workflow runs in LibSQL for one matching the `issueId`
+4. If found, resumes the workflow at the `suspend` step with `{ newStatus, updatedAt }`
+5. Responds immediately (resume runs in the background)
+
+The workflow suspension mechanism stores the `issueId` in the ticket step output, embedded in the workflow snapshot in LibSQL. The webhook handler parses this snapshot to find the matching run.

@@ -1,0 +1,116 @@
+---
+title: Orchestrator
+description: MiniMax M2.7 with 3-model fallback — the main entry point for all user interactions
+---
+
+The orchestrator is the primary agent users interact with. It handles conversation, routes to sub-agents, calls tools, and presents triage results for approval. It is exposed at `POST /chat` via the Vercel AI SDK streaming protocol.
+
+## Configuration
+
+```typescript
+new Agent({
+  id: 'orchestrator',
+  name: 'orchestrator',
+  model: openrouter(MODELS.orchestrator, {
+    extraBody: {
+      models: MODEL_CHAINS.orchestrator,
+      route: 'fallback',
+    },
+  }),
+  memory,                         // MemoryLibSQL — conversation persistence
+  defaultGenerateOptions: {
+    maxTokens: 8192,
+  },
+  agents: {
+    codeReviewAgent,              // callable as tool: agent-codeReviewAgent
+  },
+  tools: { /* 11 tools */ },
+})
+```
+
+## Model
+
+**Primary:** `minimax/minimax-m2.7-20260318`
+
+**Fallback chain** (tried in order if the primary is unavailable):
+1. `qwen/qwen3-235b-a22b:free` — Qwen3 235B (free tier)
+2. `minimax/minimax-m2.5-20260211:free` — MiniMax M2.5 (free tier)
+
+The `route: 'fallback'` strategy in OpenRouter means the next model in the chain is tried automatically on rate limit or error — no manual retry logic in the application code.
+
+**Context limit:** `maxTokens: 8192` per generation.
+
+## Conversation Memory
+
+The orchestrator uses `MemoryLibSQL` for per-thread conversation history. Each call to `POST /chat` must include a `threadId` in the request body. Messages for that thread are stored in LibSQL and retrieved on subsequent requests, giving the agent full context across multiple turns.
+
+Memory is stored in the same LibSQL instance as workflow state (`http://libsql:8080`).
+
+## Registered Tools (11)
+
+| Tool | Description |
+|------|-------------|
+| `createLinearIssueTool` | Create a Linear issue. Called after user approves the triage card. |
+| `updateLinearIssueTool` | Update an existing Linear issue (state, assignee, labels). |
+| `getLinearIssueTool` | Fetch a specific Linear issue by ID. |
+| `listLinearIssuesTool` | Search/list Linear issues. Used for duplicate detection. |
+| `getTeamMembersTool` | List Linear team members for assignment suggestions. |
+| `sendTicketEmailTool` | Send HTML email to the assignee via Resend. |
+| `sendResolutionEmailTool` | Send resolution notification to the reporter via Resend. |
+| `queryWikiTool` | Vector search the codebase wiki in LibSQL. |
+| `processAttachmentsTool` | Describe images using the vision model (Gemma 4 31B). |
+| `displayTriageTool` | Render a triage card in the chat UI (generative UI). |
+| `displayDuplicateTool` | Render a duplicate warning card in the chat UI. |
+
+## Sub-Agent (1)
+
+| Sub-Agent | Description |
+|-----------|-------------|
+| `codeReviewAgent` | Callable as `agent-codeReviewAgent`. Code/PR review — delegates automatically when user asks for code review. |
+
+## Incident Analysis Flow
+
+The orchestrator follows this decision tree for incident reports:
+
+```
+1. process-attachments     (if files are present)
+2. query-wiki              (always — find relevant codebase context)
+3. list-linear-issues      (check for duplicates)
+4. Evaluate similarity:
+   ├── > 0.85 → displayDuplicate (action: "Update Existing")
+   ├── 0.70–0.85 → displayDuplicate (action: "Create New", warning)
+   └── < 0.70 → continue to triage
+5. displayTriage           (show pending card — do NOT create ticket yet)
+6. await user approval
+7. createLinearIssueTool   (only after approval)
+8. sendTicketEmailTool     (notify assignee)
+```
+
+The key constraint is **requireApproval**: the orchestrator must never call `createLinearIssueTool` without first showing a `displayTriage` card and receiving explicit user confirmation. This is enforced at the instruction level.
+
+## Similarity Scoring
+
+Duplicate detection uses keyword overlap ratio:
+
+```
+similarity = matching keywords / total unique keywords
+```
+
+Keywords are extracted from the new incident description and compared against each existing Linear issue's title and description. The thresholds (0.70, 0.85) determine whether a full triage is run or a duplicate warning is shown.
+
+## Response Style
+
+The orchestrator's instructions emphasize:
+- **Concise and technical** — no filler text
+- **File-specific references** — always reference files, services, and line ranges
+- **Honest about uncertainty** — never fabricate file paths or code references
+- **Plain text when not triaging** — only use generative UI tools for actual triage results
+
+## Code Review Delegation
+
+When a user asks for code review, the orchestrator delegates automatically to `code-review-agent` via the `agent-codeReviewAgent` tool. The code review agent has two modes:
+
+- **chill** — flags only bugs, security issues, and data integrity risks
+- **assertive** — comprehensive review including style and best practices
+
+The orchestrator determines the appropriate mode based on context (e.g., "quick review" → chill, "full review" or "detailed review" → assertive).

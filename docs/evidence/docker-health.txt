@@ -1,0 +1,11 @@
+NAME                         STATUS
+triage-clickhouse-1          Up 2 hours (healthy)
+triage-cloudflared-1         Up About an hour
+triage-langfuse-postgres-1   Up 2 hours (healthy)
+triage-langfuse-web-1        Up 2 minutes (health: starting)
+triage-langfuse-worker-1     Up 2 minutes (health: starting)
+triage-libsql-1              Up 6 minutes (healthy)
+triage-minio-1               Up 2 hours (healthy)
+triage-redis-1               Up 2 hours (healthy)
+triage-runtime-1             Up 4 minutes (healthy)
+triage-vite-1                Up 6 minutes
