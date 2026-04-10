@@ -296,13 +296,15 @@ interface JsonResponse {
   body: unknown;
 }
 
-function makeCtx(opts: { params?: Record<string, string>; body?: unknown } = {}) {
+function makeCtx(opts: { params?: Record<string, string>; body?: unknown; headers?: Record<string, string> } = {}) {
   const params = opts.params ?? {};
   const body = opts.body;
+  const headers = opts.headers ?? {};
   return {
     req: {
       param: (key: string) => params[key],
       json: async () => body,
+      header: (key: string) => headers[key],
     },
     json: (payload: unknown, status = 200): JsonResponse => ({ status, body: payload }),
   } as unknown as import('hono').Context & {

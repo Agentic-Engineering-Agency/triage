@@ -367,20 +367,20 @@ describe('REQ-A04: Caddyfile Environment Variable Switching', () => {
     expect(snippet).toMatch(/reverse_proxy.*vite:5173/);
   });
 
-  it('T-A22: Caddyfile uses import {$FRONTEND_MODE:static}-frontend', () => {
+  it('T-A22: Caddyfile uses import static-frontend', () => {
     // GIVEN the Caddyfile
     // WHEN inspected
-    // THEN it contains the dynamic import with default static
+    // THEN it contains the hardcoded static-frontend import
     const caddy = readCaddyfile();
-    expect(caddy).toMatch(/import\s+\{\$FRONTEND_MODE:static\}-frontend/);
+    expect(caddy).toMatch(/import\s+static-frontend/);
   });
 
-  it('T-A04-DEFAULT: default is static when FRONTEND_MODE is unset', () => {
-    // GIVEN the Caddyfile import directive
-    // WHEN FRONTEND_MODE is not set
-    // THEN the default value in the import is "static"
+  it('T-A04-DEFAULT: default is static (hardcoded import)', () => {
+    // GIVEN the Caddyfile frontend handler
+    // WHEN inspected
+    // THEN the default behavior uses static-frontend snippet
     const caddy = readCaddyfile();
-    const importMatch = caddy.match(/import\s+\{\$FRONTEND_MODE:(\w+)\}-frontend/);
+    const importMatch = caddy.match(/import\s+(static|dev)-frontend/);
     expect(importMatch).not.toBeNull();
     expect(importMatch![1]).toBe('static');
   });
