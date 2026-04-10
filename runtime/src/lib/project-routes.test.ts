@@ -33,12 +33,19 @@ const store = {
   projects: new Map<string, Row>(),
   wiki_documents: new Map<string, Row>(),
   wiki_chunks: new Map<string, Row>(),
+  auth_session: new Map<string, Row>([
+    ['test-session-token', { token: 'test-session-token', user_id: 'test-user-id' }],
+  ]),
 };
 
 function resetStore() {
   store.projects.clear();
   store.wiki_documents.clear();
   store.wiki_chunks.clear();
+  // Keep auth_session for tests
+  if (!store.auth_session.has('test-session-token')) {
+    store.auth_session.set('test-session-token', { token: 'test-session-token', user_id: 'test-user-id' });
+  }
 }
 
 /**
@@ -69,6 +76,15 @@ function fakeExecute(input: unknown, maybeArgs?: unknown[]): { rows: Row[]; rows
   const s = sql.trim();
 
   // ---------- projects: list ----------
+  if (/^SELECT.*FROM projects\s+WHERE user_id\s*=\s*\?.*ORDER BY/i.test(s)) {
+    const userId = args[0] as string;
+    const rows = Array.from(store.projects.values())
+      .filter((p) => p.user_id === userId)
+      .sort((a, b) => Number(b.created_at) - Number(a.created_at));
+    return { rows, rowsAffected: 0 };
+  }
+
+  // ---------- projects: list (fallback, no user filter) ----------
   if (/^SELECT.*FROM projects\s+ORDER BY/i.test(s)) {
     const rows = Array.from(store.projects.values()).sort(
       (a, b) => Number(b.created_at) - Number(a.created_at),
@@ -76,7 +92,15 @@ function fakeExecute(input: unknown, maybeArgs?: unknown[]): { rows: Row[]; rows
     return { rows, rowsAffected: 0 };
   }
 
-  // ---------- projects: single by id ----------
+  // ---------- projects: single by id and user_id ----------
+  if (/^SELECT.*FROM projects\s+WHERE id\s*=\s*\? AND user_id\s*=\s*\?/i.test(s)) {
+    const id = args[0] as string;
+    const userId = args[1] as string;
+    const row = store.projects.get(id);
+    return { rows: row && row.user_id === userId ? [row] : [], rowsAffected: 0 };
+  }
+
+  // ---------- projects: single by id (fallback, no user filter) ----------
   if (/^SELECT.*FROM projects\s+WHERE id\s*=\s*\?/i.test(s)) {
     const id = args[0] as string;
     const row = store.projects.get(id);
@@ -85,16 +109,20 @@ function fakeExecute(input: unknown, maybeArgs?: unknown[]): { rows: Row[]; rows
 
   // ---------- projects: insert ----------
   if (/^INSERT INTO projects/i.test(s)) {
-    const [id, name, repo_url, repo_default_branch, created_at, updated_at] = args as [
-      string,
-      string,
-      string,
-      string,
-      number,
-      number,
-    ];
+    // Handle both: INSERT INTO projects (..., user_id, ...) and without user_id
+    // For simplicity, assume: id, name, repo_url, repo_default_branch, created_at, updated_at, [user_id]
+    let id: string, name: string, repo_url: string, repo_default_branch: string, created_at: number, updated_at: number;
+    let user_id: string = 'test-user-id';
+
+    if (args.length === 7) {
+      [id, name, repo_url, repo_default_branch, created_at, updated_at, user_id] = args as [string, string, string, string, number, number, string];
+    } else {
+      [id, name, repo_url, repo_default_branch, created_at, updated_at] = args as [string, string, string, string, number, number];
+    }
+
     store.projects.set(id, {
       id,
+      user_id,
       name,
       repo_url,
       repo_default_branch,
@@ -151,8 +179,19 @@ function fakeExecute(input: unknown, maybeArgs?: unknown[]): { rows: Row[]; rows
   }
 
   // ---------- projects: delete ----------
-  if (/^DELETE FROM projects WHERE id\s*=\s*\?/i.test(s)) {
+  if (/^DELETE FROM projects WHERE/i.test(s) && s.includes('id')) {
+    // Supports: DELETE FROM projects WHERE id = ? [AND user_id = ?]
     const id = args[0] as string;
+    const userId = args.length > 1 ? (args[1] as string) : null;
+
+    // Check user_id match if provided
+    if (userId) {
+      const project = store.projects.get(id);
+      if (!project || project.user_id !== userId) {
+        return { rows: [], rowsAffected: 0 };
+      }
+    }
+
     // Cascade: drop wiki_documents and their chunks for this project
     const docIds: string[] = [];
     for (const [docId, doc] of store.wiki_documents.entries()) {
@@ -189,6 +228,13 @@ function fakeExecute(input: unknown, maybeArgs?: unknown[]): { rows: Row[]; rows
       docIds.has(ch.document_id as string),
     ).length;
     return { rows: [{ count }], rowsAffected: 0 };
+  }
+
+  // ---------- auth_session lookup ----------
+  if (/^SELECT.*FROM auth_session WHERE token/i.test(s)) {
+    const token = args[0] as string;
+    const row = store.auth_session.get(token);
+    return { rows: row ? [row] : [], rowsAffected: 0 };
   }
 
   // Fallthrough: return empty — helps debugging unexpected SQL
@@ -299,7 +345,11 @@ interface JsonResponse {
 function makeCtx(opts: { params?: Record<string, string>; body?: unknown; headers?: Record<string, string> } = {}) {
   const params = opts.params ?? {};
   const body = opts.body;
-  const headers = opts.headers ?? {};
+  // Default headers include a valid session cookie for auth
+  const headers = {
+    cookie: 'session=test-session-token',
+    ...opts.headers,
+  };
   return {
     req: {
       param: (key: string) => params[key],
@@ -320,6 +370,7 @@ function seedProject(overrides: Partial<Row> = {}): Row {
   const now = Date.now();
   const row: Row = {
     id,
+    user_id: 'test-user-id', // Must match the user_id from test-session-token
     name: 'Seeded',
     repo_url: 'https://github.com/example/seed',
     repo_default_branch: 'main',
