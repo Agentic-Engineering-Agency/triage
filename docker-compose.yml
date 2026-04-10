@@ -131,11 +131,11 @@ services:
       LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME}
       LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD}
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/public/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://$$(hostname):3000/api/public/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
-      start_period: 60s
+      start_period: 180s
     restart: always
     networks:
       - langfuse
@@ -156,11 +156,11 @@ services:
     environment:
       <<: *langfuse-worker-env
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3030/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://$$(hostname):3030/api/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      start_period: 180s
     restart: always
     networks:
       - langfuse
