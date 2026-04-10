@@ -39,9 +39,11 @@ Open `.env` and set at minimum these four variables:
 | `RESEND_API_KEY` | Yes | [resend.com](https://resend.com) → API Keys |
 | `BETTER_AUTH_SECRET` | Yes | Any random 32+ character string |
 | `RESEND_FROM_EMAIL` | Recommended | A verified sender address on your Resend domain |
+| `SLACK_BOT_TOKEN` | Recommended | [api.slack.com/apps](https://api.slack.com/apps) → OAuth & Permissions → Bot User OAuth Token (scope: `chat:write`) |
+| `SLACK_CHANNEL_ID` | Recommended | Right-click a Slack channel → "View channel details" → copy the Channel ID |
 | `CLOUDFLARE_TUNNEL_TOKEN` | Optional | Cloudflare Tunnel token for exposing Langfuse publicly. Get with: `cloudflared tunnel token triage-hackathon` |
 
-The full `.env.example` documents all 38 variables with descriptions and defaults.
+The full `.env.example` documents all 58 variables with descriptions and defaults.
 
 ### 4. Start All Services
 
@@ -68,8 +70,15 @@ The first run pulls base images and builds both app containers — allow about 2
 2. In the chat, describe an incident:
    > "We're seeing 500 errors on the checkout page starting 20 minutes ago. The payment service logs show a timeout connecting to the order processor."
 3. The agent triages the incident and displays a **TriageCard** with severity, confidence score, root cause, and affected file references
-4. Click **Create Ticket** to approve — the agent creates a Linear issue and sends an email notification to the team
+4. Click **Create Ticket** to approve — the agent creates a Linear issue and sends email + Slack notifications to the team
 5. When a fix ships, the webhook triggers the Resolution Reviewer agent to confirm resolution and notify the reporter
+
+## Optional: Connect a Codebase (Projects)
+
+1. Navigate to `http://localhost:3001/projects`
+2. Click **Add Project** and enter a Git repository URL (e.g., `https://github.com/solidusio/solidus`) and branch
+3. The Wiki/RAG pipeline clones the repo, chunks source files, and generates vector embeddings — progress shows in real time
+4. Once status shows **Ready**, the Triage Agent will use this codebase for grounded root-cause analysis
 
 ## Optional: Run Tests
 
@@ -117,3 +126,9 @@ Verify `RESEND_API_KEY` is valid and `RESEND_FROM_EMAIL` matches a verified send
 
 **Linear ticket not created**
 Check that `LINEAR_API_KEY` has write access and that `LINEAR_TEAM_ID` in `.env` matches an existing team. If Linear is unreachable, Triage falls back to storing tickets in the local `local_tickets` table — check the runtime logs for the fallback message.
+
+**Slack notifications not appearing**
+Verify `SLACK_BOT_TOKEN` is a valid Bot User OAuth Token (starts with `xoxb-`), the bot has been invited to the target channel, and `SLACK_CHANNEL_ID` matches the correct channel. Slack is optional — if not configured, the system silently skips Slack notifications and relies on email only.
+
+**Wiki/RAG ingestion stuck on "processing"**
+Check runtime logs: `docker compose logs -f runtime | grep wiki`. Common causes: the repository URL requires authentication (use public repos or configure git credentials), the repo is very large (>100k files), or the OpenRouter embedding API is rate-limited.
