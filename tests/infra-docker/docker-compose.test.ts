@@ -371,14 +371,19 @@ describe('REQ-D03: Dependency Ordering', () => {
 // REQ-D04: Ephemeral Volumes (no named volumes — clean slate on restart)
 // ---------------------------------------------------------------------------
 describe('REQ-D04: Ephemeral Volumes', () => {
-  describe('T-D05: No named volumes (ephemeral data)', () => {
-    it('should NOT have named volumes at top level (ephemeral approach)', () => {
+  describe('T-D05: Ephemeral by default (one intentional exception)', () => {
+    it('only langfuse_postgres_data may be declared as a named volume', () => {
       // GIVEN docker-compose.yml is parsed
       // WHEN inspecting top-level volumes key
-      // THEN no named volumes should be declared (data recreated on restart)
+      // THEN the project intentionally declares langfuse_postgres_data
+      // as a named volume so the Langfuse admin user and captured
+      // traces survive a `docker compose down` (headless Langfuse
+      // init only runs on a fresh DB). All other services remain on
+      // anonymous volumes. Wipe Langfuse data with:
+      //   docker compose down -v && docker volume rm triage_langfuse_postgres_data
       const compose = loadCompose();
-      const volumeNames = Object.keys(compose.volumes || {});
-      expect(volumeNames.length).toBe(0);
+      const volumeNames = Object.keys(compose.volumes || {}).sort();
+      expect(volumeNames).toEqual(['langfuse_postgres_data']);
     });
 
     it('services should use anonymous volumes for data directories', () => {

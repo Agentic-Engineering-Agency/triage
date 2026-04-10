@@ -1,6 +1,6 @@
 # Quick Start Guide — Triage
 
-> **Demo video:** <!-- TODO: demo video URL --> _coming soon_ — #AgentXHackathon
+> **Demo video:** [https://www.youtube.com/watch?v=xxEpYnM3TIk](https://www.youtube.com/watch?v=xxEpYnM3TIk) — #AgentXHackathon
 > _Last updated: 2026-04-10_
 
 Get the full Triage system running locally in about 5 minutes on a clean machine.
