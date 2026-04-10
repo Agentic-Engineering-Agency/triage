@@ -24,6 +24,11 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().email().optional(),
 
+  // Slack (optional — graceful degradation if not configured)
+  SLACK_BOT_TOKEN: z.string().optional(),
+  SLACK_CHANNEL_ID: z.string().optional(),
+  SLACK_SIGNING_SECRET: z.string().optional(),
+
   // Langfuse (optional — observability is not required for core function)
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_SECRET_KEY: z.string().optional(),
@@ -115,31 +120,37 @@ export const config = {
   RESEND_API_KEY: process.env.RESEND_API_KEY || undefined,
   RESEND_FROM_EMAIL: (fromEmail && z.string().email().safeParse(fromEmail).success) ? fromEmail : 'triage@agenticengineering.lat',
   GITHUB_TOKEN: process.env.GITHUB_TOKEN || undefined,
+  SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN || undefined,
+  SLACK_CHANNEL_ID: process.env.SLACK_CHANNEL_ID || undefined,
+  SLACK_SIGNING_SECRET: process.env.SLACK_SIGNING_SECRET || undefined,
 };
 
 // ============================================================
 // Linear constants (from Koki's Linear/Resend integration)
 // ============================================================
 
+export const LINEAR_BASE_URL = 'https://linear.app/agentic-engineering-agency';
+
 export const LINEAR_CONSTANTS = {
-  TEAM_ID: '645a639b-39e2-4abe-8ded-3346d2f79f9f',
+  // SOL team (Solidus) — https://linear.app/agentic-engineering-agency/team/SOL/all
+  TEAM_ID: 'a81af9a1-6066-4cfa-9971-e937455d01c5',
 
   STATES: {
-    TRIAGE: '582398ee-98b0-406b-b2f6-8bca23c1b607',
-    BACKLOG: 'b4bc738c-c3a5-4355-a3fe-72d183ec21ee',
-    TODO: '3b9b9b60-e6eb-4914-9e1d-f3c8ce1eba0c',
-    IN_PROGRESS: '889e861e-3bd6-4f98-888d-3e976ee583e9',
-    IN_REVIEW: '1b1e7e58-03e7-4bb9-be10-669444e7b377',
-    DONE: '0b0ac11a-a9c1-46d9-a10a-dabb935b53af',
-    DUPLICATE: '5a98d91e-773d-4301-a966-1398ae99b906',
-    CANCELED: '19d1f436-5f3e-420b-a197-f31cfd2636f6',
+    TRIAGE: 'bce0cec5-80ba-407e-aa98-248c380ce966',
+    BACKLOG: 'a1b56fee-32c7-4c7d-b6cd-318380590a53',
+    TODO: '52a97f3f-481b-40f9-8187-237dc282a47d',
+    IN_PROGRESS: '3aba585d-1838-4a0e-9651-c4a2c9032dfb',
+    IN_REVIEW: '3425bc21-40e6-457d-9b8a-4386e0509d79',
+    DONE: '40c24407-f5d5-4489-b5ac-ef964373d954',
+    DUPLICATE: '9f2f1444-3a4b-46db-858c-f643a6d5aecb',
+    CANCELED: '6ff262e3-d016-4777-836b-1357cd535f73',
   },
 
   SEVERITY_LABELS: {
-    CRITICAL: '60a50b72-d1c2-4823-9111-f85f345138d7',
-    HIGH: '500cd0cb-2501-43e9-ad91-fba598d40a54',
-    MEDIUM: 'bca8aa2f-e32b-49a3-9bc4-18a33c4c832e',
-    LOW: '28fe88b4-88fa-4cd5-a35d-dcec4e4df82d',
+    CRITICAL: '47785580-5256-4240-9f11-cde67e06a4c3',
+    HIGH: 'eef1c6e5-f3c0-4b0f-9702-189748af77f0',
+    MEDIUM: 'bd743933-cd2f-4b05-a832-669aefb2af77',
+    LOW: 'f4350e9c-96ea-44f8-931a-4af52aacf3ed',
   },
 
   CATEGORY_LABELS: {
@@ -149,9 +160,9 @@ export const LINEAR_CONSTANTS = {
   },
 
   MEMBERS: {
-    FERNANDO: '90b16a9c-3f47-49fc-8d98-abf3aa6ecb13',
-    KOKI: 'c3f725e4-aa51-45d3-af43-d29a87077226',
-    CHENKO: '7d177d95-4df7-4dff-a3df-710f49eba663',
-    LALO: 'b17c4757-ceef-4a13-b3c4-fc2ae09d50de',
+    FERNANDO: { linearId: '90b16a9c-3f47-49fc-8d98-abf3aa6ecb13', slackId: process.env.SLACK_USER_FERNANDO || '', name: 'Fernando' },
+    KOKI: { linearId: 'c3f725e4-aa51-45d3-af43-d29a87077226', slackId: process.env.SLACK_USER_KOKI || '', name: 'Koki' },
+    CHENKO: { linearId: '7d177d95-4df7-4dff-a3df-710f49eba663', slackId: process.env.SLACK_USER_CHENKO || '', name: 'Chenko' },
+    LALO: { linearId: 'b17c4757-ceef-4a13-b3c4-fc2ae09d50de', slackId: process.env.SLACK_USER_LALO || '', name: 'Lalo' },
   },
 } as const;

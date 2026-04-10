@@ -427,10 +427,15 @@ describe('REQ-A09: Zod Schemas from Drizzle ORM', () => {
     expect(content).toMatch(/export.*authVerification(Insert|Select)Schema/);
   });
 
-  it('should use drizzle-orm/zod NOT drizzle-zod', () => {
+  it('should import createSelectSchema / createInsertSchema from drizzle-zod', () => {
+    // The historical Drizzle "/zod" subpath (`from "drizzle-orm/zod"`) does
+    // not exist in @drizzle-orm >=0.36 — it must be imported from the
+    // separate `drizzle-zod` package, which is already declared as a
+    // workspace dependency. Pinning the wrong path causes a TS2307 at
+    // build time and was fixed in the Mastra v1 alignment pass.
     const content = readFileSync(resolve(WORKTREE_ROOT, 'runtime/src/lib/schemas/auth.ts'), 'utf-8');
-    expect(content).toContain("from 'drizzle-orm/zod'");
-    expect(content).not.toContain("from 'drizzle-zod'");
+    expect(content).toContain("from 'drizzle-zod'");
+    expect(content).not.toContain("from 'drizzle-orm/zod'");
   });
 
   it('should export userSchema, sessionSchema, accountSchema, verificationSchema aliases', () => {

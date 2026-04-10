@@ -24,6 +24,8 @@ export {
   listLinearIssuesTool,
   getTeamMembersTool,
   listLinearCyclesTool,
+  getLinearIssueComments,
+  getLinearIssueCommentsTool,
 } from './linear';
 
 export {
@@ -34,6 +36,16 @@ export {
   sendResolutionEmailTool,
 } from './resend';
 
+export {
+  sendSlackTicketNotification,
+  sendSlackResolutionNotification,
+  sendSlackMessage,
+  // Aliases for agent registrations
+  sendSlackTicketNotificationTool,
+  sendSlackResolutionNotificationTool,
+  sendSlackMessageTool,
+} from './slack';
+
 export { queryWikiTool } from './wiki-query';
 
 export { generateWikiTool } from './wiki-generate';
@@ -41,4 +53,4 @@ export { generateWikiTool } from './wiki-generate';
 export { processAttachmentsTool } from './attachments';
 export { displayTriageTool } from './display-triage';
 export { displayDuplicateTool } from './display-duplicate';
-export { commentOnGitHubPRTool } from './github';
+export { commentOnGitHubPRTool, findGitHubEvidenceForIssueTool } from './github';

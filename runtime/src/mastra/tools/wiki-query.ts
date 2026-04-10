@@ -1,13 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-
-// ---------------------------------------------------------------------------
-// Inline Zod schemas mirroring canonical definitions.
-// Canonical location: @/lib/schemas/wiki.ts (wikiDocumentSchema, wikiChunkSchema)
-// The output schema here mirrors a "wikiQueryResultSchema" that the wiki RAG
-// query tool returns — an array of scored chunks with their parent document
-// metadata.
-// ---------------------------------------------------------------------------
+import { queryWiki } from '../../lib/wiki-rag';
 
 const wikiChunkResultSchema = z.object({
   chunkId: z.string().describe('wiki_chunks row ID'),
@@ -15,7 +8,7 @@ const wikiChunkResultSchema = z.object({
   filePath: z.string().describe('Source file path in the repository'),
   content: z.string().describe('Chunk text content'),
   score: z.number().describe('Vector similarity score (0–1)'),
-  summary: z.string().nullable().describe('Parent document summary (pass-1 or pass-2)'),
+  summary: z.string().nullable().describe('Parent document summary'),
 });
 
 const wikiQueryResultSchema = z.object({
@@ -24,16 +17,13 @@ const wikiQueryResultSchema = z.object({
   totalResults: z.number().int().describe('Number of results returned'),
 });
 
-// ---------------------------------------------------------------------------
-// Tools
-// ---------------------------------------------------------------------------
-
 export const queryWikiTool = createTool({
   id: 'query-wiki',
   description:
     'Query the codebase wiki using RAG vector search for relevant code context.',
   inputSchema: z.object({
     query: z.string().describe('Natural language search query'),
+    projectId: z.string().optional().describe('Project ID to scope results to'),
     topK: z
       .number()
       .int()
@@ -44,8 +34,17 @@ export const queryWikiTool = createTool({
       .describe('Number of top results to return'),
   }),
   outputSchema: wikiQueryResultSchema,
-  execute: async ({ context }) => {
-    // Wiki not yet populated — return empty results so triage continues without RAG context
-    return { results: [], query: context.query, totalResults: 0 };
+  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+    const ctx = (input?.context ?? input) as Record<string, unknown>;
+    const query = ctx.query as string;
+    const projectId = ctx.projectId as string | undefined;
+    const topK = (ctx.topK as number) || 10;
+
+    try {
+      return await queryWiki(query, projectId, topK);
+    } catch (error: unknown) {
+      console.error('[wiki-query] Error:', error instanceof Error ? error.message : 'Unknown');
+      return { results: [], query, totalResults: 0 };
+    }
   },
 });

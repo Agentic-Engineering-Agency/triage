@@ -1,5 +1,21 @@
 x-langfuse-worker-env: &langfuse-worker-env
-  NEXTAUTH_URL: http://langfuse-web:3000
+  # Auth.js v5 (NextAuth) vars. Langfuse 3.x uses Auth.js v5 which reads
+  # AUTH_URL, not the legacy NEXTAUTH_URL. When running behind a reverse
+  # proxy (our cloudflared tunnel), AUTH_TRUST_HOST=true is mandatory —
+  # without it Auth.js refuses to trust the forwarded Host header and
+  # every callback URL falls back to the container's internal hostname,
+  # which breaks login from the public URL. NEXTAUTH_URL is retained
+  # for backward compatibility with any code path that still reads it.
+  AUTH_URL: ${NEXTAUTH_URL}
+  # AUTH_TRUST_HOST=false is deliberate: our Cloudflare Tunnel ingress
+  # rewrites the incoming HTTP Host header to the origin service name
+  # (langfuse-web:3000) before it reaches the container. With TRUST_HOST
+  # on, Auth.js v5 uses that forwarded Host and builds callback URLs
+  # pointing at an unreachable internal hostname, which breaks login
+  # completely. Turning it off forces Auth.js to derive everything
+  # from AUTH_URL, which is the public tunnel URL.
+  AUTH_TRUST_HOST: "false"
+  NEXTAUTH_URL: ${NEXTAUTH_URL}
   DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@langfuse-postgres:5432/${POSTGRES_DB:-langfuse}
   SALT: ${SALT}
   ENCRYPTION_KEY: ${ENCRYPTION_KEY}
@@ -94,7 +110,7 @@ services:
       SQLD_HTTP_LISTEN_ADDR: 0.0.0.0:8080
       SQLD_GRPC_LISTEN_ADDR: 0.0.0.0:5001
     volumes:
-      - libsql_data:/var/lib/sqld
+      - /var/lib/sqld
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8080'"]
       interval: 10s
@@ -131,11 +147,11 @@ services:
       LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME}
       LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD}
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://$(hostname):3000/api/public/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://$$(hostname):3000/api/public/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
-      start_period: 60s
+      start_period: 180s
     restart: always
     networks:
       - langfuse
@@ -156,11 +172,11 @@ services:
     environment:
       <<: *langfuse-worker-env
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3030/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://$$(hostname):3030/api/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      start_period: 180s
     restart: always
     networks:
       - langfuse
@@ -179,8 +195,8 @@ services:
       retries: 3
       start_period: 30s
     volumes:
-      - langfuse_clickhouse_data:/var/lib/clickhouse
-      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+      - /var/lib/clickhouse
+      - /var/log/clickhouse-server
     restart: always
     networks:
       - langfuse
@@ -196,7 +212,7 @@ services:
       timeout: 5s
       retries: 3
     volumes:
-      - langfuse_redis_data:/data
+      - /data
     restart: always
     networks:
       - langfuse
@@ -214,7 +230,7 @@ services:
       timeout: 5s
       retries: 3
     volumes:
-      - langfuse_minio_data:/data
+      - /data
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -262,9 +278,10 @@ networks:
     driver: bridge
 
 volumes:
-  libsql_data:
+  # Langfuse Postgres data: holds users, orgs, projects, API keys, traces
+  # metadata. Langfuse headless init only runs on a fresh DB, so keeping
+  # this volume across restarts avoids reseeding the admin user on every
+  # up/down cycle (and ensures traces captured during a demo persist for
+  # replay). Wipe with `docker compose down -v` + `docker volume rm
+  # triage_langfuse_postgres_data` only when you actually want a reset.
   langfuse_postgres_data:
-  langfuse_clickhouse_data:
-  langfuse_clickhouse_logs:
-  langfuse_minio_data:
-  langfuse_redis_data:

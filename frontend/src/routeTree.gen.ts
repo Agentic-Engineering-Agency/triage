@@ -17,6 +17,7 @@ import { Route as ChatRouteImport } from './routes/chat'
 import { Route as IndexRouteImport } from './routes/index'
 
 const SettingsLazyRouteImport = createFileRoute('/settings')()
+const ProjectsLazyRouteImport = createFileRoute('/projects')()
 const BoardLazyRouteImport = createFileRoute('/board')()
 
 const SettingsLazyRoute = SettingsLazyRouteImport.update({
@@ -24,6 +25,11 @@ const SettingsLazyRoute = SettingsLazyRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any).lazy(() => import('./routes/settings.lazy').then((d) => d.Route))
+const ProjectsLazyRoute = ProjectsLazyRouteImport.update({
+  id: '/projects',
+  path: '/projects',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() => import('./routes/projects.lazy').then((d) => d.Route))
 const BoardLazyRoute = BoardLazyRouteImport.update({
   id: '/board',
   path: '/board',
@@ -56,6 +62,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/board': typeof BoardLazyRoute
+  '/projects': typeof ProjectsLazyRoute
   '/settings': typeof SettingsLazyRoute
 }
 export interface FileRoutesByTo {
@@ -64,6 +71,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/board': typeof BoardLazyRoute
+  '/projects': typeof ProjectsLazyRoute
   '/settings': typeof SettingsLazyRoute
 }
 export interface FileRoutesById {
@@ -73,13 +81,28 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/board': typeof BoardLazyRoute
+  '/projects': typeof ProjectsLazyRoute
   '/settings': typeof SettingsLazyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/chat' | '/login' | '/register' | '/board' | '/settings'
+  fullPaths:
+    | '/'
+    | '/chat'
+    | '/login'
+    | '/register'
+    | '/board'
+    | '/projects'
+    | '/settings'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/chat' | '/login' | '/register' | '/board' | '/settings'
+  to:
+    | '/'
+    | '/chat'
+    | '/login'
+    | '/register'
+    | '/board'
+    | '/projects'
+    | '/settings'
   id:
     | '__root__'
     | '/'
@@ -87,6 +110,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/register'
     | '/board'
+    | '/projects'
     | '/settings'
   fileRoutesById: FileRoutesById
 }
@@ -96,6 +120,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   RegisterRoute: typeof RegisterRoute
   BoardLazyRoute: typeof BoardLazyRoute
+  ProjectsLazyRoute: typeof ProjectsLazyRoute
   SettingsLazyRoute: typeof SettingsLazyRoute
 }
 
@@ -106,6 +131,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsLazyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/projects': {
+      id: '/projects'
+      path: '/projects'
+      fullPath: '/projects'
+      preLoaderRoute: typeof ProjectsLazyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/board': {
@@ -152,6 +184,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   RegisterRoute: RegisterRoute,
   BoardLazyRoute: BoardLazyRoute,
+  ProjectsLazyRoute: ProjectsLazyRoute,
   SettingsLazyRoute: SettingsLazyRoute,
 }
 export const routeTree = rootRouteImport
