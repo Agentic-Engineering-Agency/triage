@@ -10,6 +10,7 @@ import { triageWorkflow } from './workflows/index';
 import { auth } from '../lib/auth';
 import { projectRoutes } from '../lib/project-routes';
 import { webhookRoutes } from '../lib/webhook-routes';
+import { integrationRoutes } from '../lib/integration-routes';
 import { config, LINEAR_CONSTANTS } from '../lib/config';
 
 // Linear client singleton — only instantiate if API key is configured
@@ -389,8 +390,9 @@ export const mastra = new Mastra({
         },
       },
 
-      // Project management and simple webhook routes
+      // Project management, integrations, and webhook routes
       ...projectRoutes,
+      ...integrationRoutes,
       ...webhookRoutes,
     ],
   },
