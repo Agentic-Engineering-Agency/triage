@@ -89,6 +89,7 @@ const tables = [
     status TEXT NOT NULL DEFAULT 'triage',
     assignee_id TEXT REFERENCES auth_user(id),
     project_id TEXT REFERENCES projects(id),
+    reporter_email TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     synced_at INTEGER
@@ -100,4 +101,24 @@ for (const sql of tables) {
   await client.execute(sql);
   console.log(`[init-db] ${name} OK`);
 }
+
+// Idempotent ALTERs for columns added after initial table creation.
+// SQLite has no native "ADD COLUMN IF NOT EXISTS", so we try/catch each one.
+const alters = [
+  { table: 'local_tickets', col: 'reporter_email', sql: `ALTER TABLE local_tickets ADD COLUMN reporter_email TEXT` },
+];
+for (const a of alters) {
+  try {
+    await client.execute(a.sql);
+    console.log(`[init-db] ALTER ${a.table} ADD ${a.col} OK`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('duplicate column') || msg.includes('already exists')) {
+      console.log(`[init-db] ALTER ${a.table} ADD ${a.col} (already present)`);
+    } else {
+      console.warn('[init-db] ALTER skipped', { table: a.table, col: a.col, error: msg });
+    }
+  }
+}
+
 console.log('[init-db] All tables ready');
