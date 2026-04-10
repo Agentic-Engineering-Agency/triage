@@ -9,6 +9,13 @@ export const Route = createRootRoute({
   component: RootLayout,
 })
 
+// Observability URL is configurable at build time via VITE_OBSERVABILITY_URL.
+// Defaults to http://localhost:3000 for local demo/dev (see rationale near the
+// Observability link below).
+const OBSERVABILITY_URL =
+  (import.meta.env.VITE_OBSERVABILITY_URL as string | undefined) ||
+  "http://localhost:3000"
+
 function RootLayout() {
   const { isAuthenticated, isLoading } = useAuth()
   const location = useLocation()
@@ -115,7 +122,7 @@ function AuthenticatedLayout() {
             to langfuse.agenticengineering.lat in the Zero Trust dashboard.
           */}
           <a
-            href="http://localhost:3000"
+            href={OBSERVABILITY_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-all hover:text-foreground hover:bg-muted/30"
