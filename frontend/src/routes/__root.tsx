@@ -105,8 +105,18 @@ function AuthenticatedLayout() {
             Settings
           </NavLink>
 
+          {/*
+            Observability link points at localhost:3000 rather than the
+            Cloudflare tunnel URL because the tunnel ingress rewrites the
+            HTTP Host header to the origin service name, which breaks
+            Auth.js interactive login on langfuse-web. Ingestion via the
+            tunnel is unaffected — OpenRouter still broadcasts traces to
+            the public URL. Revert to the tunnel URL once the Cloudflare
+            tunnel "HTTP Host Header" override is set to the public
+            hostname in the Zero Trust dashboard.
+          */}
           <a
-            href="https://langfuse.agenticengineering.lat"
+            href="http://localhost:3000"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-all hover:text-foreground hover:bg-muted/30"
