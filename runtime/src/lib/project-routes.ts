@@ -16,6 +16,100 @@ function getDb() {
   return createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
 }
 
+// Helper to get userId from session cookie
+function getUserIdFromCookies(cookieHeader: string | undefined): string | null {
+  if (!cookieHeader) return null;
+  const sessionMatch = cookieHeader.match(/session=([^;]+)/);
+  if (!sessionMatch) return null;
+
+  const sessionToken = sessionMatch[1];
+  // In a real app, you'd decrypt and validate this session token
+  // For now, we'll look it up in the auth_session table
+  return sessionToken;
+}
+
+// ---------- POST /projects/init-default ----------
+// Create a default project for the authenticated user on first login
+export const initDefaultProjectRoute = registerApiRoute('/projects/init-default', {
+  method: 'POST',
+  handler: async (c) => {
+    try {
+      const cookieHeader = c.req.header('cookie');
+      const sessionToken = cookieHeader?.match(/session=([^;]+)/)?.[1];
+
+      if (!sessionToken) {
+        return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No session found' } }, 401);
+      }
+
+      const db = getDb();
+
+      // Get user ID from session token
+      const sessionResult = await db.execute(
+        'SELECT user_id FROM auth_session WHERE token = ? LIMIT 1',
+        [sessionToken]
+      );
+
+      if (sessionResult.rows.length === 0) {
+        return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Invalid session' } }, 401);
+      }
+
+      const userId = sessionResult.rows[0].user_id as string;
+
+      // Check if user already has a project
+      const existingProjects = await db.execute(
+        'SELECT id FROM projects WHERE user_id = ? LIMIT 1',
+        [userId]
+      );
+
+      if (existingProjects.rows.length > 0) {
+        // User already has a project, just return it
+        const projectId = existingProjects.rows[0].id as string;
+        const projectResult = await db.execute(
+          'SELECT id, name, repo_url, repo_default_branch FROM projects WHERE id = ?',
+          [projectId]
+        );
+        const row = projectResult.rows[0];
+        return c.json({
+          success: true,
+          data: {
+            id: row.id,
+            name: row.name,
+            repositoryUrl: row.repo_url,
+            branch: row.repo_default_branch,
+          },
+        });
+      }
+
+      // Create default project
+      const projectId = crypto.randomUUID();
+      const now = Date.now();
+
+      await db.execute({
+        sql: `INSERT INTO projects (id, user_id, name, repo_url, repo_default_branch, wiki_status, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [projectId, userId, 'Default Project', '', 'main', 'idle', now, now],
+      });
+
+      return c.json(
+        {
+          success: true,
+          data: {
+            id: projectId,
+            name: 'Default Project',
+            repositoryUrl: '',
+            branch: 'main',
+          },
+        },
+        201
+      );
+    } catch (error) {
+      console.error('[projects] Error initializing default project:', error);
+      const message = error instanceof Error ? error.message : 'Failed to initialize project';
+      return c.json({ success: false, error: { code: 'INTERNAL_ERROR', message } }, 500);
+    }
+  },
+});
+
 // ---------- GET /projects ----------
 export const listProjectsRoute = registerApiRoute('/projects', {
   method: 'GET',
@@ -199,6 +293,7 @@ export const deleteProjectRoute = registerApiRoute('/projects/:id', {
 });
 
 export const projectRoutes = [
+  initDefaultProjectRoute,
   listProjectsRoute,
   createProjectRoute,
   getProjectRoute,

@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
 import { useAuth } from "@/hooks/use-auth"
 import { authClient } from "@/lib/auth-client"
+import { apiFetch } from "@/lib/api"
 
 export const Route = createFileRoute("/register")({
   component: RegisterPage,
@@ -43,6 +44,16 @@ function RegisterPage() {
           setError(result.error.message || "Registration failed. Please try again.")
         }
       } else {
+        // Initialize default project for new user
+        try {
+          const projectRes = await apiFetch('/projects/init-default', { method: 'POST' });
+          if (projectRes.success && projectRes.data?.id) {
+            localStorage.setItem('activeProjectId', projectRes.data.id);
+          }
+        } catch (err) {
+          console.warn('Failed to initialize default project:', err);
+          // Continue anyway — project might exist or will be created later
+        }
         navigate({ to: "/chat" })
       }
     } catch (err) {
