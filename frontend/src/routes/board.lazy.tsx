@@ -1,6 +1,6 @@
 import { createLazyFileRoute } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   LayoutGrid,
   RefreshCw,
@@ -229,6 +229,11 @@ async function fetchLinearIssues(): Promise<BoardTicket[]> {
 
 function BoardPage() {
   const [searchQuery, setSearchQuery] = useState("")
+  // Last known-good snapshot. Preserved across transient Linear API errors
+  // so a backend outage doesn't masquerade as "no incidents" on an SRE board.
+  const [lastGoodTickets, setLastGoodTickets] = useState<BoardTicket[] | null>(
+    null,
+  )
 
   const {
     data: tickets,
@@ -244,11 +249,22 @@ function BoardPage() {
     staleTime: 15_000,
   })
 
-  // When the Linear API is unreachable we show an empty board + an error
-  // banner rather than seeded demo data. A board that silently lies about
-  // its contents is worse than an empty one for an SRE tool.
+  // Capture the latest successful snapshot.
+  useEffect(() => {
+    if (!isError && tickets) {
+      setLastGoodTickets(tickets)
+    }
+  }, [tickets, isError])
+
+  // Prefer live tickets, fall back to the last known-good snapshot on error.
+  // Never silently collapse to an empty board on an API failure.
   const isLive = !isError && !!tickets
-  const displayTickets = isLive ? tickets : []
+  const isStale = isError && !!lastGoodTickets
+  const displayTickets: BoardTicket[] = isLive
+    ? tickets
+    : isStale
+      ? lastGoodTickets
+      : []
 
   // Filter by search
   const filtered = searchQuery.trim()
@@ -289,10 +305,15 @@ function BoardPage() {
                   <CircleDot className="inline h-3 w-3 mr-1 text-emerald-500" />
                   Live from Linear
                 </>
-              ) : (
+              ) : isStale ? (
                 <>
                   <CircleDot className="inline h-3 w-3 mr-1 text-amber-500" />
-                  Demo mode — connect Linear to see real tickets
+                  Last known snapshot — Linear API unreachable
+                </>
+              ) : (
+                <>
+                  <CircleDot className="inline h-3 w-3 mr-1 text-destructive" />
+                  Linear API unreachable — unable to load tickets
                 </>
               )}
             </p>
@@ -330,6 +351,30 @@ function BoardPage() {
 
       {/* Board */}
       <div className="flex-1 overflow-auto p-6">
+        {isError && (
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>
+                {isStale
+                  ? "Linear API unreachable — showing last successful snapshot."
+                  : "Linear API unreachable — unable to load tickets."}
+              </span>
+            </div>
+            <button
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="flex items-center gap-1.5 rounded-md border border-destructive/30 bg-background/40 px-2.5 py-1 text-xs font-medium text-destructive hover:bg-background/80 transition-colors disabled:opacity-50"
+            >
+              {isFetching ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3 w-3" />
+              )}
+              Retry
+            </button>
+          </div>
+        )}
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -411,10 +456,17 @@ function KanbanColumn({
 // ---------------------------------------------------------------------------
 
 function TicketCard({ ticket }: { ticket: BoardTicket }) {
-  const formattedDate = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-  }).format(new Date(ticket.createdAt))
+  // Guard createdAt: the backend may serialize it as undefined or a raw
+  // unparseable string, and Intl.DateTimeFormat throws RangeError on an
+  // Invalid Date in some locales. Omit the chip entirely when unparseable.
+  const parsed = ticket.createdAt ? new Date(ticket.createdAt) : null
+  const formattedDate =
+    parsed && Number.isFinite(parsed.getTime())
+      ? new Intl.DateTimeFormat("en-US", {
+          month: "short",
+          day: "numeric",
+        }).format(parsed)
+      : null
 
   return (
     <a
@@ -459,10 +511,12 @@ function TicketCard({ ticket }: { ticket: BoardTicket }) {
             </span>
           </div>
         )}
-        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <Clock className="h-3 w-3" />
-          {formattedDate}
-        </div>
+        {formattedDate && (
+          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            {formattedDate}
+          </div>
+        )}
       </div>
 
       {/* External link indicator */}
