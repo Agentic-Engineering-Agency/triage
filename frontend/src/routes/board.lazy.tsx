@@ -44,10 +44,13 @@ interface BoardTicket {
   column: ColumnKey
 }
 
-type ColumnKey = "triage" | "backlog" | "todo" | "in_progress" | "done"
+type ColumnKey = "backlog" | "todo" | "in_progress" | "in_review" | "done"
 
 // ---------------------------------------------------------------------------
-// Column definitions
+// Column definitions — ordered left-to-right in the natural workflow:
+// Backlog → Todo → In Progress → In Review → Done.
+// Triage-state issues (from fresh intake, before the agent classifies them)
+// fall into Backlog via stateToColumn so they are never hidden.
 // ---------------------------------------------------------------------------
 
 const COLUMNS: {
@@ -57,13 +60,6 @@ const COLUMNS: {
   accent: string
   bg: string
 }[] = [
-  {
-    key: "triage",
-    title: "Triage",
-    icon: AlertTriangle,
-    accent: "text-amber-500",
-    bg: "bg-amber-500/10",
-  },
   {
     key: "backlog",
     title: "Backlog",
@@ -86,6 +82,13 @@ const COLUMNS: {
     bg: "bg-violet-500/10",
   },
   {
+    key: "in_review",
+    title: "In Review",
+    icon: AlertTriangle,
+    accent: "text-amber-500",
+    bg: "bg-amber-500/10",
+  },
+  {
     key: "done",
     title: "Done",
     icon: CheckCircle2,
@@ -98,15 +101,15 @@ const COLUMNS: {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const TEAM_ID = "645a639b-39e2-4abe-8ded-3346d2f79f9f"
-
 /** Map a Linear state name to a board column */
 function stateToColumn(stateName: string | undefined | null): ColumnKey {
   if (!stateName) return "backlog"
   const lower = stateName.toLowerCase()
-  if (lower === "triage") return "triage"
-  if (lower === "backlog") return "backlog"
+  // Triage is a workflow-internal staging state — fold it into Backlog so
+  // nothing disappears when the column is absent from the board.
+  if (lower === "triage" || lower === "backlog") return "backlog"
   if (lower === "todo") return "todo"
+  if (lower === "in review" || lower === "review") return "in_review"
   if (lower.includes("progress") || lower === "started" || lower === "in progress")
     return "in_progress"
   if (
@@ -136,158 +139,88 @@ function priorityToSeverity(priority: number): Severity {
   }
 }
 
-/** Generate demo data for when the API is not available */
-function getDemoTickets(): BoardTicket[] {
-  return [
-    {
-      id: "demo-1",
-      identifier: "TRI-42",
-      title: "Payment gateway timeout on checkout — Solidus::PaymentProcessing",
-      severity: "critical",
-      priority: 1,
-      assignee: { name: "Fernando", initials: "FE", color: "bg-primary/80" },
-      createdAt: "2026-04-09T08:23:00Z",
-      url: "#",
-      column: "triage",
-    },
-    {
-      id: "demo-2",
-      identifier: "TRI-41",
-      title: "Spree::Order state machine stuck in 'payment' state after 3DS redirect",
-      severity: "high",
-      priority: 2,
-      assignee: { name: "Koki", initials: "KO", color: "bg-violet-500/80" },
-      createdAt: "2026-04-09T07:15:00Z",
-      url: "#",
-      column: "in_progress",
-    },
-    {
-      id: "demo-3",
-      identifier: "TRI-40",
-      title: "Inventory sync mismatch — stock_items count diverges from warehouse API",
-      severity: "high",
-      priority: 2,
-      assignee: { name: "Lalo", initials: "LA", color: "bg-emerald-500/80" },
-      createdAt: "2026-04-08T22:10:00Z",
-      url: "#",
-      column: "todo",
-    },
-    {
-      id: "demo-4",
-      identifier: "TRI-39",
-      title: "Taxjar rate calculation returns 0% for CA addresses",
-      severity: "medium",
-      priority: 3,
-      assignee: null,
-      createdAt: "2026-04-08T18:45:00Z",
-      url: "#",
-      column: "backlog",
-    },
-    {
-      id: "demo-5",
-      identifier: "TRI-38",
-      title: "Promotion rule evaluation order causes double discount on bundles",
-      severity: "medium",
-      priority: 3,
-      assignee: { name: "Chenko", initials: "CH", color: "bg-amber-500/80" },
-      createdAt: "2026-04-08T14:30:00Z",
-      url: "#",
-      column: "todo",
-    },
-    {
-      id: "demo-6",
-      identifier: "TRI-37",
-      title: "ActionMailer delivery failure — SMTP connection reset on order confirmation",
-      severity: "low",
-      priority: 4,
-      assignee: { name: "Fernando", initials: "FE", color: "bg-primary/80" },
-      createdAt: "2026-04-08T11:20:00Z",
-      url: "#",
-      column: "done",
-    },
-    {
-      id: "demo-7",
-      identifier: "TRI-36",
-      title: "Shipment tracking webhook returns 404 for FedEx SmartPost",
-      severity: "low",
-      priority: 4,
-      assignee: { name: "Koki", initials: "KO", color: "bg-violet-500/80" },
-      createdAt: "2026-04-07T16:55:00Z",
-      url: "#",
-      column: "done",
-    },
-    {
-      id: "demo-8",
-      identifier: "TRI-35",
-      title: "Redis cache stampede on product page during flash sale",
-      severity: "critical",
-      priority: 1,
-      assignee: { name: "Lalo", initials: "LA", color: "bg-emerald-500/80" },
-      createdAt: "2026-04-09T09:01:00Z",
-      url: "#",
-      column: "in_progress",
-    },
-    {
-      id: "demo-9",
-      identifier: "TRI-34",
-      title: "Sidekiq job retry storm — RefundWorker hitting Linear rate limit",
-      severity: "high",
-      priority: 2,
-      assignee: null,
-      createdAt: "2026-04-08T20:00:00Z",
-      url: "#",
-      column: "backlog",
-    },
-  ]
-}
-
 // ---------------------------------------------------------------------------
 // API fetch
 // ---------------------------------------------------------------------------
 
+interface GroupedIssue {
+  id: string
+  identifier: string
+  title: string
+  priority: number
+  url: string
+  createdAt: string
+  assignee?: { id: string; name: string } | null
+}
+
+const INITIALS_COLORS = [
+  "bg-primary/80",
+  "bg-violet-500/80",
+  "bg-emerald-500/80",
+  "bg-amber-500/80",
+  "bg-rose-500/80",
+  "bg-sky-500/80",
+]
+
+function initialsFor(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return "?"
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+function colorFor(id: string): string {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0
+  return INITIALS_COLORS[Math.abs(h) % INITIALS_COLORS.length]
+}
+
 async function fetchLinearIssues(): Promise<BoardTicket[]> {
-  const res = await fetch(
-    "/api/agents/orchestrator/tools/search-linear-issues/execute",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        data: {
-          query: "",
-          teamId: TEAM_ID,
-          limit: 50,
-        },
-      }),
-    }
-  )
+  // Call our dedicated endpoint which returns issues already grouped by
+  // Linear state name. This avoids the empty-query validation error from
+  // the generic search-linear-issues tool and gives us richer data
+  // (assignee, project, labels) in a single round trip.
+  const res = await fetch("/api/linear/issues", {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  })
 
   if (!res.ok) {
     throw new Error(`Linear API returned ${res.status}`)
   }
 
-  const json = await res.json()
-
-  // Mastra tool response: { results: { ... } } or the tool output directly
-  const payload = json?.results ?? json
-  if (!payload?.success || !payload?.data?.issues) {
-    throw new Error(payload?.error ?? "No issues returned")
+  const json = (await res.json()) as {
+    success: boolean
+    data?: Record<string, GroupedIssue[]>
+    error?: { message?: string }
+  }
+  if (!json.success || !json.data) {
+    throw new Error(json.error?.message ?? "No issues returned")
   }
 
-  const issues: LinearIssue[] = payload.data.issues
-  return issues.map((issue) => ({
-    id: issue.id,
-    identifier: issue.identifier,
-    title: issue.title,
-    severity: priorityToSeverity(issue.priority),
-    priority: issue.priority,
-    assignee: null, // search endpoint doesn't return assignee
-    createdAt: new Date().toISOString(),
-    url: issue.url,
-    column: stateToColumn(issue.state?.name),
-  }))
+  const tickets: BoardTicket[] = []
+  for (const [stateName, issues] of Object.entries(json.data)) {
+    for (const issue of issues) {
+      tickets.push({
+        id: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+        severity: priorityToSeverity(issue.priority),
+        priority: issue.priority,
+        assignee: issue.assignee
+          ? {
+              name: issue.assignee.name,
+              initials: initialsFor(issue.assignee.name),
+              color: colorFor(issue.assignee.id),
+            }
+          : null,
+        createdAt: issue.createdAt ?? new Date().toISOString(),
+        url: issue.url,
+        column: stateToColumn(stateName),
+      })
+    }
+  }
+  return tickets
 }
 
 // ---------------------------------------------------------------------------
@@ -311,9 +244,11 @@ function BoardPage() {
     staleTime: 15_000,
   })
 
-  // Fallback to demo data when the API is not reachable
+  // When the Linear API is unreachable we show an empty board + an error
+  // banner rather than seeded demo data. A board that silently lies about
+  // its contents is worse than an empty one for an SRE tool.
   const isLive = !isError && !!tickets
-  const displayTickets = isLive ? tickets : getDemoTickets()
+  const displayTickets = isLive ? tickets : []
 
   // Filter by search
   const filtered = searchQuery.trim()
@@ -326,10 +261,10 @@ function BoardPage() {
 
   // Group tickets by column
   const grouped: Record<ColumnKey, BoardTicket[]> = {
-    triage: [],
     backlog: [],
     todo: [],
     in_progress: [],
+    in_review: [],
     done: [],
   }
   for (const ticket of filtered) {
