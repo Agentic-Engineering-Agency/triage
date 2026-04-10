@@ -2,21 +2,23 @@
 
 AI agent that triages SRE incidents for Solidus/Rails e-commerce: describe the incident, get a root-cause analysis, a Linear ticket, and email + Slack notifications — all in one chat session.
 
-[Demo Video (YouTube)](https://youtube.com/watch?v=TODO) #AgentXHackathon
+<!-- TODO: demo video URL --> Demo Video: _coming soon_ — #AgentXHackathon
+
+_Last updated: 2026-04-10_
 
 ## What Is Triage?
 
-Triage is an AI-powered incident triage system for on-call SRE engineers working on Solidus/Rails e-commerce platforms. Instead of manually hunting through logs, codebase history, and runbooks under pressure, an engineer describes the incident in plain text (with optional screenshots), and Triage does the rest.
+Triage is an AI-powered incident intake and triage system for on-call SRE engineers working on real e-commerce codebases. Our demo target is [**Solidus**](https://github.com/solidusio/solidus) — a large public Rails e-commerce monorepo. Instead of manually hunting through logs, code, and runbooks under pressure, an engineer describes the incident in plain text (with optional screenshots), and Triage does the rest.
 
-The agent queries a codebase knowledge base via vector search (Wiki/RAG pipeline), identifies the root cause with specific file references, scores severity and confidence, and produces a structured triage report. The engineer reviews a TriageCard preview, approves it, and the agent creates a Linear ticket, sends email and Slack notifications to the team, and then suspends — waiting for a webhook when the fix ships. When it does, the Resolution Reviewer agent confirms whether the issue is actually resolved and notifies the reporter.
+The orchestrator agent queries a real codebase knowledge base via LibSQL vector search (Wiki/RAG pipeline indexing Solidus: **2,363 documents / 3,740 chunks / 1536-dim embeddings**), identifies the root cause with specific file references, scores severity and confidence, and produces a structured TriageCard. The engineer approves it and the agent creates a Linear ticket (SOL team), sends email and Slack notifications to the assignee, and then suspends — waiting for a Linear webhook when the fix ships. When the ticket moves to "In Review", the **evidence-check flow** queries Linear comments and GitHub (commits / branches / PRs referencing the Linear identifier) to decide whether the ticket can advance to Done or should be bounced back to In Progress. When Done, the original reporter is notified.
 
-Teams can connect any Git repository through the **Projects UI** — the system clones, chunks, embeds, and indexes the codebase into the Wiki/RAG vector store, making the Triage Agent immediately effective against that codebase.
+Teams can connect any Git repository through the **Projects UI** (`/projects`) — the system clones, chunks, embeds, and indexes the codebase into the Wiki/RAG vector store.
 
-The full system runs on a single `docker compose up --build` from a clean clone. Ten containers start behind a Caddy reverse proxy that eliminates CORS and handles all security headers. Observability is provided by a self-hosted Langfuse stack with LLM traces, token cost tracking, and latency metrics — exposed externally via a Cloudflare Tunnel at `https://langfuse.agenticengineering.lat`.
+The full system runs on a single `docker compose up --build` from a clean clone. Ten containers start behind a Caddy reverse proxy that eliminates CORS and handles all security headers. Observability is provided by a self-hosted Langfuse stack with full LLM traces, token cost tracking, and latency metrics — fed by **OpenRouter's workspace-level Broadcast feature** (zero runtime SDK code). Langfuse is also published via a Cloudflare Tunnel at `https://langfuse.agenticengineering.lat` for ingestion; for the demo the sidebar "Observability" link points at `http://localhost:3000` because the tunnel rewrites the Host header and breaks Auth.js interactive login (see [AGENTS_USE.md §6](./AGENTS_USE.md#6-observability) for the fix).
 
 ## Architecture
 
-<img src="docs/diagrams/architecture-overview.svg" alt="Architecture Overview" />
+![Architecture Overview](docs/evidence/09-architecture-mermaid.png)
 
 ```mermaid
 graph TD
@@ -100,10 +102,24 @@ See [`.env.example`](./.env.example) for all 58 documented variables. See [`QUIC
 
 | Agent | Model | Role |
 |-------|-------|------|
-| **Orchestrator** | MiniMax M2.7 (3-model fallback) | User-facing conversational agent; batch detection, workflow routing, streaming responses |
-| **Triage Agent** | Mercury-2 | Core intelligence; codebase RAG, root cause analysis, severity scoring, file references |
-| **Resolution Reviewer** | Mercury-2 | Fix verification; PR/commit analysis, resolution confirmation, reporter notification |
-| **Code Review Agent** | Mercury-2 (chill/assertive profiles) | Code quality analysis integrated into the triage workflow |
+| **Orchestrator** | `qwen/qwen3.6-plus` via OpenRouter | User-facing conversational agent; attachment handling, wiki RAG queries, duplicate detection, triage card rendering, Linear ticket creation (human-approved) |
+| **Triage Agent** | `inception/mercury-2` via OpenRouter | Deep structured triage; RAG grounding, severity scoring, root-cause analysis, file references |
+| **Resolution Reviewer** | `inception/mercury-2` via OpenRouter | Fix verification; PR/commit analysis against original root cause |
+| **Code Review Agent** | `inception/mercury-2` (chill/assertive profiles) | Diff-level code review inside the triage workflow |
+
+Embeddings for the wiki RAG pipeline use `openai/text-embedding-3-small` (1536 dimensions) via OpenRouter.
+
+## Demo Journey (Evidence)
+
+A cohesive walkthrough of a live end-to-end run (see [AGENTS_USE.md §5](./AGENTS_USE.md#5-use-cases) for full narrative):
+
+| Step | Screenshot |
+|---|---|
+| Authenticated chat landing | ![chat authenticated](docs/evidence/11-chat-authenticated.png) |
+| Solidus project wiki-indexed (2363 docs / 3740 chunks) | ![project wiki ready](docs/evidence/12-project-wiki-ready.png) |
+| Orchestrator explains its capabilities | ![capabilities](docs/evidence/16-capabilities-response.png) |
+| Incident reported → triage card → Linear SOL-4 created | ![xss created](docs/evidence/19-xss-ticket-sol3-with-lalo.png) |
+| Kanban board (live from Linear) with SOL-4 assigned to Lalo | ![board hero](docs/evidence/20-board-sol4-lalo.png) |
 
 ## Documentation
 
