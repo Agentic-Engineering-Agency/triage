@@ -188,7 +188,139 @@ export const mastra = new Mastra({
         },
       },
 
-      // Spread project and webhook routes from our stash
+      // POST /api/linear/webhook/setup — register the Linear webhook for this deployment
+      {
+        path: '/api/linear/webhook/setup',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            if (!linearClient) {
+              return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
+            }
+            const body = await c.req.json() as { url?: string };
+            if (!body.url) {
+              return c.json({ success: false, error: { code: 'MISSING_URL', message: 'url is required' } }, 400);
+            }
+            const result = await linearClient.createWebhook({
+              url: body.url,
+              teamId: LINEAR_CONSTANTS.TEAM_ID,
+              resourceTypes: ['Issue'],
+              enabled: true,
+            });
+            const webhook = await result.webhook;
+            return c.json({ success: true, data: { id: webhook?.id, url: webhook?.url, enabled: webhook?.enabled } });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
+          }
+        },
+      },
+
+      // POST /api/webhooks/linear — resume suspended workflow when issue moves to Done
+      {
+        path: '/api/webhooks/linear',
+        method: 'POST' as const,
+        createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
+          return async (c: Context) => {
+            try {
+              const payload = await c.req.json() as Record<string, unknown>;
+              console.log('[webhook/linear] Received:', JSON.stringify(payload).slice(0, 500));
+
+              const action = payload.action as string;
+              const type = payload.type as string;
+              const data = payload.data as Record<string, unknown> | undefined;
+
+              if (action !== 'update' || type !== 'Issue' || !data) {
+                return c.json({ success: true, data: { received: true, skipped: true } });
+              }
+
+              const issueId = data.id as string;
+              const issueState = data.state as { name?: string; type?: string } | undefined;
+              const updatedAt = (data.updatedAt as string) ?? new Date().toISOString();
+
+              if (issueState?.type !== 'completed') {
+                return c.json({ success: true, data: { received: true, skipped: true, reason: 'state not completed' } });
+              }
+
+              console.log(`[webhook/linear] Issue ${issueId} marked as "${issueState.name}" — searching for suspended run`);
+
+              const storage = m.getStorage();
+              const workflowsStore = await storage?.getStore('workflows');
+
+              if (!workflowsStore) {
+                console.error('[webhook/linear] Workflow storage not available');
+                return c.json({ success: false, error: { code: 'NO_STORAGE', message: 'Workflow storage not available' } }, 500);
+              }
+
+              const runsResult = await workflowsStore.listWorkflowRuns({
+                workflowName: 'triage-workflow',
+                status: 'suspended',
+                perPage: false,
+              });
+
+              let matchedRunId: string | null = null;
+              for (const run of runsResult.runs) {
+                const snapshot = typeof run.snapshot === 'string'
+                  ? JSON.parse(run.snapshot) as Record<string, unknown>
+                  : run.snapshot as unknown as Record<string, unknown>;
+                const context = snapshot?.context as Record<string, Record<string, unknown>> | undefined;
+                const ticketOutput = context?.['ticket']?.['output'] as Record<string, unknown> | undefined;
+                if (ticketOutput?.['issueId'] === issueId) {
+                  matchedRunId = run.runId;
+                  break;
+                }
+              }
+
+              if (!matchedRunId) {
+                console.log(`[webhook/linear] No suspended run found for issueId: ${issueId}`);
+                return c.json({ success: true, data: { received: true, matched: false } });
+              }
+
+              console.log(`[webhook/linear] Resuming run ${matchedRunId} for issue ${issueId}`);
+              const workflow = m.getWorkflow('triage-workflow');
+              const workflowRun = await workflow.createRun({ runId: matchedRunId });
+
+              workflowRun.resume({
+                step: 'suspend',
+                resumeData: { newStatus: issueState.name ?? 'Done', updatedAt },
+              }).catch((err: Error) => {
+                console.error('[webhook/linear] Resume error:', err.message);
+              });
+
+              return c.json({ success: true, data: { received: true, matched: true, runId: matchedRunId } });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return c.json({ success: false, error: { code: 'WEBHOOK_ERROR', message } }, 500);
+            }
+          };
+        },
+      },
+
+      // POST /api/workflows/triage-workflow/trigger — manually trigger a workflow run
+      {
+        path: '/api/workflows/triage-workflow/trigger',
+        method: 'POST' as const,
+        createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
+          return async (c: Context) => {
+            try {
+              const body = await c.req.json() as Record<string, unknown>;
+              const workflow = m.getWorkflow('triage-workflow');
+              const run = await workflow.createRun();
+
+              run.start({ inputData: body }).catch((err: Error) => {
+                console.error('[workflow/trigger] Error:', err.message);
+              });
+
+              return c.json({ success: true, data: { runId: run.runId, status: 'started' } });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return c.json({ success: false, error: { code: 'WORKFLOW_ERROR', message } }, 500);
+            }
+          };
+        },
+      },
+
+      // Project management and simple webhook routes
       ...projectRoutes,
       ...webhookRoutes,
     ],
