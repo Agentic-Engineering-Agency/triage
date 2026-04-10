@@ -159,35 +159,6 @@ export const mastra = new Mastra({
         },
       },
 
-      // POST /api/wiki/generate — start wiki generation
-      {
-        path: '/api/wiki/generate',
-        method: 'POST' as const,
-        handler: async (c: Context) => {
-          try {
-            const body = await c.req.json() as { repoUrl?: string };
-            if (!body.repoUrl) {
-              return c.json({ success: false, error: { code: 'MISSING_REPO_URL', message: 'repoUrl is required' } }, 400);
-            }
-            // TODO: Implement full wiki generation (git clone, file walk, generateWikiTool calls)
-            console.log(`[wiki/generate] Received request for repo: ${body.repoUrl}`);
-            return c.json({ success: true, data: { status: 'started', repoUrl: body.repoUrl } });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return c.json({ success: false, error: { code: 'WIKI_ERROR', message } }, 500);
-          }
-        },
-      },
-
-      // GET /api/wiki/status — wiki generation status
-      {
-        path: '/api/wiki/status',
-        method: 'GET' as const,
-        handler: async (c: Context) => {
-          return c.json({ success: true, data: { total: 0, processed: 0, done: true } });
-        },
-      },
-
       // POST /api/linear/webhook/setup — register the Linear webhook for this deployment
       {
         path: '/api/linear/webhook/setup',
