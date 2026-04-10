@@ -447,46 +447,69 @@ const notifyStep = createStep({
     const priorityMap: Record<string, number> = { P0: 1, P1: 1, P2: 2, P3: 3, P4: 4 };
     const priority = priorityMap[inputData.severity] ?? 3;
 
+    // Route to the assignee when one is set, otherwise fall back to the
+    // reporter. The current ticket step doesn't pass assigneeId through to
+    // createLinearIssue (the orchestrator agent picks assignees, not the
+    // workflow), so these fields are undefined in practice — but threading
+    // the fallback means future code that DOES populate assigneeEmail will
+    // notify the right person without further plumbing.
+    const notifyTo = inputData.assigneeEmail ?? inputData.reporterEmail;
+    const notifyName = inputData.assigneeName ?? 'On-Call Engineer';
+
     let emailSent = false;
     let slackSent = false;
 
     // Send email notification via Resend
     try {
-      await sendTicketNotification.execute?.(
+      const emailResult = await sendTicketNotification.execute?.(
         {
-          to: inputData.reporterEmail,
+          to: notifyTo,
           ticketTitle: inputData.triageSummary.slice(0, 100),
           severity,
           priority,
           summary: inputData.triageSummary,
           linearUrl: inputData.issueUrl,
-          assigneeName: 'On-Call Engineer',
+          assigneeName: notifyName,
           linearIssueId: inputData.issueId,
         },
         {} as never,
       );
-      emailSent = true;
-      console.log(`[notify] Email notification sent to ${inputData.reporterEmail}`);
+      emailSent = !!emailResult
+        && typeof emailResult === 'object'
+        && 'success' in emailResult
+        && (emailResult as { success: unknown }).success === true;
+      if (emailSent) {
+        console.log(`[notify] Email notification sent to ${notifyTo}`);
+      } else {
+        console.error('[notify] Email notification returned unsuccessful:', emailResult);
+      }
     } catch (err) {
       console.error('[notify] Email notification failed:', err instanceof Error ? err.message : err);
     }
 
     // Send Slack notification
     try {
-      await sendSlackTicketNotification.execute?.(
+      const slackResult = await sendSlackTicketNotification.execute?.(
         {
           ticketTitle: inputData.triageSummary.slice(0, 100),
           severity,
           priority,
           summary: inputData.triageSummary,
           linearUrl: inputData.issueUrl,
-          assigneeName: 'On-Call Engineer',
+          assigneeName: notifyName,
           linearIssueId: inputData.issueId,
         },
         {} as never,
       );
-      slackSent = true;
-      console.log(`[notify] Slack notification sent`);
+      slackSent = !!slackResult
+        && typeof slackResult === 'object'
+        && 'success' in slackResult
+        && (slackResult as { success: unknown }).success === true;
+      if (slackSent) {
+        console.log(`[notify] Slack notification sent`);
+      } else {
+        console.error('[notify] Slack notification returned unsuccessful:', slackResult);
+      }
     } catch (err) {
       console.error('[notify] Slack notification failed:', err instanceof Error ? err.message : err);
     }
@@ -614,13 +637,35 @@ const verifyStep = createStep({
     const { webhookPayload } = inputData;
     const newStatus = webhookPayload.newStatus.toLowerCase();
 
-    // Determine verdict based on the Linear status change
+    // Evidence gate: a ticket can only be marked fully resolved if at least
+    // one concrete artefact points at a landed fix. Otherwise a manual status
+    // flip in Linear would fire a premature "fixed!" notification to the
+    // reporter. Check for a GitHub PR URL either on the webhook payload's
+    // deployUrl field or inside the triage rootCause text.
+    //
+    // The comprehensive evidence check — querying Linear comments and
+    // GitHub commits/branches — runs earlier in the In Review webhook
+    // branch in runtime/src/mastra/index.ts; this is a minimal status-only
+    // gate for the workflow's post-Done verify step.
+    const PR_URL_RE = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/i;
+    const prUrlFromDeploy = webhookPayload.deployUrl && PR_URL_RE.test(webhookPayload.deployUrl)
+      ? webhookPayload.deployUrl
+      : null;
+    const prUrlFromRootCause = inputData.rootCause.match(PR_URL_RE)?.[0] ?? null;
+    const prUrl = prUrlFromDeploy ?? prUrlFromRootCause;
+
+    // Determine verdict based on the Linear status change + evidence gate
     let verdict: 'resolved' | 'partially_resolved' | 'unresolved';
     let verificationNotes: string;
 
     if (newStatus === 'done' || newStatus === 'deployed' || newStatus === 'completed') {
-      verdict = 'resolved';
-      verificationNotes = `Issue marked as "${webhookPayload.newStatus}" at ${webhookPayload.updatedAt}.${webhookPayload.deployUrl ? ` Deploy: ${webhookPayload.deployUrl}` : ''} Root cause was: "${inputData.rootCause}"`;
+      if (prUrl) {
+        verdict = 'resolved';
+        verificationNotes = `Issue marked as "${webhookPayload.newStatus}" at ${webhookPayload.updatedAt}. Resolution evidence: ${prUrl}. Root cause was: "${inputData.rootCause}"`;
+      } else {
+        verdict = 'partially_resolved';
+        verificationNotes = `Issue marked as "${webhookPayload.newStatus}" at ${webhookPayload.updatedAt} but no GitHub PR URL was found in the deploy metadata or root-cause notes. Marking as partially resolved pending manual verification. Root cause was: "${inputData.rootCause}"`;
+      }
     } else if (newStatus === 'in review' || newStatus === 'in progress') {
       verdict = 'partially_resolved';
       verificationNotes = `Issue is "${webhookPayload.newStatus}" — fix is in progress but not yet verified. Root cause: "${inputData.rootCause}"`;
@@ -678,7 +723,7 @@ const notifyResolutionStep = createStep({
 
     // Send resolution email via Resend
     try {
-      await sendResolutionNotification.execute?.(
+      const emailResult = await sendResolutionNotification.execute?.(
         {
           to: inputData.reporterEmail,
           originalTitle: ticketTitle,
@@ -688,15 +733,22 @@ const notifyResolutionStep = createStep({
         },
         {} as never,
       );
-      emailSent = true;
-      console.log(`[notify-resolution] Resolution email sent to ${inputData.reporterEmail}`);
+      emailSent = !!emailResult
+        && typeof emailResult === 'object'
+        && 'success' in emailResult
+        && (emailResult as { success: unknown }).success === true;
+      if (emailSent) {
+        console.log(`[notify-resolution] Resolution email sent to ${inputData.reporterEmail}`);
+      } else {
+        console.error('[notify-resolution] Resolution email returned unsuccessful:', emailResult);
+      }
     } catch (err) {
       console.error('[notify-resolution] Email notification failed:', err instanceof Error ? err.message : err);
     }
 
     // Send resolution Slack notification
     try {
-      await sendSlackResolutionNotification.execute?.(
+      const slackResult = await sendSlackResolutionNotification.execute?.(
         {
           originalTitle: ticketTitle,
           resolutionSummary,
@@ -706,8 +758,15 @@ const notifyResolutionStep = createStep({
         },
         {} as never,
       );
-      slackSent = true;
-      console.log(`[notify-resolution] Slack resolution notification sent`);
+      slackSent = !!slackResult
+        && typeof slackResult === 'object'
+        && 'success' in slackResult
+        && (slackResult as { success: unknown }).success === true;
+      if (slackSent) {
+        console.log(`[notify-resolution] Slack resolution notification sent`);
+      } else {
+        console.error('[notify-resolution] Slack resolution notification returned unsuccessful:', slackResult);
+      }
     } catch (err) {
       console.error('[notify-resolution] Slack notification failed:', err instanceof Error ? err.message : err);
     }
