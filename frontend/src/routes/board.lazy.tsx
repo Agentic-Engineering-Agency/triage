@@ -135,7 +135,10 @@ function priorityToSeverity(priority: number): Severity {
     case 4:
       return "low"
     default:
-      return "medium"
+      // Linear priority 0 means "no priority set" — we treat unassigned
+      // priority as low severity rather than medium to avoid alarming
+      // defaults on an SRE board.
+      return "low"
   }
 }
 
@@ -260,6 +263,10 @@ function BoardPage() {
   // Never silently collapse to an empty board on an API failure.
   const isLive = !isError && !!tickets
   const isStale = isError && !!lastGoodTickets
+  // Cold-load state: the query is in flight, we have no prior snapshot,
+  // and no error yet. Without this branch the status pill falls through
+  // to the destructive "unreachable" message for ~500ms on first render.
+  const isInitialLoad = isLoading && !lastGoodTickets && !isError
   const displayTickets: BoardTicket[] = isLive
     ? tickets
     : isStale
@@ -300,7 +307,12 @@ function BoardPage() {
               Board
             </h1>
             <p className="text-xs text-muted-foreground">
-              {isLive ? (
+              {isInitialLoad ? (
+                <>
+                  <Loader2 className="inline h-3 w-3 mr-1 animate-spin text-muted-foreground" />
+                  Loading from Linear...
+                </>
+              ) : isLive ? (
                 <>
                   <CircleDot className="inline h-3 w-3 mr-1 text-emerald-500" />
                   Live from Linear
@@ -326,6 +338,7 @@ function BoardPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <input
               type="text"
+              aria-label="Search tickets"
               placeholder="Search tickets..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -351,7 +364,7 @@ function BoardPage() {
 
       {/* Board */}
       <div className="flex-1 overflow-auto p-6">
-        {isError && (
+        {isError && !isInitialLoad && (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2 text-sm text-destructive">
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 shrink-0" />
