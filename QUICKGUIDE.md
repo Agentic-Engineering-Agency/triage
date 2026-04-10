@@ -113,7 +113,7 @@ To replicate the observability story, do this **once** in your OpenRouter dashbo
 
 Every subsequent chat completion your OpenRouter workspace makes — from the Orchestrator, Triage Agent, Resolution Reviewer, or Code Review Agent — will now appear in Langfuse with full prompt / completion / token usage / latency / cost. No SDK code, no restart.
 
-> **Known limitation:** OpenRouter Broadcast only covers **chat completions**, not embeddings. The wiki RAG ingestion pipeline consumes ~$0.029 of OpenRouter credit to embed the Solidus codebase (4,123 calls) but those calls will **not** appear in Langfuse. They are visible on the OpenRouter dashboard itself.
+> **Known limitation:** OpenRouter Broadcast only covers **chat completions**, not embeddings. The wiki RAG ingestion pipeline consumes ~$0.029 of OpenRouter credit to embed the Solidus codebase (~3,740 chunks) but those calls will **not** appear in Langfuse. They are visible on the OpenRouter dashboard itself.
 
 ## Langfuse Dashboard — localhost caveat for the demo
 
