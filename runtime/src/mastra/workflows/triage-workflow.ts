@@ -92,11 +92,14 @@ const triageStep = createStep({
     projectId: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
-    // 1. Query wiki RAG for relevant code context
+    // 1. Query wiki RAG for relevant code context, scoped to the project
+    // when one is provided. Without the projectId filter, once more than one
+    // project is indexed the search can ground triage on the wrong codebase
+    // and produce misattributed root causes.
     let wikiResults: Awaited<ReturnType<typeof queryWiki>> | null = null;
     try {
-      wikiResults = await queryWiki(inputData.enrichedDescription);
-      console.log(`[triage] Wiki RAG returned ${wikiResults.totalResults} results`);
+      wikiResults = await queryWiki(inputData.enrichedDescription, inputData.projectId ?? undefined);
+      console.log(`[triage] Wiki RAG returned ${wikiResults.totalResults} results${inputData.projectId ? ` (scoped to project ${inputData.projectId})` : ' (global)'}`);
     } catch (err) {
       console.error('[triage] Wiki RAG query failed, continuing with heuristic triage:', err instanceof Error ? err.message : err);
     }
@@ -299,6 +302,41 @@ const ticketStep = createStep({
     // If duplicate, return existing issue info
     if (inputData.isDuplicate && inputData.existingIssueId) {
       console.log(`[ticket] Duplicate detected — returning existing issue ${inputData.existingIssueId}`);
+
+      // Also persist a local_tickets row for the matched duplicate. Older
+      // Linear issues (created before Phase 2b) otherwise have no local row,
+      // leaving the In Review evidence-check handler without reporter email
+      // or project context to bounce them back. Best-effort: a DB failure
+      // here must not block the workflow. status='duplicate_detected' lets
+      // downstream queries distinguish these from fresh ticket creations.
+      try {
+        const priorityMap: Record<string, number> = { P0: 1, P1: 1, P2: 2, P3: 3, P4: 4 };
+        const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+        const now = Date.now();
+        await db.execute({
+          sql: `INSERT INTO local_tickets
+                (id, linear_issue_id, title, description, severity, priority, status, assignee_id, project_id, reporter_email, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [
+            crypto.randomUUID(),
+            inputData.existingIssueId,
+            `[${inputData.severity}] ${inputData.enrichedDescription.slice(0, 100)}`,
+            inputData.triageSummary,
+            inputData.severity,
+            priorityMap[inputData.severity] ?? 3,
+            'duplicate_detected',
+            null,
+            inputData.projectId ?? null,
+            inputData.reporterEmail,
+            now,
+            now,
+          ],
+        });
+        console.log(`[ticket] Persisted local_tickets row for dedup-hit ${inputData.existingIssueId}`);
+      } catch (dbErr) {
+        console.error('[ticket] local_tickets insert (dedup hit) failed (non-fatal):', dbErr instanceof Error ? dbErr.message : dbErr);
+      }
+
       return {
         issueId: inputData.existingIssueId,
         issueUrl: inputData.existingIssueUrl ?? `${LINEAR_BASE_URL}/issue/${inputData.existingIssueId}`,
@@ -385,23 +423,21 @@ const ticketStep = createStep({
         };
       }
 
-      // Linear call returned but was unsuccessful — fallback
+      // Linear call returned but was unsuccessful — fall through to the
+      // fail-closed throw below so debug context is preserved.
       console.error('[ticket] Linear createIssue returned unsuccessful:', result);
     } catch (err) {
       console.error('[ticket] Linear createIssue failed:', err instanceof Error ? err.message : err);
     }
 
-    // Fallback: return placeholder so workflow can continue (graceful degradation)
-    const fallbackId = `local-${Date.now()}`;
-    return {
-      issueId: fallbackId,
-      issueUrl: `${LINEAR_BASE_URL}/issue/${fallbackId}`,
-      wasUpdated: false,
-      severity: inputData.severity,
-      rootCause: inputData.rootCause,
-      triageSummary: inputData.triageSummary,
-      reporterEmail: inputData.reporterEmail,
-    };
+    // Linear creation failed. We cannot proceed with the notify+suspend
+    // flow because there is no Linear webhook to resume on. Fail the
+    // workflow step so the caller sees the real error instead of a fake
+    // 'local-*' ID that the downstream notify/verify steps would cheerfully
+    // broadcast to users.
+    throw new Error(
+      `[ticket] Linear createIssue failed — cannot proceed without a real Linear issue. Last error above.`,
+    );
   },
 });
 
