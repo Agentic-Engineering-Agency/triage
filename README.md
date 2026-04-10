@@ -2,6 +2,9 @@
 
 AI agent that triages SRE incidents for Solidus/Rails e-commerce: describe the incident, get a root-cause analysis, a Linear ticket, and email + Slack notifications — all in one chat session.
 
+**Documentation:** [https://triage.agenticengineering.lat](https://triage.agenticengineering.lat)
+Explore Triage's documentation page to understand how it works
+
 **Demo Video:** [https://www.youtube.com/watch?v=xxEpYnM3TIk](https://www.youtube.com/watch?v=xxEpYnM3TIk) — #AgentXHackathon
 
 _Last updated: 2026-04-10_
