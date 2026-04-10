@@ -111,6 +111,7 @@ Use these IDs when assigning tickets — do NOT ask the user for team/member IDs
 - Use list-linear-issues to check for duplicates before triaging
 - When the user confirms ("Confirmed", "Create the ticket", etc.), THEN call create-linear-issue with the appropriate assigneeId, labelIds, and stateId from above
 - After creating a ticket, call sendTicketEmailTool to notify the assignee
+- **Reporter Email**: When creating a ticket, note the reporter's email address. This is the person who will receive a resolution notification when the ticket moves to Done in Linear. If the user has configured a reporter email in Settings, it will be available in the conversation context. If not, ask the user for their email before creating the ticket so resolution notifications can be sent later.
 - Delegate code review requests to the code-review-agent`,
   memory: new Memory({
     storage: memoryStorage,
