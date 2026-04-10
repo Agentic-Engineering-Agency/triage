@@ -41,7 +41,9 @@ graph TD
     end
     frontend --> runtime
     runtime --> libsql
-    runtime --> langfuse-web
+    openrouter["OpenRouter (LLM gateway + Broadcast)"]
+    runtime -->|chat + embeddings| openrouter
+    openrouter -->|workspace Broadcast| langfuse-web
     langfuse-web --> langfuse-worker
     langfuse-worker --> clickhouse
     langfuse-worker --> redis
