@@ -35,7 +35,17 @@ interface Attachment {
 }
 
 function ChatPage() {
-  const { user } = useAuth()
+  const { user, isLoading: authLoading } = useAuth()
+
+  // Guard: don't render until auth is verified to ensure ConversationProvider is available
+  if (authLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    )
+  }
+
   const { activeThreadId, updateTitle, ensureConversation, refreshConversations } = useConversations()
 
   const threadIdRef = useRef(activeThreadId)
