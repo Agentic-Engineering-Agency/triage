@@ -3,6 +3,10 @@
 # In dev mode, config.json is proxied to Vite along with all other frontend requests
 
 (dev-frontend) {
+    # Dev-only override: Vite HMR needs 'unsafe-eval' in script-src for the
+    # HMR runtime. Reuses the scheme-only connect-src wildcard already used
+    # by the site-wide CSP. This snippet is never imported in production.
+    header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; font-src 'self' data:; frame-ancestors 'none'"
     reverse_proxy vite:5173
 }
 
