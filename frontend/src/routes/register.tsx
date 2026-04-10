@@ -46,8 +46,8 @@ function RegisterPage() {
       } else {
         // Initialize default project for new user
         try {
-          const projectRes = await apiFetch('/projects/init-default', { method: 'POST' });
-          if (projectRes.success && projectRes.data?.id) {
+          const projectRes = await apiFetch('/projects/init-default', { method: 'POST' }) as { success?: boolean; data?: { id?: string } };
+          if (projectRes?.success && projectRes?.data?.id) {
             localStorage.setItem('activeProjectId', projectRes.data.id);
           }
         } catch (err) {
