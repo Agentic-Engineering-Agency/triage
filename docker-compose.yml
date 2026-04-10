@@ -1,5 +1,10 @@
 x-langfuse-worker-env: &langfuse-worker-env
-  NEXTAUTH_URL: http://langfuse-web:3000
+  # NEXTAUTH_URL must match the ORIGIN the user's browser is hitting
+  # (public tunnel URL), not the internal Docker hostname — otherwise
+  # NextAuth scopes session cookies to the wrong origin and login
+  # silently fails with "wrong credentials". Read from .env so prod
+  # and local-tunnel setups both work.
+  NEXTAUTH_URL: ${NEXTAUTH_URL}
   DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@langfuse-postgres:5432/${POSTGRES_DB:-langfuse}
   SALT: ${SALT}
   ENCRYPTION_KEY: ${ENCRYPTION_KEY}
