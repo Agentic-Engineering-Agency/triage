@@ -141,28 +141,28 @@ describe('Config — runtime/src/lib/config.ts', () => {
 
     it('LINEAR_CONSTANTS.TEAM_ID matches smoke-tested value', async () => {
       const { LINEAR_CONSTANTS } = await import('./config');
-      expect(LINEAR_CONSTANTS.TEAM_ID).toBe('645a639b-39e2-4abe-8ded-3346d2f79f9f');
+      expect(LINEAR_CONSTANTS.TEAM_ID).toBe('a81af9a1-6066-4cfa-9971-e937455d01c5');
     });
 
     it('LINEAR_CONSTANTS.STATES contains all workflow states', async () => {
       const { LINEAR_CONSTANTS } = await import('./config');
       expect(LINEAR_CONSTANTS.STATES).toBeDefined();
-      expect(LINEAR_CONSTANTS.STATES.TRIAGE).toBe('582398ee-98b0-406b-b2f6-8bca23c1b607');
-      expect(LINEAR_CONSTANTS.STATES.BACKLOG).toBe('b4bc738c-c3a5-4355-a3fe-72d183ec21ee');
-      expect(LINEAR_CONSTANTS.STATES.TODO).toBe('3b9b9b60-e6eb-4914-9e1d-f3c8ce1eba0c');
-      expect(LINEAR_CONSTANTS.STATES.IN_PROGRESS).toBe('889e861e-3bd6-4f98-888d-3e976ee583e9');
-      expect(LINEAR_CONSTANTS.STATES.IN_REVIEW).toBe('1b1e7e58-03e7-4bb9-be10-669444e7b377');
-      expect(LINEAR_CONSTANTS.STATES.DONE).toBe('0b0ac11a-a9c1-46d9-a10a-dabb935b53af');
-      expect(LINEAR_CONSTANTS.STATES.DUPLICATE).toBe('5a98d91e-773d-4301-a966-1398ae99b906');
-      expect(LINEAR_CONSTANTS.STATES.CANCELED).toBe('19d1f436-5f3e-420b-a197-f31cfd2636f6');
+      expect(LINEAR_CONSTANTS.STATES.TRIAGE).toBe('bce0cec5-80ba-407e-aa98-248c380ce966');
+      expect(LINEAR_CONSTANTS.STATES.BACKLOG).toBe('a1b56fee-32c7-4c7d-b6cd-318380590a53');
+      expect(LINEAR_CONSTANTS.STATES.TODO).toBe('52a97f3f-481b-40f9-8187-237dc282a47d');
+      expect(LINEAR_CONSTANTS.STATES.IN_PROGRESS).toBe('3aba585d-1838-4a0e-9651-c4a2c9032dfb');
+      expect(LINEAR_CONSTANTS.STATES.IN_REVIEW).toBe('3425bc21-40e6-457d-9b8a-4386e0509d79');
+      expect(LINEAR_CONSTANTS.STATES.DONE).toBe('40c24407-f5d5-4489-b5ac-ef964373d954');
+      expect(LINEAR_CONSTANTS.STATES.DUPLICATE).toBe('9f2f1444-3a4b-46db-858c-f643a6d5aecb');
+      expect(LINEAR_CONSTANTS.STATES.CANCELED).toBe('6ff262e3-d016-4777-836b-1357cd535f73');
     });
 
     it('LINEAR_CONSTANTS.SEVERITY_LABELS maps tiers correctly', async () => {
       const { LINEAR_CONSTANTS } = await import('./config');
-      expect(LINEAR_CONSTANTS.SEVERITY_LABELS.CRITICAL).toBe('60a50b72-d1c2-4823-9111-f85f345138d7');
-      expect(LINEAR_CONSTANTS.SEVERITY_LABELS.HIGH).toBe('500cd0cb-2501-43e9-ad91-fba598d40a54');
-      expect(LINEAR_CONSTANTS.SEVERITY_LABELS.MEDIUM).toBe('bca8aa2f-e32b-49a3-9bc4-18a33c4c832e');
-      expect(LINEAR_CONSTANTS.SEVERITY_LABELS.LOW).toBe('28fe88b4-88fa-4cd5-a35d-dcec4e4df82d');
+      expect(LINEAR_CONSTANTS.SEVERITY_LABELS.CRITICAL).toBe('47785580-5256-4240-9f11-cde67e06a4c3');
+      expect(LINEAR_CONSTANTS.SEVERITY_LABELS.HIGH).toBe('eef1c6e5-f3c0-4b0f-9702-189748af77f0');
+      expect(LINEAR_CONSTANTS.SEVERITY_LABELS.MEDIUM).toBe('bd743933-cd2f-4b05-a832-669aefb2af77');
+      expect(LINEAR_CONSTANTS.SEVERITY_LABELS.LOW).toBe('f4350e9c-96ea-44f8-931a-4af52aacf3ed');
     });
 
     it('LINEAR_CONSTANTS.CATEGORY_LABELS contains Bug, Feature, Improvement', async () => {
