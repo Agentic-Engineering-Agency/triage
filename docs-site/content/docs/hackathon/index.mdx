@@ -11,7 +11,9 @@ Triage is an AI-powered incident response system built for on-call SRE engineers
 
 The system is built on Mastra v1.23 running on Hono as the unified HTTP and agent runtime. A single `docker compose up --build` starts all ten containers — frontend, runtime, LibSQL, a full self-hosted Langfuse observability stack, and a `cloudflared` Cloudflare Tunnel — behind a Caddy reverse proxy that eliminates CORS and handles all security headers. OpenRouter provides multi-model routing with automatic fallback chains so no single model failure blocks triage. LibSQL with F32_BLOB(1536) vector embeddings and a DiskANN index powers the codebase wiki RAG without requiring a separate vector database.
 
-The engineer reviews a triage card preview, approves it, and the workflow creates a Linear ticket, sends an email notification to the assigned engineer, then suspends — waiting for a webhook when the fix ships. When the fix lands, the Resolution Reviewer agent confirms whether the issue is actually resolved and notifies the reporter. The entire loop, from incident description to resolution confirmation, runs within a single durable Mastra workflow with state persisted to LibSQL so it survives container restarts.
+The engineer reviews a triage card preview, approves it, and the workflow creates a Linear ticket, sends email and Slack notifications to the assigned engineer, then suspends — waiting for a webhook when the fix ships. When the fix lands, the Resolution Reviewer agent confirms whether the issue is actually resolved and notifies the reporter via both channels. The entire loop, from incident description to resolution confirmation, runs within a single durable Mastra workflow with state persisted to LibSQL so it survives container restarts.
+
+Teams can connect any Git repository through the **Projects UI** — the Wiki/RAG pipeline clones, chunks, embeds, and indexes the codebase into LibSQL's vector store, making the Triage Agent immediately effective against that codebase.
 
 ## Documentation
 

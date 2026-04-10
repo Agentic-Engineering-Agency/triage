@@ -117,7 +117,7 @@ function ChatPage() {
               createdAt: m.createdAt ? new Date(m.createdAt as string) : new Date(),
             }
           })
-        setMessages(uiMessages as Parameters<typeof setMessages>[0])
+        setMessages(uiMessages as unknown as Parameters<typeof setMessages>[0])
       })
       .catch(() => { /* thread doesn't exist yet — that's fine */ })
     return () => controller.abort()

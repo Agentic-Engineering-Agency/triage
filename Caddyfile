@@ -3,6 +3,10 @@
 # In dev mode, config.json is proxied to Vite along with all other frontend requests
 
 (dev-frontend) {
+    # Dev-only override: Vite HMR needs 'unsafe-eval' in script-src for the
+    # HMR runtime. Reuses the scheme-only connect-src wildcard already used
+    # by the site-wide CSP. This snippet is never imported in production.
+    header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; font-src 'self' data:; frame-ancestors 'none'"
     reverse_proxy vite:5173
 }
 
@@ -59,6 +63,20 @@
         reverse_proxy runtime:4111 {
             flush_interval -1
         }
+    }
+
+    # Project management API — only proxy XHR/fetch (not browser navigation)
+    @projects_api {
+        path /projects /projects/*
+        header Accept *application/json*
+    }
+    handle @projects_api {
+        reverse_proxy runtime:4111
+    }
+
+    # Webhook callbacks (Linear, manual resume, etc.)
+    handle /webhooks/* {
+        reverse_proxy runtime:4111
     }
 
     # Frontend: static or dev mode

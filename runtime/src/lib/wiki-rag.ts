@@ -1,0 +1,336 @@
+/**
+ * Wiki/RAG pipeline — clones a repo, chunks source files, embeds, and stores in LibSQL.
+ *
+ * Inspired by llm-wiki: two-pass analysis where pass-1 chunks code structurally
+ * and pass-2 enriches with AI-generated summaries. Uses Mastra's @mastra/rag
+ * for document chunking and @mastra/libsql for vector storage.
+ */
+import { createClient } from '@libsql/client';
+import { LibSQLVector } from '@mastra/libsql';
+import { MDocument } from '@mastra/rag';
+import { embed, embedMany } from 'ai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { execFileSync } from 'child_process';
+import { readFileSync, readdirSync, statSync, existsSync, rmSync } from 'fs';
+import { join, extname, relative } from 'path';
+import crypto from 'crypto';
+
+// ============================================================
+// Constants
+// ============================================================
+
+const VECTOR_INDEX = 'wiki_vectors';
+const EMBEDDING_MODEL = 'openai/text-embedding-3-small';
+const EMBEDDING_DIMENSION = 1536;
+const MAX_FILE_SIZE = 100_000; // 100KB — skip very large files
+const BATCH_SIZE = 20; // embed N chunks at a time
+
+// File extensions we ingest
+const CODE_EXTENSIONS = new Set([
+  '.ts', '.tsx', '.js', '.jsx', '.py', '.rb', '.go', '.rs', '.java',
+  '.c', '.cpp', '.h', '.hpp', '.cs', '.swift', '.kt',
+  '.md', '.mdx', '.txt', '.yml', '.yaml', '.toml', '.json',
+  '.sql', '.graphql', '.prisma', '.proto',
+  '.css', '.scss', '.html', '.svelte', '.vue',
+  '.sh', '.bash', '.zsh', '.fish',
+  '.dockerfile', '.env.example',
+]);
+
+// Directories to skip
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', '.next', '.mastra', 'dist', 'build', 'out',
+  'coverage', '.turbo', '.cache', '__pycache__', '.venv', 'vendor',
+  'target', '.gradle', '.idea', '.vscode',
+]);
+
+// ============================================================
+// DB client
+// ============================================================
+
+function getDbClient() {
+  return createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+}
+
+function getVectorStore() {
+  return new LibSQLVector({
+    id: 'wiki-vector',
+    url: process.env.LIBSQL_URL || 'http://libsql:8080',
+  });
+}
+
+// ============================================================
+// File scanning
+// ============================================================
+
+function scanFiles(dir: string, base: string): { path: string; relativePath: string }[] {
+  const results: { path: string; relativePath: string }[] = [];
+
+  function walk(current: string) {
+    const entries = readdirSync(current);
+    for (const entry of entries) {
+      const full = join(current, entry);
+      const stat = statSync(full);
+
+      if (stat.isDirectory()) {
+        if (!SKIP_DIRS.has(entry)) walk(full);
+        continue;
+      }
+
+      if (stat.size > MAX_FILE_SIZE) continue;
+
+      const ext = extname(entry).toLowerCase();
+      const name = entry.toLowerCase();
+      if (CODE_EXTENSIONS.has(ext) || name === 'dockerfile' || name === 'caddyfile' || name === 'makefile') {
+        results.push({ path: full, relativePath: relative(base, full) });
+      }
+    }
+  }
+
+  walk(dir);
+  return results;
+}
+
+// ============================================================
+// Chunking strategy selection
+// ============================================================
+
+function getChunkStrategy(ext: string): 'markdown' | 'json' | 'recursive' {
+  if (['.md', '.mdx'].includes(ext)) return 'markdown';
+  if (['.json'].includes(ext)) return 'json';
+  // HTML/SVG/Vue/Svelte use recursive — html strategy requires headers/sections config
+  return 'recursive';
+}
+
+// ============================================================
+// Core pipeline
+// ============================================================
+
+export interface WikiGenerateResult {
+  projectId: string;
+  documentsProcessed: number;
+  chunksCreated: number;
+  success: boolean;
+  error?: string;
+}
+
+export async function generateWiki(
+  projectId: string,
+  repositoryUrl: string,
+  branch?: string,
+): Promise<WikiGenerateResult> {
+  const db = getDbClient();
+  const vectorStore = getVectorStore();
+  const tmpDir = `/tmp/wiki-clone-${projectId}`;
+
+  try {
+    // Update project status
+    await db.execute({
+      sql: `UPDATE projects SET status = 'processing', updated_at = ? WHERE id = ?`,
+      args: [Date.now(), projectId],
+    });
+
+    // Clone the repository (using execFileSync to prevent shell injection)
+    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
+    const gitArgs = ['clone', '--depth', '1'];
+    if (branch) gitArgs.push('--branch', branch);
+    gitArgs.push(repositoryUrl, tmpDir);
+    execFileSync('git', gitArgs, { timeout: 60_000, stdio: 'pipe' });
+
+    // Scan source files
+    const files = scanFiles(tmpDir, tmpDir);
+    console.log(`[wiki-rag] Found ${files.length} files to process for project ${projectId}`);
+
+    let totalDocs = 0;
+    let totalChunks = 0;
+
+    // Ensure vector index exists
+    const existingIndexes = await vectorStore.listIndexes();
+    if (!existingIndexes.includes(VECTOR_INDEX)) {
+      await vectorStore.createIndex({
+        indexName: VECTOR_INDEX,
+        dimension: EMBEDDING_DIMENSION,
+      });
+    }
+
+    // Process files in batches
+    const allChunks: { text: string; metadata: Record<string, unknown> }[] = [];
+
+    for (const file of files) {
+      try {
+        const content = readFileSync(file.path, 'utf-8');
+        if (!content.trim()) continue;
+
+        const ext = extname(file.relativePath).toLowerCase();
+        const strategy = getChunkStrategy(ext);
+
+        // Create MDocument and chunk
+        const doc = strategy === 'markdown'
+          ? MDocument.fromMarkdown(content, { filePath: file.relativePath, projectId })
+          : strategy === 'json'
+            ? MDocument.fromJSON(content, { filePath: file.relativePath, projectId })
+            : MDocument.fromText(content, { filePath: file.relativePath, projectId });
+
+        await doc.chunk({
+          strategy,
+          maxSize: 2000,
+          overlap: 200,
+        });
+
+        // Store document record
+        const docId = crypto.randomUUID();
+        const now = Date.now();
+        await db.execute({
+          sql: `INSERT INTO wiki_documents (id, project_id, file_path, summary, pass, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 1, ?, ?)`,
+          args: [docId, projectId, file.relativePath, `Source file: ${file.relativePath}`, now, now],
+        });
+        totalDocs++;
+
+        // Collect chunks for batch embedding
+        const texts = doc.getText();
+        for (let i = 0; i < texts.length; i++) {
+          allChunks.push({
+            text: texts[i],
+            metadata: {
+              documentId: docId,
+              projectId,
+              filePath: file.relativePath,
+              chunkIndex: i,
+            },
+          });
+        }
+      } catch (err) {
+        console.warn(`[wiki-rag] Skipping ${file.relativePath}: ${err instanceof Error ? err.message : 'unknown error'}`);
+      }
+    }
+
+    // Batch embed and store chunks
+    const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
+
+    for (let i = 0; i < allChunks.length; i += BATCH_SIZE) {
+      const batch = allChunks.slice(i, i + BATCH_SIZE);
+      const texts = batch.map((c) => c.text);
+
+      try {
+        const { embeddings } = await embedMany({
+          model: openrouter.textEmbeddingModel(EMBEDDING_MODEL),
+          values: texts,
+        });
+
+        // Store in vector index
+        const ids = batch.map(() => crypto.randomUUID());
+        const metadata = batch.map((c) => ({
+          text: c.text.slice(0, 10000),
+          ...c.metadata,
+        }));
+
+        await vectorStore.upsert({
+          indexName: VECTOR_INDEX,
+          vectors: embeddings,
+          metadata,
+          ids,
+        });
+
+        // Also store in wiki_chunks table for relational queries
+        const now = Date.now();
+        for (let j = 0; j < batch.length; j++) {
+          await db.execute({
+            sql: `INSERT INTO wiki_chunks (id, document_id, content, chunk_index, created_at)
+                  VALUES (?, ?, ?, ?, ?)`,
+            args: [
+              ids[j],
+              batch[j].metadata.documentId as string,
+              batch[j].text,
+              batch[j].metadata.chunkIndex as number,
+              now,
+            ],
+          });
+        }
+
+        totalChunks += batch.length;
+        console.log(`[wiki-rag] Embedded batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(allChunks.length / BATCH_SIZE)} (${totalChunks}/${allChunks.length} chunks)`);
+      } catch (err) {
+        console.error(`[wiki-rag] Embedding batch error: ${err instanceof Error ? err.message : 'unknown'}`);
+      }
+    }
+
+    // Update project with final counts
+    await db.execute({
+      sql: `UPDATE projects SET status = 'ready', documents_count = ?, chunks_count = ?, updated_at = ? WHERE id = ?`,
+      args: [totalDocs, totalChunks, Date.now(), projectId],
+    });
+
+    return { projectId, documentsProcessed: totalDocs, chunksCreated: totalChunks, success: true };
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+    console.error(`[wiki-rag] Pipeline error: ${errorMsg}`);
+
+    await db.execute({
+      sql: `UPDATE projects SET status = 'error', error = ?, updated_at = ? WHERE id = ?`,
+      args: [errorMsg.slice(0, 500), Date.now(), projectId],
+    }).catch(() => {});
+
+    return { projectId, documentsProcessed: 0, chunksCreated: 0, success: false, error: errorMsg };
+  } finally {
+    // Cleanup cloned repo
+    if (existsSync(tmpDir)) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+}
+
+// ============================================================
+// Query
+// ============================================================
+
+export interface WikiQueryResult {
+  results: Array<{
+    chunkId: string;
+    documentId: string;
+    filePath: string;
+    content: string;
+    score: number;
+    summary: string | null;
+  }>;
+  query: string;
+  totalResults: number;
+}
+
+export async function queryWiki(
+  query: string,
+  projectId?: string,
+  topK = 10,
+): Promise<WikiQueryResult> {
+  const vectorStore = getVectorStore();
+  const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
+
+  // Generate query embedding
+  const { embedding: queryVector } = await embed({
+    model: openrouter.textEmbeddingModel(EMBEDDING_MODEL),
+    value: query,
+  });
+
+  // Search vector store
+  const filter = projectId ? { projectId } : undefined;
+  const vectorResults = await vectorStore.query({
+    indexName: VECTOR_INDEX,
+    queryVector,
+    topK,
+    filter,
+  });
+
+  const results = vectorResults.map((r) => ({
+    chunkId: r.id,
+    documentId: (r.metadata?.documentId as string) || '',
+    filePath: (r.metadata?.filePath as string) || '',
+    content: (r.metadata?.text as string) || '',
+    score: r.score,
+    summary: null,
+  }));
+
+  return {
+    results,
+    query,
+    totalResults: results.length,
+  };
+}

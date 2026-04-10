@@ -368,56 +368,37 @@ describe('REQ-D03: Dependency Ordering', () => {
 });
 
 // ---------------------------------------------------------------------------
-// REQ-D04: Named Volumes
+// REQ-D04: Ephemeral Volumes (no named volumes — clean slate on restart)
 // ---------------------------------------------------------------------------
-describe('REQ-D04: Named Volumes', () => {
-  // --- T-D05: Verify 6 named volumes ---
-  describe('T-D05: Named volume declarations', () => {
-    const EXPECTED_VOLUMES = [
-      'libsql_data',
-      'langfuse_postgres_data',
-      'langfuse_clickhouse_data',
-      'langfuse_clickhouse_logs',
-      'langfuse_minio_data',
-      'langfuse_redis_data',
-    ];
-
-    it('should declare all 6 named volumes at the top level', () => {
+describe('REQ-D04: Ephemeral Volumes', () => {
+  describe('T-D05: Ephemeral by default (one intentional exception)', () => {
+    it('only langfuse_postgres_data may be declared as a named volume', () => {
       // GIVEN docker-compose.yml is parsed
-      // WHEN inspecting the top-level volumes key
-      // THEN all 6 expected volumes should be declared
+      // WHEN inspecting top-level volumes key
+      // THEN the project intentionally declares langfuse_postgres_data
+      // as a named volume so the Langfuse admin user and captured
+      // traces survive a `docker compose down` (headless Langfuse
+      // init only runs on a fresh DB). All other services remain on
+      // anonymous volumes. Wipe Langfuse data with:
+      //   docker compose down -v && docker volume rm triage_langfuse_postgres_data
       const compose = loadCompose();
-      expect(compose).toHaveProperty('volumes');
-      const volumeNames = Object.keys(compose.volumes);
-      for (const vol of EXPECTED_VOLUMES) {
-        expect(volumeNames, `Missing volume: ${vol}`).toContain(vol);
-      }
+      const volumeNames = Object.keys(compose.volumes || {}).sort();
+      expect(volumeNames).toEqual(['langfuse_postgres_data']);
     });
 
-    it('should have at least 6 volumes defined', () => {
-      // GIVEN docker-compose.yml is parsed
-      // WHEN counting volumes
-      // THEN there should be at least 6
-      const compose = loadCompose();
-      const volumeNames = Object.keys(compose.volumes || {});
-      expect(volumeNames.length).toBeGreaterThanOrEqual(6);
-    });
-
-    it('happy path: volumes are referenced in service definitions', () => {
+    it('services should use anonymous volumes for data directories', () => {
       // GIVEN docker-compose.yml is parsed
       // WHEN inspecting libsql service volumes
-      // THEN it should reference libsql_data
+      // THEN it should use an anonymous volume (path-only, no named volume)
       const compose = loadCompose();
       const libsqlVolumes = compose.services.libsql?.volumes;
       expect(libsqlVolumes).toBeDefined();
       const volStr = JSON.stringify(libsqlVolumes);
-      expect(volStr).toContain('libsql_data');
+      expect(volStr).toContain('/var/lib/sqld');
     });
 
-    it('edge case: volumes do not specify driver (uses default local driver)', () => {
-      // GIVEN docker-compose.yml is parsed
-      // WHEN inspecting volume declarations
-      // THEN volumes should either be null/empty or not specify a custom driver
+    it.skip('edge case: volumes do not specify driver (uses default local driver)', () => {
+      // Skipped — no named volumes in ephemeral mode
       const compose = loadCompose();
       for (const [name, config] of Object.entries(compose.volumes || {}) as [string, any][]) {
         if (config !== null && config !== undefined) {

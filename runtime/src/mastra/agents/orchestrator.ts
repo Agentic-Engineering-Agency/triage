@@ -2,7 +2,7 @@ import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { LibSQLStore } from '@mastra/libsql';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { MODELS, MODEL_CHAINS, LINEAR_CONSTANTS } from '../../lib/config';
+import { MODELS, MODEL_CHAINS, LINEAR_BASE_URL, LINEAR_CONSTANTS } from '../../lib/config';
 
 // Explicit storage for memory — ensures persistence to the shared LibSQL container
 const memoryStorage = new LibSQLStore({
@@ -19,7 +19,11 @@ import {
   listLinearCyclesTool,
   sendTicketEmailTool,
   sendResolutionEmailTool,
+  sendSlackTicketNotificationTool,
+  sendSlackResolutionNotificationTool,
+  sendSlackMessageTool,
   queryWikiTool,
+  generateWikiTool,
   processAttachmentsTool,
   displayTriageTool,
   displayDuplicateTool,
@@ -61,7 +65,7 @@ When a user asks to create a ticket or describes an incident:
 7. **Wait for confirmation**: The user will review the card. They may:
    - Click "Create Ticket" to approve → you will receive a confirmation message → THEN call create-linear-issue with the correct cycleId, assigneeId, labelIds, and stateId.
    - Send a message with changes (e.g., "change severity to High", "assign to Fernando instead") → update the triage details and call displayTriage AGAIN with the updated info. Do NOT repeat all details as text — always use the card.
-8. **After ticket creation**: Call sendTicketEmailTool to notify the assignee.
+8. **After ticket creation**: Call sendTicketEmailTool to notify the assignee, and send-slack-ticket-notification to post to Slack.
 
 ## Similarity Scoring
 When comparing a new incident against existing Linear issues, compute keyword overlap ratio:
@@ -76,12 +80,14 @@ When comparing a new incident against existing Linear issues, compute keyword ov
 - When presenting a triage card via displayTriage, do NOT duplicate the card content as text — the card IS the visual preview. Only add a brief contextual message (assignee, cycle, next steps).
 - When NOT presenting a triage card (e.g., answering questions), respond in plain text
 
-## Team Members (auto-assignment reference)
-Use these IDs when assigning tickets — do NOT ask the user for team/member IDs:
-- **Fernando** (infra/platform): ${LINEAR_CONSTANTS.MEMBERS.FERNANDO}
-- **Koki** (runtime/integrations): ${LINEAR_CONSTANTS.MEMBERS.KOKI}
-- **Chenko** (frontend/observability): ${LINEAR_CONSTANTS.MEMBERS.CHENKO}
-- **Lalo** (workflows/agents): ${LINEAR_CONSTANTS.MEMBERS.LALO}
+## Linear
+- Base URL for all Linear links: ${LINEAR_BASE_URL}
+- When constructing Linear URLs, use: ${LINEAR_BASE_URL}/issue/{identifier}
+- Team ID: ${LINEAR_CONSTANTS.TEAM_ID}
+
+## Team Members
+Use these when assigning tickets or mentioning people in Slack:
+${Object.values(LINEAR_CONSTANTS.MEMBERS).map(m => `- ${m.name}: Linear ID ${m.linearId}${m.slackId ? `, Slack <@${m.slackId}>` : ''}`).join('\n')}
 
 ## Severity Labels
 - Critical: ${LINEAR_CONSTANTS.SEVERITY_LABELS.CRITICAL}
@@ -111,8 +117,13 @@ Use these IDs when assigning tickets — do NOT ask the user for team/member IDs
 - Use list-linear-issues to check for duplicates before triaging
 - When the user confirms ("Confirmed", "Create the ticket", etc.), THEN call create-linear-issue with the appropriate assigneeId, labelIds, and stateId from above
 - After creating a ticket, call sendTicketEmailTool to notify the assignee
+- Use send-slack-ticket-notification to post triage alerts to Slack with severity-colored formatting
+- Use send-slack-resolution-notification to post resolution updates to Slack
+- Use send-slack-message for ad-hoc Slack messages or threaded follow-ups — use <@SLACK_USER_ID> to mention team members
+- When notifying the team, send BOTH email and Slack notifications for maximum visibility
+- All Linear URLs in notifications MUST use ${LINEAR_BASE_URL} as the base
 - **Reporter Email**: When creating a ticket, note the reporter's email address. This is the person who will receive a resolution notification when the ticket moves to Done in Linear. If the user has configured a reporter email in Settings, it will be available in the conversation context. If not, ask the user for their email before creating the ticket so resolution notifications can be sent later.
-- Delegate code review requests to the code-review-agent`,
+- Delegate code review requests to the code-review-agent — it produces structured review comments with severity, categories, and actionable suggestions`,
   memory: new Memory({
     storage: memoryStorage,
     options: {
@@ -141,7 +152,11 @@ Use these IDs when assigning tickets — do NOT ask the user for team/member IDs
     listLinearCyclesTool,
     sendTicketEmailTool,
     sendResolutionEmailTool,
+    sendSlackTicketNotificationTool,
+    sendSlackResolutionNotificationTool,
+    sendSlackMessageTool,
     queryWikiTool,
+    generateWikiTool,
     processAttachmentsTool,
     displayTriageTool,
     displayDuplicateTool,

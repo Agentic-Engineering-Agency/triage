@@ -1,6 +1,6 @@
 # SCALING — From Docker Compose to Production
 
-> Assumption: the current branch can run stub frontend/runtime containers when the full app code is not present yet. The scaling plan below describes the intended production topology once the real frontend and workflow runtime replace those stubs.
+> The full application is deployed with all features operational: chat-based triage, Wiki/RAG codebase indexing, Linear ticketing, email + Slack notifications, and the complete Langfuse observability stack.
 
 ## Single-Host Capacity (Docker Compose)
 
@@ -36,7 +36,9 @@ graph TD
     end
     frontend --> runtime
     runtime --> libsql
-    runtime --> langfuse-web
+    openrouter["OpenRouter (LLM gateway + Broadcast)"]
+    runtime -->|chat + embeddings| openrouter
+    openrouter -->|workspace Broadcast| langfuse-web
     langfuse-web --> langfuse-worker
     langfuse-worker --> clickhouse
     langfuse-worker --> redis
@@ -164,22 +166,25 @@ Key bottlenecks identified:
 2. **LibSQL write throughput** — Single-writer architecture limits write scaling. Consider sharding or migration to distributed SQL.
 3. **ClickHouse ingestion** — High trace volume can saturate ingestion. Buffer via Redis queues.
 4. **Network egress** — LLM API calls generate significant outbound traffic.
+5. **Wiki/RAG embedding throughput** — Large codebases (>10k files) generate significant embedding API calls during initial ingestion. Batching (20 chunks/request) and deduplication hashes mitigate cost, but ingestion of very large repos is I/O bound on clone + scan.
+6. **Slack API rate limits** — Slack's `chat.postMessage` allows ~1 message/second per channel. At high incident volume (>50/minute), notifications should be batched or routed to multiple channels. Current implementation is sufficient for <200 incidents/day.
 
 ## Cost Projection
 
-| Scale Tier | Incidents/day | Infra Cost/mo | LLM Cost/mo | Email Cost/mo | Total/mo |
-|-----------|---------------|---------------|-------------|---------------|----------|
-| Dev | <10 | $0 (local) | ~$5 | $0 (Resend free) | ~$5 |
-| Seed | ~10 | ~$150 | ~$55 | $0 (Resend free) | ~$205 |
-| Growth | ~50 | ~$500 | ~$275 | ~$10 | ~$785 |
-| Scale | ~200 | ~$1,800 | ~$1,100 | ~$40 | ~$2,940 |
-| Enterprise | 1,000+ | ~$3,000 | ~$5,500 | ~$200 | ~$8,700 |
+| Scale Tier | Incidents/day | Infra Cost/mo | LLM Cost/mo | Email Cost/mo | Slack Cost/mo | Total/mo |
+|-----------|---------------|---------------|-------------|---------------|---------------|----------|
+| Dev | <10 | $0 (local) | ~$5 | $0 (Resend free) | $0 (free) | ~$5 |
+| Seed | ~10 | ~$150 | ~$55 | $0 (Resend free) | $0 (free) | ~$205 |
+| Growth | ~50 | ~$500 | ~$275 | ~$10 | $0 (free) | ~$785 |
+| Scale | ~200 | ~$1,800 | ~$1,100 | ~$40 | $0 (free) | ~$2,940 |
+| Enterprise | 1,000+ | ~$3,000 | ~$5,500 | ~$200 | $0 (free) | ~$8,700 |
 
 > **Cost assumptions:**
 > - Average tokens per triage: ~2,000 input + ~1,000 output = ~3,000 tokens total
 > - Model mix: Mercury-2 (~$0.60/1M tokens) for fast triage classification; MiniMax M2.7 (~$2/1M tokens) for root-cause reasoning and resolution review. Blended effective rate used in projections: ~$0.92/1M tokens
 > - LLM cost formula: `incidents/day × 30 days × 3,000 tokens × blended_rate`
 > - Email: Resend free tier covers 100 emails/day (3,000/mo). Paid plan at $20/mo covers 50,000/mo — sufficient through Growth tier
+> - Slack: Free tier includes unlimited messages via Bot API. No per-message cost. Rate limit is ~1 msg/sec/channel — sufficient for all tiers listed
 > - Infra: Docker Compose on a single VPS at Seed; managed K8s (EKS/GKE) from Growth onward
 > - These are estimates; actual costs vary with model selection, retry rates, and image attachment token overhead
 

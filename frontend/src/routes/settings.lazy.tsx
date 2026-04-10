@@ -1,5 +1,5 @@
 import { createLazyFileRoute } from '@tanstack/react-router';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 
@@ -16,7 +16,6 @@ const FALLBACK_EMAIL = '';
 
 function SettingsPage() {
   const queryClient = useQueryClient();
-  const [repoUrl, setRepoUrl] = useState('');
   const [linearToken, setLinearToken] = useState('');
   const [tokenStatus, setTokenStatus] = useState<'idle' | 'valid' | 'invalid' | 'testing'>('idle');
   const [tokenError, setTokenError] = useState<string | null>(null);
@@ -63,21 +62,6 @@ function SettingsPage() {
     queryFn: () => apiFetch('/linear/members'),
   });
 
-  // Wiki status polling
-  const [wikiGenerating, setWikiGenerating] = useState(false);
-  const { data: wikiStatus } = useQuery<{ total: number; processed: number; done: boolean }>({
-    queryKey: ['wiki-status'],
-    queryFn: () => apiFetch('/wiki/status'),
-    refetchInterval: wikiGenerating ? 2000 : false,
-    enabled: wikiGenerating,
-  });
-
-  // Wiki generate mutation
-  const wikiMutation = useMutation({
-    mutationFn: () => apiFetch('/wiki/generate', { method: 'POST', body: JSON.stringify({ repoUrl }) }),
-    onSuccess: () => setWikiGenerating(true),
-  });
-
   // Sync members
   const syncMutation = useMutation({
     mutationFn: () => apiFetch('/linear/members'),
@@ -95,12 +79,6 @@ function SettingsPage() {
       setTokenError(err instanceof Error ? err.message : 'Connection failed');
     }
   };
-
-  const wikiProgress = wikiStatus ? (wikiStatus.total > 0 ? Math.round((wikiStatus.processed / wikiStatus.total) * 100) : 0) : 0;
-
-  useEffect(() => {
-    if (wikiStatus?.done && wikiGenerating) setWikiGenerating(false);
-  }, [wikiStatus?.done, wikiGenerating]);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -162,38 +140,11 @@ function SettingsPage() {
               {tokenStatus === 'invalid' && <p className="mt-1 text-xs text-destructive font-medium">✗ {tokenError ?? 'Connection failed'}</p>}
             </div>
 
-            <div>
-              <label className="text-sm font-medium block mb-1">GitHub Repository URL</label>
-              <div className="flex gap-2">
-                <input
-                  type="url"
-                  value={repoUrl}
-                  onChange={(e) => setRepoUrl(e.target.value)}
-                  placeholder="https://github.com/org/repo"
-                  className="flex-1 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
-                />
-                <button
-                  onClick={() => wikiMutation.mutate()}
-                  disabled={!repoUrl || wikiGenerating}
-                  className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {wikiGenerating ? 'Generating...' : 'Generate Wiki'}
-                </button>
-              </div>
-            </div>
-
-            {/* Wiki Progress */}
-            {wikiGenerating && (
-              <div className="space-y-1">
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Wiki generation progress</span>
-                  <span>{wikiProgress}%</span>
-                </div>
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full bg-primary rounded-full transition-all duration-300" style={{ width: `${wikiProgress}%` }} />
-                </div>
-              </div>
-            )}
+            <p className="text-xs text-muted-foreground">
+              To index a repository, create a project on the{' '}
+              <a href="/projects" className="underline hover:text-foreground">Projects</a> page —
+              the wiki will be built automatically and queried when triaging incidents.
+            </p>
           </div>
         </section>
 

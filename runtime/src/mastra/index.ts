@@ -8,7 +8,26 @@ import type { Context } from 'hono';
 import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent } from './agents/index';
 import { triageWorkflow } from './workflows/index';
 import { auth } from '../lib/auth';
-import { config, LINEAR_CONSTANTS } from '../lib/config';
+import { projectRoutes } from '../lib/project-routes';
+import { webhookRoutes } from '../lib/webhook-routes';
+import { config, LINEAR_CONSTANTS, LINEAR_BASE_URL } from '../lib/config';
+import { createClient } from '@libsql/client';
+import { getLinearIssueComments, updateLinearIssue } from './tools/linear';
+import { findGitHubEvidenceForIssueTool } from './tools/github';
+import { sendTicketNotification, sendResolutionNotification } from './tools/resend';
+import { sendSlackTicketNotification, sendSlackResolutionNotification } from './tools/slack';
+
+// Paranoid anchored regex for parsing a repository URL. Bounded lengths,
+// single-pass, no catastrophic backtracking.
+const GITHUB_REPO_RE = /^https:\/\/github\.com\/([\w.-]{1,100})\/([\w.-]{1,100}?)(?:\.git)?\/?$/;
+function parseGithubRepo(url: string | null | undefined): { owner: string; repo: string } | null {
+  if (!url || typeof url !== 'string' || url.length > 300) return null;
+  const m = url.match(GITHUB_REPO_RE);
+  if (!m) return null;
+  return { owner: m[1], repo: m[2] };
+}
+
+let warnedMissingGithubToken = false;
 
 // Linear client singleton — only instantiate if API key is configured
 const linearClient = config.LINEAR_API_KEY ? new LinearClient({ apiKey: config.LINEAR_API_KEY }) : null;
@@ -30,6 +49,10 @@ export const mastra = new Mastra({
   server: {
     apiRoutes: [
       chatRoute({ path: '/chat', agent: 'orchestrator', sendReasoning: true, defaultOptions: { savePerStep: true } }),
+      registerApiRoute('/health', {
+        method: 'GET',
+        handler: async (c) => c.json({ status: 'ok', service: 'triage-runtime' }),
+      }),
       registerApiRoute('/auth/*', {
         method: 'ALL',
         handler: async (c) => {
@@ -116,9 +139,9 @@ export const mastra = new Mastra({
                 startsAt: activeCycle.startsAt?.toISOString?.() ?? String(activeCycle.startsAt ?? ''),
                 endsAt: activeCycle.endsAt?.toISOString?.() ?? String(activeCycle.endsAt ?? ''),
                 progress: activeCycle.progress ?? 0,
-                scopeCount: (activeCycle as Record<string, unknown>).scopeCount ?? 0,
-                completedScopeCount: (activeCycle as Record<string, unknown>).completedScopeCount ?? 0,
-                startedScopeCount: (activeCycle as Record<string, unknown>).startedScopeCount ?? 0,
+                scopeCount: (activeCycle as unknown as Record<string, unknown>).scopeCount ?? 0,
+                completedScopeCount: (activeCycle as unknown as Record<string, unknown>).completedScopeCount ?? 0,
+                startedScopeCount: (activeCycle as unknown as Record<string, unknown>).startedScopeCount ?? 0,
               },
             });
           } catch (error) {
@@ -157,35 +180,6 @@ export const mastra = new Mastra({
         },
       },
 
-      // POST /api/wiki/generate — start wiki generation
-      {
-        path: '/api/wiki/generate',
-        method: 'POST' as const,
-        handler: async (c: Context) => {
-          try {
-            const body = await c.req.json() as { repoUrl?: string };
-            if (!body.repoUrl) {
-              return c.json({ success: false, error: { code: 'MISSING_REPO_URL', message: 'repoUrl is required' } }, 400);
-            }
-            // TODO: Implement full wiki generation (git clone, file walk, generateWikiTool calls)
-            console.log(`[wiki/generate] Received request for repo: ${body.repoUrl}`);
-            return c.json({ success: true, data: { status: 'started', repoUrl: body.repoUrl } });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return c.json({ success: false, error: { code: 'WIKI_ERROR', message } }, 500);
-          }
-        },
-      },
-
-      // GET /api/wiki/status — wiki generation status
-      {
-        path: '/api/wiki/status',
-        method: 'GET' as const,
-        handler: async (c: Context) => {
-          return c.json({ success: true, data: { total: 0, processed: 0, done: true } });
-        },
-      },
-
       // POST /api/linear/webhook/setup — register the Linear webhook for this deployment
       {
         path: '/api/linear/webhook/setup',
@@ -195,19 +189,16 @@ export const mastra = new Mastra({
             if (!linearClient) {
               return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
             }
-
             const body = await c.req.json() as { url?: string };
             if (!body.url) {
               return c.json({ success: false, error: { code: 'MISSING_URL', message: 'url is required' } }, 400);
             }
-
             const result = await linearClient.createWebhook({
               url: body.url,
               teamId: LINEAR_CONSTANTS.TEAM_ID,
               resourceTypes: ['Issue'],
               enabled: true,
             });
-
             const webhook = await result.webhook;
             return c.json({ success: true, data: { id: webhook?.id, url: webhook?.url, enabled: webhook?.enabled } });
           } catch (error) {
@@ -231,7 +222,6 @@ export const mastra = new Mastra({
               const type = payload.type as string;
               const data = payload.data as Record<string, unknown> | undefined;
 
-              // Only handle issue updates
               if (action !== 'update' || type !== 'Issue' || !data) {
                 return c.json({ success: true, data: { received: true, skipped: true } });
               }
@@ -240,14 +230,254 @@ export const mastra = new Mastra({
               const issueState = data.state as { name?: string; type?: string } | undefined;
               const updatedAt = (data.updatedAt as string) ?? new Date().toISOString();
 
-              // Only trigger on completed state (Done)
+              // ─── In Review evidence check ─────────────────────────────
+              // When an issue transitions to "In Review", look up evidence
+              // of completed work (Linear comments + GitHub commits / PRs /
+              // branches). If none is found, kick it back to In Progress
+              // and nag the assignee. If found, auto-advance to Done and
+              // notify the original reporter.
+              if (issueState?.name === 'In Review') {
+                console.log(`[webhook/linear] Issue ${issueId} moved to In Review — running evidence check`);
+                try {
+                  const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+                  const ticketRow = await db.execute({
+                    sql: `SELECT lt.reporter_email, lt.project_id, lt.title, p.repository_url
+                          FROM local_tickets lt
+                          LEFT JOIN projects p ON lt.project_id = p.id
+                          WHERE lt.linear_issue_id = ?
+                          LIMIT 1`,
+                    args: [issueId],
+                  });
+
+                  const row = ticketRow.rows[0] as unknown as
+                    | { reporter_email: string | null; project_id: string | null; title: string | null; repository_url: string | null }
+                    | undefined;
+
+                  if (!row) {
+                    console.log(`[webhook/linear] No local_tickets row for ${issueId} — skipping evidence check`);
+                    return c.json({ success: true, data: { received: true, action: 'in-review-check', skipped: true, reason: 'no local ticket' } });
+                  }
+
+                  const reporterEmail = row.reporter_email ?? undefined;
+                  const ticketTitle = row.title ?? `Issue ${issueId}`;
+                  const repoInfo = parseGithubRepo(row.repository_url);
+                  const identifier = (data.identifier as string | undefined) ?? '';
+
+                  if (!process.env.GITHUB_TOKEN && !warnedMissingGithubToken) {
+                    console.warn('[webhook/linear] GITHUB_TOKEN missing — evidence check will fall back to Linear comments only');
+                    warnedMissingGithubToken = true;
+                  }
+
+                  // Fetch comments + GitHub evidence in parallel.
+                  const [commentsResult, githubResult] = await Promise.all([
+                    getLinearIssueComments.execute?.({ issueId } as never, {} as never),
+                    repoInfo && identifier && process.env.GITHUB_TOKEN
+                      ? findGitHubEvidenceForIssueTool.execute?.(
+                          { owner: repoInfo.owner, repo: repoInfo.repo, identifier } as never,
+                          {} as never,
+                        )
+                      : Promise.resolve({ success: true, data: { found: false, commits: [], branches: [], pulls: [], evidenceSummary: '' } }),
+                  ]);
+
+                  const commentsOk = commentsResult && typeof commentsResult === 'object' && 'success' in commentsResult && commentsResult.success;
+                  const commentsData = commentsOk
+                    ? ((commentsResult as { success: true; data: { comments: Array<{ body: string; user: { name: string | null } }> } }).data.comments ?? [])
+                    : [];
+                  const commentsHaveEvidence = commentsData.length > 0;
+
+                  const githubOk = githubResult && typeof githubResult === 'object' && 'success' in githubResult && githubResult.success;
+                  const githubData = githubOk
+                    ? (githubResult as { success: true; data: { found: boolean; evidenceSummary: string; commits: unknown[]; branches: unknown[]; pulls: unknown[] } }).data
+                    : { found: false, evidenceSummary: '', commits: [], branches: [], pulls: [] };
+                  const githubHasEvidence = githubData.found === true;
+
+                  const hasEvidence = commentsHaveEvidence || githubHasEvidence;
+
+                  if (!hasEvidence) {
+                    // No evidence — move back to In Progress and nag the assignee.
+                    console.log(`[webhook/linear] No evidence for ${issueId} — reverting to In Progress`);
+
+                    const revertResult = await updateLinearIssue.execute?.(
+                      { issueId, stateId: LINEAR_CONSTANTS.STATES.IN_PROGRESS } as never,
+                      {} as never,
+                    );
+                    const revertOk = !!revertResult
+                      && typeof revertResult === 'object'
+                      && 'success' in revertResult
+                      && (revertResult as { success: unknown }).success === true;
+                    if (!revertOk) {
+                      console.error(
+                        `[webhook/linear] Failed to revert ${issueId} to In Progress`,
+                        revertResult,
+                      );
+                      return c.json(
+                        {
+                          success: false,
+                          error: {
+                            code: 'STATE_UPDATE_FAILED',
+                            message: 'Could not revert Linear issue to In Progress',
+                          },
+                        },
+                        500,
+                      );
+                    }
+
+                    // Post a Linear comment explaining the revert.
+                    try {
+                      if (linearClient) {
+                        await linearClient.createComment({
+                          issueId,
+                          body: `Automated evidence check: moved back to **In Progress**. No Linear comments or GitHub commits / branches / PRs referencing \`${identifier}\` were found. Please add a comment or link your work before moving this ticket to In Review again.`,
+                        });
+                      }
+                    } catch (commentErr) {
+                      console.error('[webhook/linear] Failed to post Linear comment:', commentErr instanceof Error ? commentErr.message : commentErr);
+                    }
+
+                    // Notify assignee (if present) via email + Slack.
+                    const assigneeNode = data.assignee as { email?: string; name?: string } | undefined;
+                    const assigneeEmail = assigneeNode?.email;
+                    const assigneeName = assigneeNode?.name ?? 'Assignee';
+                    const nagSummary = `The ticket "${ticketTitle}" was moved to In Review but no evidence of work was found (no Linear comments, no commits or PRs referencing ${identifier}). It has been moved back to In Progress. Please add evidence before re-requesting review.`;
+                    const issueUrl = `${LINEAR_BASE_URL}/issue/${identifier}`;
+
+                    if (assigneeEmail) {
+                      try {
+                        await sendTicketNotification.execute?.(
+                          {
+                            to: assigneeEmail,
+                            ticketTitle: `[Evidence missing] ${ticketTitle}`.slice(0, 200),
+                            severity: 'Medium',
+                            priority: 3,
+                            summary: nagSummary,
+                            linearUrl: issueUrl,
+                            assigneeName,
+                            linearIssueId: issueId,
+                          } as never,
+                          {} as never,
+                        );
+                      } catch (err) {
+                        console.error('[webhook/linear] Assignee email failed:', err instanceof Error ? err.message : err);
+                      }
+                    }
+
+                    try {
+                      await sendSlackTicketNotification.execute?.(
+                        {
+                          ticketTitle: `[Evidence missing] ${ticketTitle}`.slice(0, 200),
+                          severity: 'Medium',
+                          priority: 3,
+                          summary: nagSummary,
+                          linearUrl: issueUrl,
+                          assigneeName,
+                          linearIssueId: issueId,
+                        } as never,
+                        {} as never,
+                      );
+                    } catch (err) {
+                      console.error('[webhook/linear] Assignee Slack failed:', err instanceof Error ? err.message : err);
+                    }
+
+                    return c.json({
+                      success: true,
+                      data: { received: true, action: 'in-review-check', verdict: 'missing-evidence', revertedTo: 'in-progress' },
+                    });
+                  }
+
+                  // Evidence found — advance to Done and notify reporter.
+                  console.log(`[webhook/linear] Evidence found for ${issueId} — marking Done`);
+
+                  const advanceResult = await updateLinearIssue.execute?.(
+                    { issueId, stateId: LINEAR_CONSTANTS.STATES.DONE } as never,
+                    {} as never,
+                  );
+                  const advanceOk = !!advanceResult
+                    && typeof advanceResult === 'object'
+                    && 'success' in advanceResult
+                    && (advanceResult as { success: unknown }).success === true;
+                  if (!advanceOk) {
+                    console.error(
+                      `[webhook/linear] Failed to advance ${issueId} to Done`,
+                      advanceResult,
+                    );
+                    return c.json(
+                      {
+                        success: false,
+                        error: {
+                          code: 'STATE_UPDATE_FAILED',
+                          message: 'Could not advance Linear issue to Done',
+                        },
+                      },
+                      500,
+                    );
+                  }
+
+                  const evidenceParts: string[] = [];
+                  if (commentsHaveEvidence) {
+                    const snippet = (commentsData[0]?.body ?? '').slice(0, 160);
+                    evidenceParts.push(`${commentsData.length} Linear comment(s)${snippet ? ` — latest: "${snippet}"` : ''}`);
+                  }
+                  if (githubHasEvidence) {
+                    evidenceParts.push(githubData.evidenceSummary);
+                  }
+                  const resolutionSummary = `Ticket "${ticketTitle}" auto-resolved. Evidence found: ${evidenceParts.join(' | ')}`;
+                  const issueUrl = `${LINEAR_BASE_URL}/issue/${identifier}`;
+
+                  if (reporterEmail) {
+                    try {
+                      await sendResolutionNotification.execute?.(
+                        {
+                          to: reporterEmail,
+                          originalTitle: ticketTitle,
+                          resolutionSummary,
+                          linearUrl: issueUrl,
+                          linearIssueId: issueId,
+                        } as never,
+                        {} as never,
+                      );
+                    } catch (err) {
+                      console.error('[webhook/linear] Reporter email failed:', err instanceof Error ? err.message : err);
+                    }
+                  }
+
+                  try {
+                    await sendSlackResolutionNotification.execute?.(
+                      {
+                        originalTitle: ticketTitle,
+                        resolutionSummary,
+                        verdict: 'resolved',
+                        linearUrl: issueUrl,
+                        linearIssueId: issueId,
+                      } as never,
+                      {} as never,
+                    );
+                  } catch (err) {
+                    console.error('[webhook/linear] Reporter Slack failed:', err instanceof Error ? err.message : err);
+                  }
+
+                  return c.json({
+                    success: true,
+                    data: {
+                      received: true,
+                      action: 'in-review-check',
+                      verdict: 'evidence-found',
+                      advancedTo: 'done',
+                      commentsCount: commentsData.length,
+                      githubFound: githubHasEvidence,
+                    },
+                  });
+                } catch (evErr) {
+                  console.error('[webhook/linear] Evidence check error:', evErr instanceof Error ? evErr.message : evErr);
+                  return c.json({ success: false, error: { code: 'EVIDENCE_CHECK_ERROR', message: evErr instanceof Error ? evErr.message : String(evErr) } }, 500);
+                }
+              }
+
               if (issueState?.type !== 'completed') {
                 return c.json({ success: true, data: { received: true, skipped: true, reason: 'state not completed' } });
               }
 
               console.log(`[webhook/linear] Issue ${issueId} marked as "${issueState.name}" — searching for suspended run`);
 
-              // Find the suspended workflow run for this issueId via storage
               const storage = m.getStorage();
               const workflowsStore = await storage?.getStore('workflows');
 
@@ -262,16 +492,13 @@ export const mastra = new Mastra({
                 perPage: false,
               });
 
-              // Match by issueId stored in the ticket step output inside the snapshot
               let matchedRunId: string | null = null;
               for (const run of runsResult.runs) {
                 const snapshot = typeof run.snapshot === 'string'
                   ? JSON.parse(run.snapshot) as Record<string, unknown>
                   : run.snapshot as unknown as Record<string, unknown>;
-
                 const context = snapshot?.context as Record<string, Record<string, unknown>> | undefined;
                 const ticketOutput = context?.['ticket']?.['output'] as Record<string, unknown> | undefined;
-
                 if (ticketOutput?.['issueId'] === issueId) {
                   matchedRunId = run.runId;
                   break;
@@ -284,17 +511,12 @@ export const mastra = new Mastra({
               }
 
               console.log(`[webhook/linear] Resuming run ${matchedRunId} for issue ${issueId}`);
-
-              // Resume the suspended step — fire and forget so webhook responds immediately
               const workflow = m.getWorkflow('triage-workflow');
               const workflowRun = await workflow.createRun({ runId: matchedRunId });
 
               workflowRun.resume({
                 step: 'suspend',
-                resumeData: {
-                  newStatus: issueState.name ?? 'Done',
-                  updatedAt,
-                },
+                resumeData: { newStatus: issueState.name ?? 'Done', updatedAt },
               }).catch((err: Error) => {
                 console.error('[webhook/linear] Resume error:', err.message);
               });
@@ -308,7 +530,7 @@ export const mastra = new Mastra({
         },
       },
 
-      // POST /api/workflows/triage-workflow/trigger — trigger the triage workflow
+      // POST /api/workflows/triage-workflow/trigger — manually trigger a workflow run
       {
         path: '/api/workflows/triage-workflow/trigger',
         method: 'POST' as const,
@@ -319,7 +541,6 @@ export const mastra = new Mastra({
               const workflow = m.getWorkflow('triage-workflow');
               const run = await workflow.createRun();
 
-              // Start the workflow in the background
               run.start({ inputData: body }).catch((err: Error) => {
                 console.error('[workflow/trigger] Error:', err.message);
               });
@@ -332,6 +553,10 @@ export const mastra = new Mastra({
           };
         },
       },
+
+      // Project management and simple webhook routes
+      ...projectRoutes,
+      ...webhookRoutes,
     ],
   },
 });
