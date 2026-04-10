@@ -1,6 +1,6 @@
 # Triage — AI-Powered SRE Incident Triage Agent
 
-AI agent that triages SRE incidents for Solidus/Rails e-commerce: describe the incident, get a root-cause analysis, a Linear ticket, and an email notification — all in one chat session.
+AI agent that triages SRE incidents for Solidus/Rails e-commerce: describe the incident, get a root-cause analysis, a Linear ticket, and email + Slack notifications — all in one chat session.
 
 [Demo Video (YouTube)](https://youtube.com/watch?v=TODO) #AgentXHackathon
 
@@ -8,7 +8,9 @@ AI agent that triages SRE incidents for Solidus/Rails e-commerce: describe the i
 
 Triage is an AI-powered incident triage system for on-call SRE engineers working on Solidus/Rails e-commerce platforms. Instead of manually hunting through logs, codebase history, and runbooks under pressure, an engineer describes the incident in plain text (with optional screenshots), and Triage does the rest.
 
-The agent queries a codebase knowledge base via vector search (llm-wiki RAG), identifies the root cause with specific file references, scores severity and confidence, and produces a structured triage report. The engineer reviews a TriageCard preview, approves it, and the agent creates a Linear ticket, sends an email notification to the team, and then suspends — waiting for a webhook when the fix ships. When it does, the Resolution Reviewer agent confirms whether the issue is actually resolved and notifies the reporter.
+The agent queries a codebase knowledge base via vector search (Wiki/RAG pipeline), identifies the root cause with specific file references, scores severity and confidence, and produces a structured triage report. The engineer reviews a TriageCard preview, approves it, and the agent creates a Linear ticket, sends email and Slack notifications to the team, and then suspends — waiting for a webhook when the fix ships. When it does, the Resolution Reviewer agent confirms whether the issue is actually resolved and notifies the reporter.
+
+Teams can connect any Git repository through the **Projects UI** — the system clones, chunks, embeds, and indexes the codebase into the Wiki/RAG vector store, making the Triage Agent immediately effective against that codebase.
 
 The full system runs on a single `docker compose up --build` from a clean clone. Ten containers start behind a Caddy reverse proxy that eliminates CORS and handles all security headers. Observability is provided by a self-hosted Langfuse stack with LLM traces, token cost tracking, and latency metrics — exposed externally via a Cloudflare Tunnel at `https://langfuse.agenticengineering.lat`.
 
@@ -25,6 +27,7 @@ graph TD
     runtime -->|traces| langfuse-web["langfuse-web :3000"]
     runtime -->|tickets| linear["Linear API"]
     runtime -->|email| resend["Resend API"]
+    runtime -->|notifications| slack["Slack API"]
     langfuse-web --> langfuse-worker["langfuse-worker :3030"]
     langfuse-worker --> clickhouse["clickhouse :8123"]
     langfuse-worker --> redis["redis :6379"]
@@ -65,7 +68,14 @@ Open [http://localhost:3000](http://localhost:3000) for the Langfuse observabili
 | `RESEND_API_KEY` | Email notifications |
 | `BETTER_AUTH_SECRET` | Session signing (any 32+ char random string) |
 
-See [`.env.example`](./.env.example) for all 38 documented variables. See [`QUICKGUIDE.md`](./QUICKGUIDE.md) for detailed setup and troubleshooting.
+**Recommended (for full notification support):**
+
+| Variable | Purpose |
+|----------|---------|
+| `SLACK_BOT_TOKEN` | Slack notifications via Bot User OAuth Token |
+| `SLACK_CHANNEL_ID` | Default Slack channel for incident alerts |
+
+See [`.env.example`](./.env.example) for all 58 documented variables. See [`QUICKGUIDE.md`](./QUICKGUIDE.md) for detailed setup and troubleshooting.
 
 ## Tech Stack
 
@@ -83,6 +93,8 @@ See [`.env.example`](./.env.example) for all 38 documented variables. See [`QUIC
 | UI Components | [shadcn/ui](https://ui.shadcn.com) | Radix-based accessible component library |
 | Ticketing | [Linear](https://linear.app) SDK | Issue creation, assignment, status tracking, webhooks |
 | Email | [Resend](https://resend.com) | Transactional email notifications |
+| Chat Notifications | [Slack](https://api.slack.com) Web API | Ticket and resolution notifications with Block Kit formatting |
+| Wiki/RAG | [@mastra/rag](https://mastra.ai) + LibSQL vectors | Codebase cloning, chunking, embedding, and semantic search |
 
 ## Agents
 
@@ -100,7 +112,7 @@ See [`.env.example`](./.env.example) for all 38 documented variables. See [`QUIC
 | [`AGENTS_USE.md`](./AGENTS_USE.md) | Agent implementation, architecture, observability, security |
 | [`SCALING.md`](./SCALING.md) | Docker → Kubernetes migration path, cost projections |
 | [`QUICKGUIDE.md`](./QUICKGUIDE.md) | Setup, verification, and troubleshooting |
-| [`.env.example`](./.env.example) | 38 documented environment variables with placeholders and comments |
+| [`.env.example`](./.env.example) | 58 documented environment variables with placeholders and comments |
 | [`docs/linear-resend-integration-assessment.md`](./docs/linear-resend-integration-assessment.md) | Design and implementation notes for the Linear and Resend tool layer |
 | [Live deployment](https://triage.agenticengineering.lat) | Hosted demo instance |
 
