@@ -32,6 +32,10 @@ export const mastra = new Mastra({
   server: {
     apiRoutes: [
       chatRoute({ path: '/chat', agent: 'orchestrator', sendReasoning: true, defaultOptions: { savePerStep: true } }),
+      registerApiRoute('/health', {
+        method: 'GET',
+        handler: async (c) => c.json({ status: 'ok', service: 'triage-runtime' }),
+      }),
       registerApiRoute('/auth/*', {
         method: 'ALL',
         handler: async (c) => {
