@@ -279,7 +279,10 @@ describe('REQ-A03: Docker Compose Override for Dev Mode', () => {
     const cmd = override.services?.runtime?.command;
     const cmdStr = Array.isArray(cmd) ? cmd.join(' ') : String(cmd || '');
     expect(cmdStr).toMatch(/mastra\s+dev/i);
-    expect(cmdStr).toMatch(/--port\s+4111/);
+    // Port is set via PORT=4111 env var, not --port flag
+    const env = override.services?.runtime?.environment;
+    const envArr = Array.isArray(env) ? env : [];
+    expect(envArr).toEqual(expect.arrayContaining([expect.stringMatching(/PORT=4111/)]));
   });
 
   it('T-A03-NEG: base compose has no vite service (prod mode)', () => {
