@@ -1,4 +1,4 @@
 {
   "title": "Integrations",
-  "pages": ["index", "linear", "resend", "openrouter", "langfuse"]
+  "pages": ["index", "linear", "resend", "slack", "openrouter", "langfuse"]
 }

@@ -2,7 +2,7 @@
 
 ## 1. Agent Overview
 
-**Triage** is an AI-powered SRE incident response system for e-commerce platforms (Solidus/Rails). Engineers describe production incidents in a chat interface — text, images, screenshots, and log files. Four specialized agents collaborate to analyze the incident, ground the analysis in the actual codebase via RAG, propose a triage card for human review, create a Linear ticket on approval, notify the assigned engineer by email, suspend the workflow until the fix ships, verify the resolution against the PR, and notify the reporter when the incident is confirmed closed.
+**Triage** is an AI-powered SRE incident response system for e-commerce platforms (Solidus/Rails). Engineers describe production incidents in a chat interface — text, images, screenshots, and log files. Four specialized agents collaborate to analyze the incident, ground the analysis in the actual codebase via RAG, propose a triage card for human review, create a Linear ticket on approval, notify the assigned engineer by email and Slack, suspend the workflow until the fix ships, verify the resolution against the PR, and notify the reporter when the incident is confirmed closed.
 
 The system is built on Mastra v1.23 running on Hono, with all agents registered in a single Mastra instance. OpenRouter provides model routing and fallback chains so no single model failure blocks triage. LibSQL serves as the unified data layer for workflow state persistence, vector embeddings, auth sessions, and local ticket fallback.
 
@@ -28,7 +28,7 @@ The system is built on Mastra v1.23 running on Hono, with all agents registered 
 | LLM | `minimax/minimax-m2.7-20260318` (primary); fallback chain: `qwen/qwen3-235b-a22b:free` → `minimax/minimax-m2.5-20260211:free` |
 | Inputs | Text incident descriptions, images (screenshots, dashboards), log files (.log, .txt), clipboard paste via chat |
 | Outputs | Triage cards (generative UI components with severity, confidence, root cause, file references, proposed fix), duplicate-detection cards, ticket creation confirmations |
-| Tools | `createLinearIssueTool`, `updateLinearIssueTool`, `getLinearIssueTool`, `listLinearIssuesTool`, `getTeamMembersTool`, `sendTicketEmailTool`, `sendResolutionEmailTool`, `queryWikiTool`, `processAttachmentsTool`, `displayTriageTool`, `displayDuplicateTool` |
+| Tools | `createLinearIssueTool`, `updateLinearIssueTool`, `getLinearIssueTool`, `listLinearIssuesTool`, `getTeamMembersTool`, `sendTicketEmailTool`, `sendResolutionEmailTool`, `sendSlackTicketNotificationTool`, `sendSlackResolutionNotificationTool`, `sendSlackMessageTool`, `queryWikiTool`, `processAttachmentsTool`, `displayTriageTool`, `displayDuplicateTool` |
 | Sub-agents | `codeReviewAgent` (registered via `agents` config; callable as `agent-codeReviewAgent`) |
 | Context window | `maxTokens: 8192`; persistent memory via `MemoryLibSQL` for conversation history |
 
@@ -114,6 +114,7 @@ graph TD
         LIBSQL["LibSQL sqld :8080\nworkflow state + vectors + auth + tickets\nF32_BLOB DiskANN index"]
         LINEAR["Linear API\nticketing + webhooks"]
         RESEND["Resend API\nemail notifications"]
+        SLACK["Slack API\nchannel notifications"]
         GITHUB["GitHub API\nPR comments"]
     end
 
@@ -136,6 +137,7 @@ graph TD
     TA -->|vector_top_k| LIBSQL
     WF -->|step: ticket| LINEAR
     WF -->|step: notify| RESEND
+    WF -->|step: notify| SLACK
     WF -->|step: suspend| LIBSQL
     LINEAR -->|webhook: issue Done| WH
     WH -->|run.resume| WF
@@ -143,6 +145,7 @@ graph TD
     WF -->|step: verify parallel| CR
     CR -->|PR comment| GITHUB
     WF -->|step: notify-resolution| RESEND
+    WF -->|step: notify-resolution| SLACK
     Runtime -->|LangfuseExporter traces| LF_WEB
     LF_WEB --> LF_WORK
     LF_WORK --> CH
@@ -165,10 +168,10 @@ The workflow is also triggerable directly at `POST /api/workflows/triage-workflo
 | 2 | `triage` | Invoke Triage Agent with RAG context; produce structured severity/root cause |
 | 3 | `dedup` | Search Linear for similar issues using keyword Jaccard similarity; flag duplicates at > 0.85 threshold |
 | 4 | `ticket` | Create new Linear issue or update existing duplicate; fetch auto-assigned engineer |
-| 5 | `notify` | Send ticket email to assigned engineer (or reporter as fallback) via Resend |
+| 5 | `notify` | Send ticket notification via email (Resend) and Slack (Block Kit message with severity, assignee, Linear link) |
 | 6 | `suspend` | Suspend workflow execution; persist state snapshot to LibSQL; wait for webhook |
 | 7 | `verify` | On webhook resume: fetch PR from issue, run Resolution Reviewer + Code Review Agent in parallel |
-| 8 | `notify-resolution` | Send resolution email to reporter with verdict and verification notes |
+| 8 | `notify-resolution` | Send resolution notification via email and Slack with verdict and verification notes |
 
 ### State Management
 
@@ -178,7 +181,7 @@ Conversation memory is managed by `MemoryLibSQL` on the Orchestrator, giving the
 
 ### Error Handling
 
-Every workflow step and tool wraps execution in a try/catch. Steps return gracefully on error with conservative defaults (e.g., severity falls back to P2, triage summary falls back to the first 120 chars of the description) so the pipeline never hard-fails and leaves an incident untracked. Tools return `{ success: false, error: "..." }` on failure — the calling step logs and continues. Linear and Resend are both optional at startup; missing API keys produce a `success: true` no-op with a structured log entry rather than a thrown exception.
+Every workflow step and tool wraps execution in a try/catch. Steps return gracefully on error with conservative defaults (e.g., severity falls back to P2, triage summary falls back to the first 120 chars of the description) so the pipeline never hard-fails and leaves an incident untracked. Tools return `{ success: false, error: "..." }` on failure — the calling step logs and continues. Linear, Resend, and Slack are all optional at startup; missing API keys produce a `success: true` no-op with a structured log entry rather than a thrown exception. The `notify` step treats email and Slack independently — if one channel fails, the other still fires, and `notificationSent` is true if either succeeded.
 
 ### Handoff Logic
 
@@ -191,11 +194,11 @@ Browser (useChat SSE)
     → displayTriageTool (render preview card — user approves)
     → triageWorkflow.start({ inputData }) [async background run]
       → intakeStep → triageStep (Triage Agent) → dedupStep
-      → ticketStep (Linear) → notifyStep (Resend)
+      → ticketStep (Linear) → notifyStep (Resend + Slack)
       → suspendStep [workflow persisted, HTTP returns]
         ... Linear webhook fires ...
       → verifyStep (Resolution Reviewer + Code Review Agent in parallel)
-      → notifyResolutionStep (Resend)
+      → notifyResolutionStep (Resend + Slack)
 ```
 
 ---
@@ -208,19 +211,23 @@ Browser (useChat SSE)
 |---|---|
 | User chat message | Direct text input; supports markdown, paste, multi-turn history |
 | File attachments | Images/PDFs/logs uploaded via chat; processed by `processAttachmentsTool` with Gemma 4 31B vision |
-| Codebase wiki (RAG) | Pre-generated `llm-wiki` summaries stored as `F32_BLOB(1536)` embeddings in LibSQL |
+| Codebase wiki (RAG) | Git repositories connected via the Projects UI; cloned, chunked, and embedded as `F32_BLOB(1536)` vectors in LibSQL via the Wiki/RAG pipeline |
 | Linear ticket history | `listLinearIssuesTool` queries existing issues for duplicate detection and context |
 | Conversation memory | `MemoryLibSQL` on the Orchestrator persists per-session message history |
 
 ### Context Strategy
 
-The codebase knowledge base is built via a two-pass llm-wiki approach:
+The codebase knowledge base is built via the **Wiki/RAG pipeline** (`wiki-rag.ts`), triggered from the Projects UI or API:
 
-**Pass 1 — per-file summaries:** Each file in the connected Solidus/Rails codebase is summarized individually, capturing purpose, key functions, external dependencies, and failure modes.
+**Step 1 — Clone & Scan:** The pipeline clones the target Git repository, then walks the file tree. It supports 30+ file extensions (`.ts`, `.tsx`, `.py`, `.rb`, `.go`, `.rs`, `.java`, `.md`, `.sql`, `.graphql`, etc.) and skips `node_modules`, `.git`, `dist`, `build`, and other non-source directories. Files over 100KB are excluded.
 
-**Pass 2 — cross-module synthesis:** A second pass identifies architectural patterns, data flows between components, and cross-module dependency chains.
+**Step 2 — Chunk:** Source files are processed through `@mastra/rag` `MDocument` for structural chunking that preserves code boundaries (functions, classes, modules).
 
-**Storage and retrieval:** Summaries are chunked and embedded using `text-embedding-3-small` (1536 dimensions), stored as `F32_BLOB(1536)` columns in LibSQL with a DiskANN vector index (`wiki_chunks_idx`). At query time, `queryWikiTool` calls `vector_top_k('wiki_chunks_idx', queryEmbedding, 10)` to return the 10 most relevant chunks for the incident description.
+**Step 3 — Embed:** Chunks are embedded in batches of 20 using `text-embedding-3-small` (1536 dimensions) via OpenRouter, with crypto-based deduplication hashes to avoid re-embedding unchanged content.
+
+**Step 4 — Store:** Embeddings are stored as `F32_BLOB(1536)` columns in LibSQL with a DiskANN vector index (`wiki_vectors`). The `@mastra/libsql` `LibSQLVector` adapter manages index creation and upserts.
+
+**Retrieval:** At query time, `queryWikiTool` calls `vector_top_k('wiki_vectors', queryEmbedding, 10)` to return the 10 most relevant chunks for the incident description. Results include file paths and content snippets for grounding.
 
 ### Token Management
 
@@ -249,10 +256,10 @@ All file references in triage output come exclusively from wiki query results �
 5. Orchestrator calls `listLinearIssuesTool` — similarity score < 0.70, no duplicate found
 6. Orchestrator calls `displayTriageTool` with state=`pending` — a structured triage card renders in the chat UI: severity P1, confidence 0.87, root cause, file references, proposed fix
 7. Engineer clicks "Create Ticket" — Orchestrator calls `createLinearIssueTool` with the full triage output; `requireApproval: true` ensures this is the confirmed human action
-8. `triageWorkflow` starts in the background: intake → triage (Triage Agent queries wiki again with structured output) → dedup → ticket (Linear issue created with priority 2, severity label HIGH, state TRIAGE) → notify (Resend email to assignee) → suspend
+8. `triageWorkflow` starts in the background: intake → triage (Triage Agent queries wiki again with structured output) → dedup → ticket (Linear issue created with priority 2, severity label HIGH, state TRIAGE) → notify (Resend email + Slack Block Kit message to assignee) → suspend
 9. Workflow suspends; state snapshot (including issueId) persisted to LibSQL
 
-**Outcome:** Fully triaged Linear ticket created within ~30 seconds, assigned engineer notified by email with ticket link and root cause summary, citing specific file paths.
+**Outcome:** Fully triaged Linear ticket created within ~30 seconds, assigned engineer notified by email and Slack with ticket link and root cause summary, citing specific file paths.
 
 ### Use Case 2: Resolution Verification (Webhook → Resume → Verify → Notify)
 
@@ -266,9 +273,9 @@ All file references in triage output come exclusively from wiki query results �
 5. Resolution Reviewer and Code Review Agent run in parallel: Reviewer assesses whether the fix addresses the root cause; Code Review Agent checks the diff for quality issues
 6. If the Code Review Agent finds critical/major issues: posts a structured comment on the GitHub PR, moves ticket to `In Review`, returns verdict `partially_resolved`
 7. If all checks pass: verdict `resolved`
-8. `notifyResolutionStep` sends a resolution email to the original reporter with the verdict, verification notes, and a link to the ticket
+8. `notifyResolutionStep` sends a resolution email and Slack notification to the original reporter with the verdict, verification notes, and a link to the ticket
 
-**Outcome:** Reporter receives an email confirming the fix shipped (or flagging that it needs more work), within seconds of the ticket being marked Done. False resolutions caught before the reporter is notified.
+**Outcome:** Reporter receives an email and Slack message confirming the fix shipped (or flagging that it needs more work), within seconds of the ticket being marked Done. False resolutions caught before the reporter is notified.
 
 ### Use Case 3: Batch Incident Detection (Multiple Issues in One Message)
 
@@ -282,6 +289,21 @@ All file references in triage output come exclusively from wiki query results �
 5. Three independent `triageWorkflow` runs start in parallel, each with its own Linear ticket and suspend/resume lifecycle
 
 **Outcome:** All three incidents triaged and ticketed independently in a single conversation turn, with separate ownership and lifecycle tracking.
+
+### Use Case 4: Codebase Wiki Onboarding (Projects UI → RAG)
+
+**Trigger:** A team lead navigates to `/projects` and clicks "Add Project", entering a Git repository URL (e.g., `https://github.com/solidusio/solidus`) and branch.
+
+**Flow:**
+1. Frontend `POST /projects` sends `{ name, repositoryUrl, branch }` to the runtime
+2. The runtime creates a project record in LibSQL with status `processing`
+3. The Wiki/RAG pipeline (`wiki-rag.ts`) clones the repository, scans source files (30+ supported extensions), skips `node_modules`/`.git`/`dist` and files over 100KB
+4. Files are chunked using `@mastra/rag` `MDocument`, then embedded in batches of 20 using `text-embedding-3-small` (1536 dimensions) via OpenRouter
+5. Embeddings are stored in LibSQL as `F32_BLOB(1536)` with a DiskANN vector index (`wiki_vectors`)
+6. Project status updates to `ready` with document/chunk counts; the Projects UI polls every 5 seconds to reflect progress
+7. The Triage Agent's `queryWikiTool` can now retrieve relevant chunks from this codebase when triaging incidents
+
+**Outcome:** Any Git-hosted codebase can be connected in under 2 minutes. The Triage Agent immediately gains grounded context from the new codebase, improving root-cause accuracy and file references.
 
 ---
 
@@ -308,6 +330,7 @@ All 10 containers (frontend, runtime, libsql, langfuse-web, langfuse-worker, cli
 
 - `linear.ts`: Every tool invocation logs at the start (`[Linear] API error: <message slice(0,200)>`) with truncated error messages. Raw objects and API keys are never logged.
 - `resend.ts`: Uses `maskEmail(e: string) => e.replace(/^(.)(.*)(@.*)$/, '$1***$3')` before any log line involving email addresses. PII stays out of log output.
+- `slack.ts`: Every Slack API call logs with `[Slack]` prefix. Graceful skip logged when `SLACK_BOT_TOKEN` is not configured. Channel resolution logged when falling back to `SLACK_CHANNEL_ID` default.
 - `triage-workflow.ts`: Each step logs errors with a `[step-id] Error:` prefix for correlation.
 - `mastra/index.ts`: The Linear webhook handler logs received payloads truncated to 500 chars, matched runIds, and resume errors.
 
@@ -383,6 +406,13 @@ Single-origin architecture: Caddy reverse-proxies `/api/*`, `/chat`, `/health`, 
 - **URL safety validation:** `safeHref(url)` enforces that all links start with `https://`; any other scheme is replaced with `#`
 - **PII masking in logs:** `maskEmail(e)` masks email addresses in all log output to `f***@domain.com` format before writing to stdout
 
+### Slack Security (slack.ts)
+
+- **Module-level singleton:** The Slack `WebClient` is instantiated once at module load, guarded by `SLACK_BOT_TOKEN` presence. If the token is absent, all Slack tools return `{ success: true }` without making any API call — same graceful degradation pattern as Resend.
+- **Minimal bot scopes:** The Slack app requires only `chat:write` — no read access to messages, files, or user data.
+- **Channel resolution:** The `resolveChannel()` helper uses an explicit `channel` parameter if provided, falling back to `SLACK_CHANNEL_ID` from env. No channel enumeration or discovery is performed.
+- **Signing secret verification:** `SLACK_SIGNING_SECRET` is available for webhook signature validation on incoming Slack events (future use).
+
 ### Human-in-the-Loop Gate
 
 `createLinearIssueTool` is configured with `requireApproval: true` in the Orchestrator's tool registration. No ticket is created without an explicit user confirmation action in the chat UI. The two-phase flow — `displayTriage` (preview) → user clicks "Create Ticket" → `createLinearIssueTool` (confirmed) — ensures engineers review and own every ticket that enters Linear.
@@ -399,12 +429,15 @@ Single-origin architecture: Caddy reverse-proxies `/api/*`, `/chat`, `/health`, 
 External service failures never block triage:
 - `LINEAR_API_KEY` absent: `createLinearIssueTool` returns `{ success: true }` (no-op) and logs a structured message; tickets can be stored in the local LibSQL `local_tickets` table as fallback
 - `RESEND_API_KEY` absent: email tools log `[Resend] Skipping notification to f***@domain.com` with PII-masked recipient and return `{ success: true }`
+- `SLACK_BOT_TOKEN` absent: Slack tools log `[Slack] Skipping ticket notification for "..." (SLACK_BOT_TOKEN not configured)` and return `{ success: true }`
+- `SLACK_CHANNEL_ID` absent (with token set): Slack tools log `[Slack] No channel specified and SLACK_CHANNEL_ID not set — skipping` and return `{ success: true }`
 - OpenRouter model failure: fallback chain tries `qwen3-235b` then `minimax-m2.5` before returning an error
 
 ### Test Evidence
 
 - `runtime/src/mastra/tools/linear.test.ts` — verifies approval gating, singleton client initialization, structured error handling, and field allowlist enforcement on update operations
 - `runtime/src/mastra/tools/resend.test.ts` — verifies graceful degradation when API key is absent, idempotency-key usage, and PII masking in log output
+- `runtime/src/mastra/tools/slack.test.ts` — verifies Slack tool registration, graceful degradation when bot token is absent, Block Kit message formatting, severity-to-emoji mapping, and channel resolution logic
 - `tests/infra-docker/env-config.test.ts` — verifies documented integration env vars and missing-key behavior at startup
 - `tests/infra-docker/*.test.ts` — validates infrastructure security properties: network isolation, port binding, healthcheck presence, and container configuration
 
@@ -478,11 +511,15 @@ Triage is designed to scale from a single Docker Compose deployment to a product
 
 **Single-origin Caddy proxy.** Proxying all `/api/*`, `/chat`, and `/auth/*` through Caddy to the runtime eliminated CORS entirely. Session cookies worked with default browser settings. Security headers were configured once in the Caddyfile and applied universally.
 
-**SpecSafe TDD foundation.** Writing 192 tests (infrastructure validation, schema tests, tool error paths) before implementing production code meant the Docker Compose stack was correct on day one, Zod schemas caught integration mismatches early, and the Linear/Resend tool layer was production-ready with known failure modes documented.
+**SpecSafe TDD foundation.** Writing 192 tests (infrastructure validation, schema tests, tool error paths) before implementing production code meant the Docker Compose stack was correct on day one, Zod schemas caught integration mismatches early, and the Linear/Resend/Slack tool layer was production-ready with known failure modes documented.
+
+**Multi-channel notifications (Email + Slack).** Adding Slack alongside Resend for notifications was a late-sprint addition that paid off immediately. The Slack Block Kit messages with severity emojis, assignee mentions, and Linear links gave on-call engineers a faster signal than email. The graceful degradation pattern (module-level singleton, no-op on missing token) meant Slack was fully optional — teams without Slack get identical functionality via email alone.
+
+**Projects UI for Wiki/RAG.** Exposing the wiki ingestion pipeline through a CRUD UI (`/projects`) transformed the system from a single-codebase tool to a multi-project platform. Teams can connect any Git repository and have the RAG pipeline running in under 2 minutes. The 5-second polling on the frontend gives real-time feedback on ingestion progress.
 
 ### What We Would Do Differently
 
-**Start RAG wiki ingestion earlier.** The `llm-wiki` generation pipeline (clone repo → summarize per file → cross-module synthesis → embed → store) was the longest-running prerequisite for useful triage output. We built the retrieval layer before the ingestion pipeline was stable, which created a period where the Triage Agent had no grounded context to work with. In a future sprint we would invest in the ingestion pipeline on day one and treat it as a blocking dependency.
+**Start RAG wiki ingestion earlier.** The Wiki/RAG pipeline (clone repo → scan files → chunk → embed → store) was the longest-running prerequisite for useful triage output. We built the retrieval layer before the ingestion pipeline was stable, which created a period where the Triage Agent had no grounded context to work with. In a future sprint we would invest in the ingestion pipeline on day one and treat it as a blocking dependency. The Projects UI partially solved this by making ingestion self-service, but ideally we would auto-trigger ingestion on project creation.
 
 **Invest in E2E tests earlier.** The SpecSafe unit test suite gave us strong component-level confidence, but we lacked end-to-end tests covering the full chat → workflow → ticket → webhook → resolution loop. Several integration bugs (webhook resume payload shape mismatches, Zod schema drift between the workflow step output and the next step's input) were caught manually rather than by tests. Playwright or a Mastra workflow test harness would have caught these faster.
 
