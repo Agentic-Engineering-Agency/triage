@@ -16,7 +16,6 @@ import {
 } from '../tools/index';
 import { sendSlackTicketNotification, sendSlackResolutionNotification } from '../tools/slack';
 import { LINEAR_CONSTANTS, config } from '../../lib/config';
-import { queryWiki } from '../../lib/wiki-rag';
 import { resolveStateId, resolveLabelId } from '../tools/linear-state-resolver';
 
 // Helper to call tool.execute safely
@@ -484,22 +483,77 @@ const notifyStep = createStep({
 
     // Send email notification via Resend
     try {
+<<<<<<< HEAD
       await sendTicketNotification.execute({
         context: {
           to: inputData.reporterEmail,
           ticketTitle: inputData.triageSummary.slice(0, 100),
           severity,
           priority,
+=======
+      const severityMap: Record<string, 'Critical'|'High'|'Medium'|'Low'> = { P0: 'Critical', P1: 'High', P2: 'Medium', P3: 'Low', P4: 'Low' };
+      const severity = severityMap[inputData.severity] ?? 'Medium';
+      const notifyEmail = inputData.assigneeEmail ?? inputData.reporterEmail;
+      const notifyName = inputData.assigneeName ?? 'Team';
+
+      // Send email notification to assignee
+      await callTool(sendTicketNotification, {
+        to: notifyEmail,
+        ticketTitle: inputData.triageSummary.slice(0, 120),
+        severity,
+        priority: ({ P0: 1, P1: 2, P2: 3, P3: 4, P4: 4 } as Record<string, number>)[inputData.severity] ?? 3,
+        summary: inputData.triageSummary,
+        linearUrl: inputData.issueUrl,
+        assigneeName: notifyName,
+        linearIssueId: inputData.issueId,
+      });
+
+      // Send Slack notification via agent
+      try {
+        const ticketData = {
+          ticketTitle: inputData.triageSummary.slice(0, 120),
+          severity,
+>>>>>>> aeed8ca (feat: integrate Slack notification agent into workflow)
           summary: inputData.triageSummary,
           linearUrl: inputData.issueUrl,
           assigneeName: 'On-Call Engineer',
           linearIssueId: inputData.issueId,
+<<<<<<< HEAD
         },
       });
       emailSent = true;
       console.log(`[notify] Email notification sent to ${inputData.reporterEmail}`);
     } catch (err) {
       console.error('[notify] Email notification failed:', err instanceof Error ? err.message : err);
+=======
+        };
+        await slackNotificationAgent.generate(
+          `Format and send this ticket notification to Slack: ${JSON.stringify(ticketData)}`
+        );
+        console.log('[notify] Slack notification sent via agent');
+      } catch (slackErr) {
+        console.error('[notify] Slack notification failed (non-blocking):', slackErr instanceof Error ? slackErr.message : slackErr);
+      }
+
+      return {
+        notificationSent: true,
+        issueId: inputData.issueId,
+        issueUrl: inputData.issueUrl,
+        severity: inputData.severity,
+        rootCause: inputData.rootCause,
+        reporterEmail: inputData.reporterEmail,
+      };
+    } catch (error) {
+      console.error('[notify] Error:', error);
+      return {
+        notificationSent: false,
+        issueId: inputData.issueId,
+        issueUrl: inputData.issueUrl,
+        severity: inputData.severity,
+        rootCause: inputData.rootCause,
+        reporterEmail: inputData.reporterEmail,
+      };
+>>>>>>> aeed8ca (feat: integrate Slack notification agent into workflow)
     }
 
     // Send Slack notification
@@ -806,21 +860,24 @@ const notifyResolutionStep = createStep({
       console.error('[notify-resolution] Email notification failed:', err instanceof Error ? err.message : err);
     }
 
-    // Send resolution Slack notification
+<<<<<<< HEAD
+    // Send resolution Slack notification via agent
     try {
-      await sendSlackResolutionNotification.execute({
-        context: {
-          originalTitle: ticketTitle,
-          resolutionSummary,
-          verdict: inputData.verdict,
-          linearUrl: inputData.issueUrl,
-          linearIssueId: inputData.issueId,
-        },
-      });
+      const resolutionData = {
+        ticketTitle: `Issue ${inputData.issueId}`,
+        severity: 'Resolved',
+        summary: `Resolution: ${resolutionSummary}\n\nVerdict: ${inputData.verdict}`,
+        linearUrl: inputData.issueUrl,
+        assigneeName: 'Triage SRE',
+        linearIssueId: inputData.issueId,
+      };
+      await slackNotificationAgent.generate(
+        `Format and send this resolution notification to Slack: ${JSON.stringify(resolutionData)}`
+      );
       slackSent = true;
-      console.log(`[notify-resolution] Slack resolution notification sent`);
+      console.log('[notify-resolution] Slack notification sent via agent');
     } catch (err) {
-      console.error('[notify-resolution] Slack notification failed:', err instanceof Error ? err.message : err);
+      console.error('[notify-resolution] Slack failed (non-blocking):', err instanceof Error ? err.message : err);
     }
 
     return {

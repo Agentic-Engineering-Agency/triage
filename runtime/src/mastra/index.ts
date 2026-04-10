@@ -5,8 +5,9 @@ import { chatRoute } from '@mastra/ai-sdk';
 import { LinearClient } from '@linear/sdk';
 import type { Context } from 'hono';
 
-import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent } from './agents/index';
+import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent, slackNotificationAgent } from './agents/index';
 import { triageWorkflow } from './workflows/index';
+import { sendSlackMessage } from './tools/slack';
 import { auth } from '../lib/auth';
 import { projectRoutes } from '../lib/project-routes';
 import { webhookRoutes } from '../lib/webhook-routes';
@@ -24,6 +25,7 @@ export const mastra = new Mastra({
     'triage-agent': triageAgent,
     'resolution-reviewer': resolutionReviewer,
     'code-review-agent': codeReviewAgent,
+    'slack-notification-agent': slackNotificationAgent,
   },
   workflows: {
     'triage-workflow': triageWorkflow,
@@ -466,6 +468,71 @@ export const mastra = new Mastra({
               return c.json({ messages: [] });
             }
           };
+        },
+      },
+
+      // POST /api/test/slack — test Slack message sending
+      {
+        path: '/api/test/slack',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            const body = await c.req.json();
+            const message = (body?.message as string) || '✅ Test message from triage-runtime';
+
+            // Call sendSlackMessage using the correct input format
+            const result = await sendSlackMessage.execute({
+              text: message,
+            }, {});
+
+            return c.json({
+              success: true,
+              message: 'Slack message sent',
+              result,
+            });
+          } catch (error) {
+            console.error('[test/slack] Error:', error);
+            return c.json({
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+            }, 500);
+          }
+        },
+      },
+
+      // POST /api/test/slack-agent — test Slack notification agent
+      {
+        path: '/api/test/slack-agent',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            const body = await c.req.json();
+            const ticketData = body?.ticketData || {
+              ticketTitle: 'Test Ticket — Slack Notification Agent',
+              severity: 'High',
+              summary: 'This is a test notification from the Slack notification agent.',
+              linearUrl: 'https://linear.app/test',
+              assigneeName: 'Ricardo',
+              linearIssueId: 'TEST-001',
+            };
+
+            // Run the agent with ticket data
+            const result = await slackNotificationAgent.generate(
+              `Format and send this ticket notification to Slack: ${JSON.stringify(ticketData)}`
+            );
+
+            return c.json({
+              success: true,
+              message: 'Slack notification agent executed',
+              result: result.text,
+            });
+          } catch (error) {
+            console.error('[test/slack-agent] Error:', error);
+            return c.json({
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+            }, 500);
+          }
         },
       },
 
