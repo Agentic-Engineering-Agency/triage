@@ -65,15 +65,16 @@ describe('REQ-D01: Docker Compose Orchestration', () => {
       'redis',
       'minio',
       'langfuse-postgres',
+      'cloudflared',
     ];
 
-    it('should define exactly 9 services', () => {
+    it('should define exactly 10 services', () => {
       // GIVEN docker-compose.yml is parsed
       // WHEN counting the services
-      // THEN there should be exactly 9
+      // THEN there should be exactly 10
       const compose = loadCompose();
       const serviceNames = Object.keys(compose.services);
-      expect(serviceNames).toHaveLength(9);
+      expect(serviceNames).toHaveLength(10);
     });
 
     it('should contain all required service names', () => {

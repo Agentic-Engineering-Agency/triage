@@ -1,0 +1,152 @@
+---
+title: Installation
+description: Prerequisites, environment setup, and running Triage with Docker Compose
+---
+
+## Prerequisites
+
+Before you begin, make sure you have the following installed and available:
+
+- **Docker** 24+ and **Docker Compose** v2 (`docker compose` not `docker-compose`)
+- **Git** for cloning the repository
+- An **OpenRouter API key** — required for all LLM calls. Get one at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys)
+- Optional but recommended:
+  - **Linear API key** — for ticket creation and management
+  - **Resend API key** — for email notifications
+  - **GitHub Personal Access Token** — for PR-aware triage context
+
+## Step 1 — Clone the Repository
+
+```bash
+git clone https://github.com/your-org/triage.git
+cd triage
+```
+
+## Step 2 — Copy the Environment File
+
+```bash
+cp .env.example .env
+```
+
+The `.env.example` file contains all 38+ environment variables with placeholder values. You must fill in at minimum `OPENROUTER_API_KEY` and the Langfuse secrets before the stack will start.
+
+## Step 3 — Fill in Required Values
+
+Open `.env` and update the following required fields:
+
+```bash
+# LLM — required
+OPENROUTER_API_KEY=sk-or-v1-...
+
+# Auth — generate with: openssl rand -hex 32
+BETTER_AUTH_SECRET=<random-64-char-hex>
+
+# Langfuse secrets — generate with: openssl rand -hex 32
+ENCRYPTION_KEY=<random-64-char-hex>
+SALT=<random-64-char-hex>
+NEXTAUTH_SECRET=<random-64-char-hex>
+CLICKHOUSE_PASSWORD=<strong-password>
+REDIS_AUTH=<strong-password>
+POSTGRES_PASSWORD=<strong-password>
+MINIO_ROOT_PASSWORD=<strong-password>
+
+# Langfuse init user (auto-created on first boot)
+LANGFUSE_INIT_USER_PASSWORD=<your-admin-password>
+LANGFUSE_INIT_PROJECT_PUBLIC_KEY=<random-64-char-hex>
+LANGFUSE_INIT_PROJECT_SECRET_KEY=<random-64-char-hex>
+
+# S3/MinIO keys for Langfuse
+LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=<strong-password>
+LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY=<strong-password>
+LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY=<strong-password>
+```
+
+Optional integrations (triage will run in degraded mode without them):
+
+```bash
+# Linear — ticket creation and management
+LINEAR_API_KEY=lin_api_...
+
+# Resend — email notifications
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=triage@your-domain.com
+
+# GitHub — PR-aware triage context
+GITHUB_TOKEN=ghp_...
+```
+
+See the [Configuration reference](/docs/getting-started/configuration) for a full description of every variable.
+
+## Step 4 — Start the Stack
+
+```bash
+# Development mode — auto-loads docker-compose.override.yml (Vite HMR + tsx --watch)
+docker compose up --build
+
+# Production mode — skips override, builds static assets
+docker compose -f docker-compose.yml up --build
+```
+
+The first build will take 2-5 minutes as dependencies are installed and images are built. Subsequent starts are much faster.
+
+## Step 5 — Verify Health
+
+Once the stack is running, check that all services are healthy:
+
+```bash
+# Check container status
+docker compose ps
+
+# View runtime logs
+docker compose logs -f runtime
+
+# View frontend logs
+docker compose logs -f frontend
+```
+
+All ten services should show `healthy` status. Expected startup sequence:
+1. `langfuse-postgres`, `clickhouse`, `redis`, `minio` start first
+2. `langfuse-web` and `langfuse-worker` start after their dependencies are healthy
+3. `libsql` starts independently on the `app` network
+4. `runtime` starts after `libsql` is healthy
+5. `frontend` starts after `runtime` is healthy
+6. `cloudflared` starts after `langfuse-web` is healthy (exposes Langfuse at `https://langfuse.agenticengineering.lat`)
+
+## Accessing the Application
+
+| Service | URL | Notes |
+|---------|-----|-------|
+| Frontend (Caddy) | http://localhost:3001 | Main application |
+| Runtime (Mastra) | http://localhost:4111 | API server (internal) |
+| LibSQL | http://localhost:8080 | Database HTTP API |
+| Langfuse Dashboard | http://localhost:3000 | Observability UI |
+| MinIO Console | http://localhost:9091 | Object storage UI |
+
+## Health Check Endpoints
+
+```bash
+# Runtime health
+curl http://localhost:4111/health
+
+# Langfuse health
+curl http://localhost:3000/api/public/health
+
+# Langfuse worker health
+curl http://localhost:3030/api/health
+```
+
+## Troubleshooting
+
+**Runtime won't start:** Check that `OPENROUTER_API_KEY` is set and that `libsql` is healthy. The runtime health check retries 5 times with a 15-second start period.
+
+**Langfuse web won't start:** Langfuse-web depends on all four Langfuse infrastructure services (postgres, clickhouse, redis, minio) being healthy. Check each with `docker compose logs -f <service>`.
+
+**Database inspection:** Connect to LibSQL Studio via:
+```bash
+cd runtime && npx drizzle-kit studio    # connects via localhost:8080
+```
+
+**Schema changes:**
+```bash
+cd runtime && npx drizzle-kit push      # apply schema changes directly, no migration files
+```
