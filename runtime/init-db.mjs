@@ -106,11 +106,26 @@ for (const sql of tables) {
 // SQLite has no native "ADD COLUMN IF NOT EXISTS", so we try/catch each one.
 const alters = [
   { table: 'local_tickets', col: 'reporter_email', sql: `ALTER TABLE local_tickets ADD COLUMN reporter_email TEXT` },
+  // project_id was added after the initial schema. Upgrade-in-place
+  // databases won't pick it up from CREATE TABLE IF NOT EXISTS, so we
+  // add it here too. Nullable on the upgrade path because existing rows
+  // can't be backfilled without a project mapping — the fresh-install
+  // schema above keeps wiki_documents.project_id NOT NULL because there
+  // are no preexisting rows to worry about.
+  { table: 'local_tickets', col: 'project_id', sql: `ALTER TABLE local_tickets ADD COLUMN project_id TEXT REFERENCES projects(id)` },
+  { table: 'wiki_documents', col: 'project_id', sql: `ALTER TABLE wiki_documents ADD COLUMN project_id TEXT` },
 ];
 for (const a of alters) {
   try {
     await client.execute(a.sql);
     console.log(`[init-db] ALTER ${a.table} ADD ${a.col} OK`);
+    if (a.table === 'wiki_documents' && a.col === 'project_id') {
+      console.warn(
+        '[init-db] wiki_documents.project_id added as NULLABLE on the upgrade path. ' +
+          'Fresh-install schema declares it NOT NULL — backfill existing rows with a ' +
+          'valid project id before relying on the constraint.',
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('duplicate column') || msg.includes('already exists')) {
