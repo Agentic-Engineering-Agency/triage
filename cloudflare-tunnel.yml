@@ -3,4 +3,8 @@ credentials-file: /home/nonroot/.cloudflared/cert.json
 ingress:
   - hostname: langfuse.agenticengineering.lat
     service: http://langfuse-web:3000
+  - hostname: triage.agenticengineering.lat
+    service: http://runtime:4111
+  - hostname: slack.agenticengineering.lat
+    service: http://runtime:4111
   - service: http_status:404
