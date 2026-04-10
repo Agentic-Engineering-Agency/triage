@@ -11,6 +11,7 @@ import { auth } from '../lib/auth';
 import { projectRoutes } from '../lib/project-routes';
 import { webhookRoutes } from '../lib/webhook-routes';
 import { integrationRoutes } from '../lib/integration-routes';
+import { scopedRoutes } from '../lib/scoped-routes';
 import { config, LINEAR_CONSTANTS } from '../lib/config';
 
 // Linear client singleton — only instantiate if API key is configured
@@ -390,9 +391,10 @@ export const mastra = new Mastra({
         },
       },
 
-      // Project management, integrations, and webhook routes
+      // Project management, integrations, webhook, and scoped routes
       ...projectRoutes,
       ...integrationRoutes,
+      ...scopedRoutes,
       ...webhookRoutes,
     ],
   },
