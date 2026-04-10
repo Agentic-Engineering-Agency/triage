@@ -46,7 +46,7 @@ function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background dark:bg-background">
-      <div className="w-full max-w-md rounded-2xl bg-card p-8 shadow-xl">
+      <div className="w-full max-w-md rounded-2xl bg-card p-8 shadow-neu-raised">
         <div className="mb-8 text-center">
           <h1 className="font-heading text-3xl font-bold text-foreground">
             Triage
@@ -71,7 +71,7 @@ function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              className="w-full rounded-xl border-0 bg-muted/50 px-4 py-2.5 text-sm text-foreground shadow-neu-inset outline-none placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-foreground/20"
+              className="w-full rounded-xl border border-input bg-muted/50 px-4 py-2.5 text-sm text-foreground shadow-sm outline-none placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-ring/40"
             />
           </div>
 
@@ -89,7 +89,7 @@ function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="w-full rounded-xl border-0 bg-muted/50 px-4 py-2.5 text-sm text-foreground shadow-neu-inset outline-none placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-foreground/20"
+              className="w-full rounded-xl border border-input bg-muted/50 px-4 py-2.5 text-sm text-foreground shadow-sm outline-none placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-ring/40"
             />
           </div>
 
@@ -102,7 +102,7 @@ function LoginPage() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full rounded-xl bg-orange py-2.5 text-sm font-semibold text-white shadow-neu-sm transition-all hover:brightness-110 disabled:opacity-50"
+            className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-lg transition-all hover:bg-primary/90 disabled:opacity-50"
           >
             {isSubmitting ? "Logging In..." : "Log In"}
           </button>
@@ -112,7 +112,7 @@ function LoginPage() {
           Don't have an account?{" "}
           <Link
             to="/register"
-            className="font-medium text-foreground hover:underline"
+            className="font-medium text-primary hover:underline"
           >
             Register
           </Link>
