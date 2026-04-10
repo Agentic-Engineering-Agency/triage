@@ -1,6 +1,6 @@
 # AGENTS_USE.md — How We Use AI Agents in Triage
 
-> **Demo Video:** <!-- TODO: demo video URL --> _coming soon_ — #AgentXHackathon
+> **Demo Video:** [https://www.youtube.com/watch?v=xxEpYnM3TIk](https://www.youtube.com/watch?v=xxEpYnM3TIk) — #AgentXHackathon
 > **Target repo:** [solidusio/solidus](https://github.com/solidusio/solidus) (real, large, public Rails e-commerce monorepo)
 > **Last updated:** 2026-04-10
 
