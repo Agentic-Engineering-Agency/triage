@@ -88,6 +88,7 @@ export const localTickets = sqliteTable('local_tickets', {
   priority: integer('priority').notNull(),
   status: text('status').notNull().default('triage'),
   assigneeId: text('assignee_id').references(() => authUser.id),
+  reporterEmail: text('reporter_email'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
   syncedAt: integer('synced_at', { mode: 'timestamp' }),
