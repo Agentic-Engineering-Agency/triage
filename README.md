@@ -83,7 +83,7 @@ See [`.env.example`](./.env.example) for all 58 documented variables. See [`QUIC
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Agent Framework | [Mastra](https://mastra.ai) v1.23 | Multi-agent orchestration, durable workflows, tool system |
+| Agent Framework | [Mastra](https://mastra.ai) v1.24 | Multi-agent orchestration, durable workflows, tool system |
 | Database | [LibSQL](https://turso.tech/libsql) (sqld) | App data, vector embeddings (F32_BLOB + DiskANN), workflow state |
 | ORM | [Drizzle](https://orm.drizzle.team) | Type-safe SQL, schema management, migrations |
 | Auth | [Better Auth](https://www.better-auth.com) | Session-based auth with HttpOnly cookies |
