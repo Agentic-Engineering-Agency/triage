@@ -17,6 +17,7 @@ export interface TriageCardProps {
   proposedFix?: string
   linearUrl?: string
   errorMessage?: string
+  isSubmitting?: boolean
   onCreateTicket?: () => void
   onRetry?: () => void
   className?: string
@@ -32,10 +33,16 @@ export function TriageCard({
   proposedFix,
   linearUrl,
   errorMessage,
+  isSubmitting = false,
   onCreateTicket,
   onRetry,
   className,
 }: TriageCardProps) {
+  // Normalize confidence from 0-1 (agent schema) to 0-100 (UI display)
+  const normalizedConfidence = confidence !== undefined
+    ? (confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence))
+    : undefined
+
   if (state === "loading") {
     return (
       <div
@@ -55,7 +62,7 @@ export function TriageCard({
     )
   }
 
-  const isLowConfidence = confidence !== undefined && confidence < 60
+  const isLowConfidence = normalizedConfidence !== undefined && normalizedConfidence < 60
 
   return (
     <div
@@ -73,7 +80,7 @@ export function TriageCard({
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         {severity && <SeverityBadge severity={severity} />}
-        {confidence !== undefined && <ConfidenceScore score={confidence} />}
+        {normalizedConfidence !== undefined && <ConfidenceScore score={normalizedConfidence} />}
       </div>
 
       {/* Title */}
@@ -128,20 +135,24 @@ export function TriageCard({
       {/* Footer actions */}
       <div className="flex items-center gap-2 pt-2 border-t border-border">
         {state === "pending" && (
-          <Button size="sm" onClick={onCreateTicket}>
-            Create Ticket
+          <Button size="sm" onClick={onCreateTicket} disabled={isSubmitting}>
+            {isSubmitting ? "Creating..." : "Create Ticket"}
           </Button>
         )}
-        {state === "confirmed" && linearUrl && (
-          <a
-            href={linearUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-secondary hover:text-secondary/80"
-          >
-            <ExternalLink className="h-3 w-3" />
-            View in Linear
-          </a>
+        {state === "confirmed" && (
+          linearUrl ? (
+            <a
+              href={linearUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-secondary hover:text-secondary/80"
+            >
+              <ExternalLink className="h-3 w-3" />
+              View in Linear
+            </a>
+          ) : (
+            <span className="text-xs text-muted-foreground">Ticket created ✓</span>
+          )
         )}
         {state === "error" && (
           <Button size="sm" variant="destructive" onClick={onRetry}>

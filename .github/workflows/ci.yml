@@ -7,6 +7,16 @@ on:
 jobs:
   infra-tests:
     runs-on: ubuntu-latest
+    services:
+      libsql:
+        image: ghcr.io/tursodatabase/libsql-server:v0.24.32
+        ports:
+          - 8080:8080
+        options: >-
+          --health-cmd "bash -c 'echo > /dev/tcp/127.0.0.1/8080'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -22,6 +32,9 @@ jobs:
           helm repo add bitnami https://charts.bitnami.com/bitnami
           helm dependency build k8s/helm
       - run: npm ci
+      - run: cd runtime && npm ci
+      - name: Apply DB schema
+        run: LIBSQL_URL=http://localhost:8080 ./runtime/node_modules/.bin/drizzle-kit push --config drizzle.config.ts --force
       - run: npm run test:infra
 
   runtime-tests:

@@ -1,10 +1,8 @@
 /**
- * Better Auth client hook.
- * Chenko will implement this as part of TRI-4 (Better Auth Setup)
- * and TRI-21 (Auth Pages).
- *
- * This placeholder exports the hook shape so routes can reference it.
+ * Better Auth session hook.
+ * Wraps authClient.useSession() from Better Auth React SDK.
  */
+import { authClient, signIn, signUp, signOut } from "@/lib/auth-client"
 
 export interface User {
   id: string
@@ -19,11 +17,21 @@ export interface AuthState {
 }
 
 export function useAuth(): AuthState {
-  // TODO: Replace with Better Auth client SDK
-  // import { createAuthClient } from "better-auth/react"
+  const session = authClient.useSession()
+
+  const user: User | null = session.data?.user
+    ? {
+        id: session.data.user.id,
+        email: session.data.user.email,
+        name: session.data.user.name,
+      }
+    : null
+
   return {
-    user: null,
-    isLoading: false,
-    isAuthenticated: false,
+    user,
+    isLoading: session.isPending,
+    isAuthenticated: !!session.data?.user,
   }
 }
+
+export { signIn, signUp, signOut }

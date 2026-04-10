@@ -1,0 +1,437 @@
+
+ RUN  v3.2.4 /home/fr/agentic-engineering/triage
+
+ ↓ tests/db-integration/wiki-vectors.test.ts (3 tests | 3 skipped)
+ ↓ tests/db-integration/schema-push.test.ts (2 tests | 2 skipped)
+ ✓ tests/infra-docker/caddyfile.test.ts (18 tests) 11ms
+ ✓ tests/infra-docs/documentation.test.ts (21 tests) 24ms
+ ✓ tests/infra-docker/env-config.test.ts (33 tests) 13ms
+ ✓ tests/infra-docker/dockerfiles.test.ts (22 tests | 1 skipped) 12ms
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+/bin/sh: line 1: helm: command not found
+ ✓ runtime/src/lib/schemas/ticket.test.ts (68 tests) 48ms
+/bin/sh: line 1: helm: command not found
+stderr | runtime/src/lib/config.test.ts > Config — runtime/src/lib/config.ts > S12: invalid env var validation > uses default email when RESEND_FROM_EMAIL is invalid
+[Config] Invalid RESEND_FROM_EMAIL value provided — using default
+
+/bin/sh: line 1: helm: command not found
+ ✓ runtime/src/lib/auth.test.ts (11 tests) 182ms
+ ✓ runtime/src/db/client.test.ts (14 tests) 232ms
+/bin/sh: line 1: helm: command not found
+/bin/sh: line 1: helm: command not found
+ ✓ runtime/src/lib/config.test.ts (15 tests) 269ms
+/bin/sh: line 1: helm: command not found
+/bin/sh: line 1: helm: command not found
+/bin/sh: line 1: helm: command not found
+/bin/sh: line 1: helm: command not found
+/bin/sh: line 1: helm: command not found
+ ✓ tests/infra-observability/langfuse-observability.test.ts (35 tests | 8 skipped) 236ms
+/bin/sh: line 1: helm: command not found
+/bin/sh: line 1: helm: command not found
+/bin/sh: line 1: helm: command not found
+ ❯ tests/infra-k8s/helm-chart.test.ts (22 tests | 13 failed | 1 skipped) 275ms
+   × REQ-K01: Helm Chart Structure > T-K01-happy: helm lint k8s/helm/ passes without errors 27ms
+     → Command failed: helm lint /home/fr/agentic-engineering/triage/k8s/helm
+/bin/sh: line 1: helm: command not found
+
+   × REQ-K01: Helm Chart Structure > T-K01-edge: values-prod.yaml omits optional value and template uses default 19ms
+     → Command failed: helm lint /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-prod.yaml
+/bin/sh: line 1: helm: command not found
+
+   ✓ REQ-K01: Helm Chart Structure > T-K01-error: Chart.yaml syntax error causes helm lint failure 20ms
+   × REQ-K01: Helm Chart Structure > T-K02-happy: helm template renders all 14 templates without errors 12ms
+     → Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-dev.yaml --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+   ✓ REQ-K01: Helm Chart Structure > T-K02-edge: all 14 template files exist in templates/ directory 3ms
+   × REQ-K01: Helm Chart Structure > T-K02-error: rendered templates produce valid YAML that kubectl dry-run accepts 10ms
+     → Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-dev.yaml --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+   ✓ REQ-K01: Helm Chart Structure > T-K01-struct: Chart.yaml, values.yaml, values-dev.yaml, values-prod.yaml all exist 1ms
+   ✓ REQ-K02: Helm Chart Dependencies > T-K02-dep-happy: Chart.yaml declares all 5 Bitnami dependencies with correct version constraints 6ms
+   ↓ REQ-K02: Helm Chart Dependencies > T-K02-dep-edge: helm dependency build downloads all dependency charts
+   ✓ REQ-K02: Helm Chart Dependencies > T-K02-dep-error: dependency version constraints use semver ranges not exact pins 4ms
+   × REQ-K03: Horizontal Pod Autoscaling > T-K03-happy: HPA definitions target autoscaling/v2 with 50% CPU and 300s scaleDown stabilization 17ms
+     → Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-dev.yaml --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+   ✓ REQ-K03: Horizontal Pod Autoscaling > T-K03-edge: HPA is rendered only when autoscaling.enabled is true in values 21ms
+   × REQ-K03: Horizontal Pod Autoscaling > T-K03-error: HPA minReplicas does not exceed maxReplicas in default values 12ms
+     → Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-dev.yaml --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+   × REQ-K04: Resource Requests and Limits > T-K04-happy: resource requests and limits match spec table for all 5 services 11ms
+     → Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+   × REQ-K04: Resource Requests and Limits > T-K04-edge: values-dev.yaml MAY reduce resource values for development environments 7ms
+     → Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-dev.yaml --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+   ✓ REQ-K04: Resource Requests and Limits > T-K04-error: values.yaml defines resource blocks for all services (not missing) 10ms
+   × REQ-K05: LibSQL StatefulSet > T-K05-happy: LibSQL is deployed as StatefulSet with replicas: 1 and PVC 12ms
+     → Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+   × REQ-K05: LibSQL StatefulSet > T-K05-edge: LibSQL StatefulSet pod template mounts the PVC volume 8ms
+     → Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+   × REQ-K05: LibSQL StatefulSet > T-K05-error: LibSQL replicas must not be set to more than 1 in default values 19ms
+     → Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+   × REQ-K06: Ingress Configuration > T-K06-happy: ingress.enabled=true renders valid Ingress with rules for frontend, runtime, langfuse-web 8ms
+     → Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+   ✓ REQ-K06: Ingress Configuration > T-K06-edge: ingress supports both nginx and traefik via annotations in values 6ms
+   × REQ-K06: Ingress Configuration > T-K06-error: ingress.enabled=false produces no Ingress resource 8ms
+     → Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ↓ tests/db-integration/local-tickets.test.ts (7 tests | 7 skipped)
+stderr | runtime/src/mastra/tools/linear.test.ts > Linear Tools > updateLinearIssue > S3: returns error when SDK throws
+[Linear] API error: Issue not found
+
+stderr | runtime/src/mastra/tools/linear.test.ts > Linear Tools > getLinearIssue > S4: returns error when issue not found
+[Linear] API error: Entity not found
+
+stderr | runtime/src/mastra/tools/linear.test.ts > Linear Tools > getLinearTeamMembers > S6: returns error when team not found
+[Linear] API error: Team not found
+
+stderr | runtime/src/mastra/tools/linear.test.ts > Linear Tools > error boundary pattern > REQ-1: createLinearIssue catches SDK errors and returns structured error
+[Linear] API error: Invalid input - title is required
+
+stderr | runtime/src/mastra/tools/linear.test.ts > Linear Tools > error boundary pattern > REQ-1: searchLinearIssues catches network timeout and returns structured error
+[Linear] API error: Request timed out
+
+stderr | runtime/src/mastra/tools/linear.test.ts > Linear Tools > error boundary pattern > REQ-1: getLinearTeamMembers catches unexpected TypeError
+[Linear] API error: Cannot read properties of undefined (reading 'members')
+
+ ✓ tests/infra-docker/architecture-alignment.test.ts (54 tests | 12 skipped) 332ms
+stderr | runtime/src/mastra/tools/resend.test.ts > Resend Tools > error boundary — Resend API errors > REQ-1: handles Resend API error (data: null, error object)
+[Resend] API error: Invalid API key
+
+stderr | runtime/src/mastra/tools/resend.test.ts > Resend Tools > error boundary — Resend API errors > REQ-1: handles Resend API error on resolution notification
+[Resend] API error: Rate limit exceeded
+
+stderr | runtime/src/mastra/tools/resend.test.ts > Resend Tools > error boundary — network errors > REQ-1: catches network errors thrown by resend.emails.send
+[Resend] API error: fetch failed: ECONNREFUSED
+
+stderr | runtime/src/mastra/tools/resend.test.ts > Resend Tools > error boundary — network errors > REQ-1: catches TypeError thrown during email send
+[Resend] API error: Cannot read properties of null
+
+ ✓ runtime/src/mastra/tools/linear.test.ts (31 tests) 44ms
+ ✓ runtime/src/mastra/tools/resend.test.ts (23 tests) 48ms
+ ✓ tests/infra-docker/docker-compose.test.ts (48 tests | 3 skipped) 509ms
+ ✓ runtime/src/db/schema.test.ts (86 tests) 10ms
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+ ❯ tests/auth-backend.test.ts (34 tests | 4 failed | 9 skipped) 754ms
+   ✓ REQ-A01: Drizzle Client Singleton > should export a Drizzle client connected to LibSQL via @libsql/client HTTP protocol 4ms
+   ✓ REQ-A01: Drizzle Client Singleton > should connect to LIBSQL_URL without authToken when env var is set 1ms
+   ✓ REQ-A01: Drizzle Client Singleton > should handle connection failure gracefully when LibSQL is unreachable 1ms
+   ✓ REQ-A02: drizzle.config.ts with turso Dialect > should use dialect turso in drizzle.config.ts 0ms
+   ✓ REQ-A02: drizzle.config.ts with turso Dialect > should find all exported auth tables in runtime/src/db/schema.ts 1ms
+   × REQ-A02: drizzle.config.ts with turso Dialect > should run drizzle-kit generate without schema parse errors 24ms
+     → Command failed: cd /home/fr/agentic-engineering/triage && LIBSQL_URL=http://localhost:8080 /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit generate --config drizzle.config.ts
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+
+   ↓ REQ-A03: Auth Schema Tables > should have four auth tables in LibSQL 189ms
+   ↓ REQ-A03: Auth Schema Tables > should create auth_user table with correct columns 115ms
+   ↓ REQ-A03: Auth Schema Tables > should enforce UNIQUE constraint on auth_user.email 81ms
+   ↓ REQ-A03: Auth Schema Tables > should create auth_session table with correct columns and token UNIQUE index 85ms
+   ↓ REQ-A03: Auth Schema Tables > should create auth_account table with provider fields 67ms
+   ↓ REQ-A03: Auth Schema Tables > should create auth_verification table with correct columns 70ms
+   × REQ-A03: Auth Schema Tables > should be idempotent — re-push succeeds on unchanged schema 5ms
+     → Command failed: cd /home/fr/agentic-engineering/triage && LIBSQL_URL=http://localhost:8080 /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit push --config drizzle.config.ts --force
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+
+   × REQ-A03: Auth Schema Tables > should generate deterministic output for unchanged schema 4ms
+     → Command failed: cd /home/fr/agentic-engineering/triage && LIBSQL_URL=http://localhost:8080 /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit generate --config drizzle.config.ts
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+
+   ✓ REQ-A04: Better Auth Instance with Drizzle Adapter > should call drizzleAdapter(db, { provider: "sqlite" }) and map all four auth tables 1ms
+   ✓ REQ-A04: Better Auth Instance with Drizzle Adapter > should export auth as a named export 0ms
+   ✓ REQ-A04: Better Auth Instance with Drizzle Adapter > should configure emailAndPassword.enabled: true 0ms
+   ✓ REQ-A04: Better Auth Instance with Drizzle Adapter > should use BETTER_AUTH_SECRET from environment with a dev-only fallback 0ms
+   ✓ REQ-A05: Session Cookie Configuration > should set session expiry to 7 days (60 * 60 * 24 * 7) 0ms
+   ✓ REQ-A05: Session Cookie Configuration > should set httpOnly: true, sameSite: "lax", and conditional secure 0ms
+   ✓ REQ-A05: Session Cookie Configuration > should disable sliding window with updateAge: 0 0ms
+   ✓ REQ-A05: Session Cookie Configuration > should not hardcode secure: true (must be conditional) 0ms
+   ✓ REQ-A06: trustedOrigins Configuration > should use BETTER_AUTH_URL env var with localhost:3001 fallback in dev 0ms
+   ✓ REQ-A06: trustedOrigins Configuration > should have production branch for NODE_ENV 0ms
+   ✓ REQ-A07: /auth/* Route Mounting in Mastra > should mount /auth/* routes via registerApiRoute in Mastra apiRoutes 0ms
+   ↓ REQ-A07: /auth/* Route Mounting in Mastra > should return JSON session response from /auth/get-session
+   ↓ REQ-A07: /auth/* Route Mounting in Mastra > should return error on malformed sign-in request
+   ↓ REQ-A08: drizzle-kit push Schema Application > should have all four auth tables in LibSQL 87ms
+   × REQ-A08: drizzle-kit push Schema Application > should complete drizzle-kit push successfully 5ms
+     → Command failed: cd /home/fr/agentic-engineering/triage && LIBSQL_URL=http://localhost:8080 /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit push --config drizzle.config.ts --force
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+
+   ✓ REQ-A08: drizzle-kit push Schema Application > should report connection error when LibSQL is unreachable 4ms
+   ✓ REQ-A09: Zod Schemas from Drizzle ORM > should export createSelectSchema and createInsertSchema for all auth tables 1ms
+   ✓ REQ-A09: Zod Schemas from Drizzle ORM > should export named schemas for all four tables 1ms
+   ✓ REQ-A09: Zod Schemas from Drizzle ORM > should use drizzle-orm/zod NOT drizzle-zod 0ms
+   ✓ REQ-A09: Zod Schemas from Drizzle ORM > should export userSchema, sessionSchema, accountSchema, verificationSchema aliases 0ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 17 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/auth-backend.test.ts > REQ-A02: drizzle.config.ts with turso Dialect > should run drizzle-kit generate without schema parse errors
+Error: Command failed: cd /home/fr/agentic-engineering/triage && LIBSQL_URL=http://localhost:8080 /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit generate --config drizzle.config.ts
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+
+ ❯ tests/auth-backend.test.ts:137:5
+    135| 
+    136|   it('should run drizzle-kit generate without schema parse errors', ()…
+    137|     execSync(
+       |     ^
+    138|       `cd ${WORKTREE_ROOT} && LIBSQL_URL=${LIBSQL_URL} ${RUNTIME_NODE_…
+    139|       { timeout: 30_000, encoding: 'utf-8' }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/17]⎯
+
+ FAIL  tests/auth-backend.test.ts > REQ-A03: Auth Schema Tables > should be idempotent — re-push succeeds on unchanged schema
+Error: Command failed: cd /home/fr/agentic-engineering/triage && LIBSQL_URL=http://localhost:8080 /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit push --config drizzle.config.ts --force
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+
+ ❯ tests/auth-backend.test.ts:229:5
+    227| 
+    228|   it('should be idempotent — re-push succeeds on unchanged schema', ()…
+    229|     execSync(
+       |     ^
+    230|       `cd ${WORKTREE_ROOT} && LIBSQL_URL=${LIBSQL_URL} ${RUNTIME_NODE_…
+    231|       { timeout: 60_000, encoding: 'utf-8' }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/17]⎯
+
+ FAIL  tests/auth-backend.test.ts > REQ-A03: Auth Schema Tables > should generate deterministic output for unchanged schema
+Error: Command failed: cd /home/fr/agentic-engineering/triage && LIBSQL_URL=http://localhost:8080 /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit generate --config drizzle.config.ts
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+
+ ❯ tests/auth-backend.test.ts:237:18
+    235| 
+    236|   it('should generate deterministic output for unchanged schema', () =…
+    237|     const out1 = execSync(
+       |                  ^
+    238|       `cd ${WORKTREE_ROOT} && LIBSQL_URL=${LIBSQL_URL} ${RUNTIME_NODE_…
+    239|       { timeout: 30_000, encoding: 'utf-8' }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/17]⎯
+
+ FAIL  tests/auth-backend.test.ts > REQ-A08: drizzle-kit push Schema Application > should complete drizzle-kit push successfully
+Error: Command failed: cd /home/fr/agentic-engineering/triage && LIBSQL_URL=http://localhost:8080 /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit push --config drizzle.config.ts --force
+/bin/sh: line 1: /home/fr/agentic-engineering/triage/runtime/node_modules/.bin/drizzle-kit: No such file or directory
+
+ ❯ tests/auth-backend.test.ts:383:5
+    381| 
+    382|   it('should complete drizzle-kit push successfully', () => {
+    383|     execSync(
+       |     ^
+    384|       `cd ${WORKTREE_ROOT} && LIBSQL_URL=${LIBSQL_URL} ${RUNTIME_NODE_…
+    385|       { timeout: 60_000, encoding: 'utf-8' }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K01: Helm Chart Structure > T-K01-happy: helm lint k8s/helm/ passes without errors
+Error: Command failed: helm lint /home/fr/agentic-engineering/triage/k8s/helm
+/bin/sh: line 1: helm: command not found
+
+ ❯ tests/infra-k8s/helm-chart.test.ts:99:20
+     97|     // WHEN helm lint k8s/helm/ is run
+     98|     // THEN it SHALL pass without errors
+     99|     const result = execSync(`helm lint ${HELM_CHART_DIR}`, { encoding:…
+       |                    ^
+    100|     expect(result).toContain('1 chart(s) linted, 0 chart(s) failed');
+    101|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K01: Helm Chart Structure > T-K01-edge: values-prod.yaml omits optional value and template uses default
+Error: Command failed: helm lint /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-prod.yaml
+/bin/sh: line 1: helm: command not found
+
+ ❯ tests/infra-k8s/helm-chart.test.ts:107:20
+    105|     // WHEN helm lint is run with values-prod.yaml
+    106|     // THEN it SHALL pass because templates use sensible defaults via …
+    107|     const result = execSync(
+       |                    ^
+    108|       `helm lint ${HELM_CHART_DIR} -f ${path.join(HELM_CHART_DIR, 'val…
+    109|       { encoding: 'utf-8' }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K01: Helm Chart Structure > T-K02-happy: helm template renders all 14 templates without errors
+Error: Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-dev.yaml --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ❯ helmTemplate tests/infra-k8s/helm-chart.test.ts:68:10
+     66| function helmTemplate(valueFile?: string): string {
+     67|   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, value…
+     68|   return execSync(
+       |          ^
+     69|     `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRE…
+     70|     { encoding: 'utf-8' }
+ ❯ tests/infra-k8s/helm-chart.test.ts:150:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K01: Helm Chart Structure > T-K02-error: rendered templates produce valid YAML that kubectl dry-run accepts
+Error: Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-dev.yaml --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ❯ helmTemplate tests/infra-k8s/helm-chart.test.ts:68:10
+     66| function helmTemplate(valueFile?: string): string {
+     67|   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, value…
+     68|   return execSync(
+       |          ^
+     69|     `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRE…
+     70|     { encoding: 'utf-8' }
+ ❯ tests/infra-k8s/helm-chart.test.ts:169:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K03: Horizontal Pod Autoscaling > T-K03-happy: HPA definitions target autoscaling/v2 with 50% CPU and 300s scaleDown stabilization
+Error: Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-dev.yaml --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ❯ helmTemplate tests/infra-k8s/helm-chart.test.ts:68:10
+     66| function helmTemplate(valueFile?: string): string {
+     67|   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, value…
+     68|   return execSync(
+       |          ^
+     69|     `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRE…
+     70|     { encoding: 'utf-8' }
+ ❯ tests/infra-k8s/helm-chart.test.ts:265:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K03: Horizontal Pod Autoscaling > T-K03-error: HPA minReplicas does not exceed maxReplicas in default values
+Error: Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-dev.yaml --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ❯ helmTemplate tests/infra-k8s/helm-chart.test.ts:68:10
+     66| function helmTemplate(valueFile?: string): string {
+     67|   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, value…
+     68|   return execSync(
+       |          ^
+     69|     `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRE…
+     70|     { encoding: 'utf-8' }
+ ❯ tests/infra-k8s/helm-chart.test.ts:306:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K04: Resource Requests and Limits > T-K04-happy: resource requests and limits match spec table for all 5 services
+Error: Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ❯ helmTemplate tests/infra-k8s/helm-chart.test.ts:68:10
+     66| function helmTemplate(valueFile?: string): string {
+     67|   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, value…
+     68|   return execSync(
+       |          ^
+     69|     `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRE…
+     70|     { encoding: 'utf-8' }
+ ❯ tests/infra-k8s/helm-chart.test.ts:358:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K04: Resource Requests and Limits > T-K04-edge: values-dev.yaml MAY reduce resource values for development environments
+Error: Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm -f /home/fr/agentic-engineering/triage/k8s/helm/values-dev.yaml --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ❯ helmTemplate tests/infra-k8s/helm-chart.test.ts:68:10
+     66| function helmTemplate(valueFile?: string): string {
+     67|   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, value…
+     68|   return execSync(
+       |          ^
+     69|     `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRE…
+     70|     { encoding: 'utf-8' }
+ ❯ tests/infra-k8s/helm-chart.test.ts:380:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K05: LibSQL StatefulSet > T-K05-happy: LibSQL is deployed as StatefulSet with replicas: 1 and PVC
+Error: Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ❯ helmTemplate tests/infra-k8s/helm-chart.test.ts:68:10
+     66| function helmTemplate(valueFile?: string): string {
+     67|   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, value…
+     68|   return execSync(
+       |          ^
+     69|     `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRE…
+     70|     { encoding: 'utf-8' }
+ ❯ tests/infra-k8s/helm-chart.test.ts:422:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K05: LibSQL StatefulSet > T-K05-edge: LibSQL StatefulSet pod template mounts the PVC volume
+Error: Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ❯ helmTemplate tests/infra-k8s/helm-chart.test.ts:68:10
+     66| function helmTemplate(valueFile?: string): string {
+     67|   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, value…
+     68|   return execSync(
+       |          ^
+     69|     `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRE…
+     70|     { encoding: 'utf-8' }
+ ❯ tests/infra-k8s/helm-chart.test.ts:442:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K05: LibSQL StatefulSet > T-K05-error: LibSQL replicas must not be set to more than 1 in default values
+Error: Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ❯ helmTemplate tests/infra-k8s/helm-chart.test.ts:68:10
+     66| function helmTemplate(valueFile?: string): string {
+     67|   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, value…
+     68|   return execSync(
+       |          ^
+     69|     `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRE…
+     70|     { encoding: 'utf-8' }
+ ❯ tests/infra-k8s/helm-chart.test.ts:466:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K06: Ingress Configuration > T-K06-happy: ingress.enabled=true renders valid Ingress with rules for frontend, runtime, langfuse-web
+Error: Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ❯ helmTemplate tests/infra-k8s/helm-chart.test.ts:68:10
+     66| function helmTemplate(valueFile?: string): string {
+     67|   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, value…
+     68|   return execSync(
+       |          ^
+     69|     `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRE…
+     70|     { encoding: 'utf-8' }
+ ❯ tests/infra-k8s/helm-chart.test.ts:484:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/17]⎯
+
+ FAIL  tests/infra-k8s/helm-chart.test.ts > REQ-K06: Ingress Configuration > T-K06-error: ingress.enabled=false produces no Ingress resource
+Error: Command failed: helm template triage /home/fr/agentic-engineering/triage/k8s/helm  --set secrets.betterAuthSecret=test-value --set secrets.openrouterApiKey=test-value --set secrets.linearApiKey=test-value --set secrets.resendApiKey=test-value --set secrets.encryptionKey=test-value --set secrets.salt=test-value --set secrets.nextauthSecret=test-value --set secrets.langfuseSecretKey=test-value --set secrets.clickhousePassword=test-value --set secrets.redisAuth=test-value --set secrets.minioRootPassword=test-value --set secrets.langfuseS3EventUploadSecretAccessKey=test-value --set secrets.langfuseS3MediaUploadSecretAccessKey=test-value --set secrets.langfuseS3BatchExportSecretAccessKey=test-value --set secrets.postgresPassword=test-value --set secrets.langfuseInitUserPassword=test-value --set secrets.langfuseInitProjectSecretKey=test-value
+/bin/sh: line 1: helm: command not found
+
+ ❯ helmTemplate tests/infra-k8s/helm-chart.test.ts:68:10
+     66| function helmTemplate(valueFile?: string): string {
+     67|   const valuesFlag = valueFile ? `-f ${path.join(HELM_CHART_DIR, value…
+     68|   return execSync(
+       |          ^
+     69|     `helm template triage ${HELM_CHART_DIR} ${valuesFlag} ${TEST_SECRE…
+     70|     { encoding: 'utf-8' }
+ ❯ tests/infra-k8s/helm-chart.test.ts:514:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/17]⎯
+
+
+ Test Files  2 failed | 14 passed | 3 skipped (19)
+      Tests  17 failed | 484 passed | 46 skipped (547)
+   Start at  15:53:54
+   Duration  1.69s (transform 3.33s, setup 0ms, collect 7.63s, tests 3.00s, environment 8ms, prepare 3.10s)
+

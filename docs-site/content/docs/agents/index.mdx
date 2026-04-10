@@ -1,0 +1,77 @@
+---
+title: Agent System
+description: Four specialized AI agents and how they interact in the Triage incident pipeline
+---
+
+Triage uses four specialized AI agents, all powered by models accessed through OpenRouter. Each agent has a single well-defined responsibility. The orchestrator is the only agent that users interact with directly — it delegates to the others via tools and sub-agent calls.
+
+## The Four Agents
+
+| Agent | Model | Role |
+|-------|-------|------|
+| [Orchestrator](/docs/agents/orchestrator) | MiniMax M2.7 (3-model fallback) | Main entry point for all user interactions |
+| [Triage Agent](/docs/agents/triage-agent) | Mercury-2 | Deep incident analysis via RAG |
+| [Resolution Reviewer](/docs/agents/resolution-reviewer) | Mercury-2 | Webhook-triggered fix verification |
+| [Code Review Agent](/docs/agents/code-review-agent) | Mercury-2 | PR and diff analysis (sub-agent of orchestrator) |
+
+## How Agents Interact
+
+```
+User Message
+    │
+    ▼
+Orchestrator (MiniMax M2.7)
+    ├── process-attachments → Vision model (Gemma 4 31B)
+    ├── query-wiki → LibSQL vector search
+    ├── list-linear-issues → Linear API
+    ├── displayTriage → generative UI card in chat
+    ├── displayDuplicate → generative UI card for duplicates
+    ├── createLinearIssueTool → Linear API (requires approval)
+    ├── sendTicketEmailTool → Resend
+    ├── sendResolutionEmailTool → Resend
+    └── agent-codeReviewAgent → Code Review Agent (sub-agent)
+
+Triage Workflow (separate from chat)
+    ├── intake step
+    ├── triage step → Triage Agent (Mercury-2)
+    ├── dedup step → Linear API
+    ├── ticket step → Linear API
+    ├── notify step → Resend
+    ├── suspend step ← waits for Linear webhook
+    ├── review step → Resolution Reviewer (Mercury-2)
+    └── resolve step → Resend
+```
+
+## Agent vs Workflow
+
+There are two ways triage analysis happens:
+
+1. **Chat-based (via Orchestrator)** — The user types in `/chat`. The orchestrator handles the conversation, calls `displayTriage` to show a preview card, and creates the ticket only after user approval. This is the primary user-facing flow.
+
+2. **Workflow-based (via `triage-workflow`)** — The workflow can be triggered directly via `POST /api/workflows/triage-workflow/trigger`. This is useful for programmatic incident intake (e.g., from monitoring alerts or CI/CD pipelines). The workflow runs the `triageAgent` internally and handles the full lifecycle including suspension and resolution review.
+
+## Model Philosophy
+
+All sub-agents use **Mercury-2** (`inception/mercury-2`) — a fast, reasoning-capable text model optimized for structured output. Mercury-2 is text-only; it does not process images. Multimodal tasks (processing attached screenshots) use **Gemma 4 31B** (`google/gemma-4-31b-it:free` → paid fallback).
+
+The orchestrator uses **MiniMax M2.7** — a capable long-context model with a 3-model fallback chain to ensure availability under rate limits.
+
+## Security Processor Pipeline
+
+Before any user input reaches an agent, it passes through a security pipeline:
+
+1. **Prompt injection detector** — blocks detected injection attempts (threshold 0.7)
+2. **PII redactor** — masks emails and API keys in user input
+3. **System prompt scrubber** — filters agent outputs before they reach the user
+4. **DOMPurify** — sanitizes any HTML in the frontend before rendering
+
+## Tool Registration
+
+Tools are registered at the agent level. Only the orchestrator has tools registered — sub-agents (triage-agent, resolution-reviewer, code-review-agent) have minimal tool sets:
+
+| Agent | Tools |
+|-------|-------|
+| Orchestrator | 11 tools + 1 sub-agent |
+| Triage Agent | `queryWikiTool` only |
+| Resolution Reviewer | `queryWikiTool`, `getLinearIssueTool` |
+| Code Review Agent | `queryWikiTool` only |
