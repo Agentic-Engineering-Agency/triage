@@ -50,9 +50,21 @@ const tables = [
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    repository_url TEXT NOT NULL,
+    branch TEXT DEFAULT 'main',
+    status TEXT NOT NULL DEFAULT 'pending',
+    documents_count INTEGER NOT NULL DEFAULT 0,
+    chunks_count INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS wiki_documents (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     file_path TEXT NOT NULL,
     summary TEXT NOT NULL,
     pass INTEGER NOT NULL,
@@ -76,6 +88,7 @@ const tables = [
     priority INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'triage',
     assignee_id TEXT REFERENCES auth_user(id),
+    project_id TEXT REFERENCES projects(id),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     synced_at INTEGER
