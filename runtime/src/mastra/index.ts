@@ -13,6 +13,7 @@ import { webhookRoutes } from '../lib/webhook-routes';
 import { integrationRoutes } from '../lib/integration-routes';
 import { scopedRoutes } from '../lib/scoped-routes';
 import { config, LINEAR_CONSTANTS } from '../lib/config';
+import { getMemoryInitializationContext } from '../lib/memory-context-init';
 
 // Linear client singleton — only instantiate if API key is configured
 const linearClient = config.LINEAR_API_KEY ? new LinearClient({ apiKey: config.LINEAR_API_KEY }) : null;
@@ -387,6 +388,48 @@ export const mastra = new Mastra({
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
               return c.json({ success: false, error: { code: 'WORKFLOW_ERROR', message } }, 500);
+            }
+          };
+        },
+      },
+
+      // POST /api/memory/init/:threadId — initialize thread memory with LINEAR_CONSTANTS context
+      {
+        path: '/api/memory/init/:threadId',
+        method: 'POST' as const,
+        createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
+          return async (c: Context) => {
+            try {
+              const threadId = c.req.param('threadId');
+
+              if (!threadId) {
+                return c.json({ success: false, error: { code: 'MISSING_THREAD_ID', message: 'threadId is required' } }, 400);
+              }
+
+              const storage = m.getStorage();
+              const messagesStore = await storage?.getStore('messages');
+
+              if (!messagesStore) {
+                console.error('[memory] Messages store not available');
+                return c.json({ success: false, error: { code: 'NO_STORAGE', message: 'Memory storage not available' } }, 500);
+              }
+
+              // Add LINEAR_CONSTANTS context as a system message (not counted in conversation)
+              const contextMessage = getMemoryInitializationContext();
+
+              // Store as a special system context message in memory
+              await messagesStore.add(threadId, {
+                role: 'system',
+                content: contextMessage,
+                timestamp: new Date().toISOString(),
+              } as unknown as Record<string, unknown>);
+
+              console.log(`[memory/init] Initialized context for thread ${threadId}`);
+
+              return c.json({ success: true, data: { initialized: true, threadId } });
+            } catch (error) {
+              console.error('[memory/init] Error:', error instanceof Error ? error.message : String(error));
+              return c.json({ success: false, error: { code: 'INIT_ERROR', message: 'Failed to initialize memory' } }, 500);
             }
           };
         },
