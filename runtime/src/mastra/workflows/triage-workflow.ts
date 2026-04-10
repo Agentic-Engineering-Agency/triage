@@ -195,13 +195,14 @@ const dedupStep = createStep({
       // Extract keywords from the triage summary for search
       const searchQuery = inputData.enrichedDescription.slice(0, 200);
 
-      const searchResult = await searchLinearIssues.execute({
-        context: {
+      const searchResult = await searchLinearIssues.execute?.(
+        {
           query: searchQuery,
           teamId: LINEAR_CONSTANTS.TEAM_ID,
           limit: 5,
         },
-      });
+        {} as never,
+      );
 
       if (searchResult && typeof searchResult === 'object' && 'success' in searchResult && searchResult.success) {
         const data = (searchResult as { success: true; data: { issues: Array<{ id: string; identifier: string; title: string; url: string }> } }).data;
@@ -314,8 +315,8 @@ const ticketStep = createStep({
     const title = `[${inputData.severity}] ${inputData.enrichedDescription.slice(0, 100)}`;
 
     try {
-      const result = await createLinearIssue.execute({
-        context: {
+      const result = await createLinearIssue.execute?.(
+        {
           teamId: LINEAR_CONSTANTS.TEAM_ID,
           title,
           description: inputData.triageSummary,
@@ -323,7 +324,8 @@ const ticketStep = createStep({
           labelIds,
           stateId: LINEAR_CONSTANTS.STATES.TRIAGE,
         },
-      });
+        {} as never,
+      );
 
       if (result && typeof result === 'object' && 'success' in result && result.success) {
         const data = (result as { success: true; data: { id: string; identifier: string; url: string; title: string } }).data;
@@ -406,8 +408,8 @@ const notifyStep = createStep({
 
     // Send email notification via Resend
     try {
-      await sendTicketNotification.execute({
-        context: {
+      await sendTicketNotification.execute?.(
+        {
           to: inputData.reporterEmail,
           ticketTitle: inputData.triageSummary.slice(0, 100),
           severity,
@@ -417,7 +419,8 @@ const notifyStep = createStep({
           assigneeName: 'On-Call Engineer',
           linearIssueId: inputData.issueId,
         },
-      });
+        {} as never,
+      );
       emailSent = true;
       console.log(`[notify] Email notification sent to ${inputData.reporterEmail}`);
     } catch (err) {
@@ -426,8 +429,8 @@ const notifyStep = createStep({
 
     // Send Slack notification
     try {
-      await sendSlackTicketNotification.execute({
-        context: {
+      await sendSlackTicketNotification.execute?.(
+        {
           ticketTitle: inputData.triageSummary.slice(0, 100),
           severity,
           priority,
@@ -436,7 +439,8 @@ const notifyStep = createStep({
           assigneeName: 'On-Call Engineer',
           linearIssueId: inputData.issueId,
         },
-      });
+        {} as never,
+      );
       slackSent = true;
       console.log(`[notify] Slack notification sent`);
     } catch (err) {
@@ -630,15 +634,16 @@ const notifyResolutionStep = createStep({
 
     // Send resolution email via Resend
     try {
-      await sendResolutionNotification.execute({
-        context: {
+      await sendResolutionNotification.execute?.(
+        {
           to: inputData.reporterEmail,
           originalTitle: ticketTitle,
           resolutionSummary,
           linearUrl: inputData.issueUrl,
           linearIssueId: inputData.issueId,
         },
-      });
+        {} as never,
+      );
       emailSent = true;
       console.log(`[notify-resolution] Resolution email sent to ${inputData.reporterEmail}`);
     } catch (err) {
@@ -647,15 +652,16 @@ const notifyResolutionStep = createStep({
 
     // Send resolution Slack notification
     try {
-      await sendSlackResolutionNotification.execute({
-        context: {
+      await sendSlackResolutionNotification.execute?.(
+        {
           originalTitle: ticketTitle,
           resolutionSummary,
           verdict: inputData.verdict,
           linearUrl: inputData.issueUrl,
           linearIssueId: inputData.issueId,
         },
-      });
+        {} as never,
+      );
       slackSent = true;
       console.log(`[notify-resolution] Slack resolution notification sent`);
     } catch (err) {

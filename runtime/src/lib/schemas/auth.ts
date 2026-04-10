@@ -1,9 +1,8 @@
-import { createSelectSchema, createInsertSchema } from 'drizzle-orm/zod';
+import { createSelectSchema, createInsertSchema } from 'drizzle-zod';
 import { authUser, authSession, authAccount, authVerification } from '../../db/schema';
 
 /**
- * Zod schemas for auth tables derived from Drizzle ORM
- * Uses drizzle-orm/zod (NOT drizzle-zod)
+ * Zod schemas for auth tables derived from Drizzle ORM.
  * Tables are prefixed with "auth_" to avoid conflict with Mastra's existing "account" table.
  */
 
