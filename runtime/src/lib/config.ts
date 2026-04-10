@@ -21,6 +21,7 @@ const envSchema = z.object({
 
   // Integrations (optional at startup — required when tools are actually called)
   LINEAR_API_KEY: z.string().optional(),
+  LINEAR_TEAM_ID: z.string().optional(), // Team UUID — falls back to TRI team if not set
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().email().optional(),
 
@@ -117,6 +118,7 @@ if (fromEmail !== undefined && fromEmail !== '') {
 
 export const config = {
   LINEAR_API_KEY: process.env.LINEAR_API_KEY || undefined,
+  LINEAR_TEAM_ID: process.env.LINEAR_TEAM_ID || '645a639b-39e2-4abe-8ded-3346d2f79f9f', // Default: TRI team from agentic-engineering-agency
   RESEND_API_KEY: process.env.RESEND_API_KEY || undefined,
   RESEND_FROM_EMAIL: (fromEmail && z.string().email().safeParse(fromEmail).success) ? fromEmail : 'triage@agenticengineering.lat',
   GITHUB_TOKEN: process.env.GITHUB_TOKEN || undefined,
@@ -126,15 +128,27 @@ export const config = {
 };
 
 // ============================================================
-// Linear constants (from Koki's Linear/Resend integration)
+// Linear constants — DEPRECATED (use dynamic lookups instead)
 // ============================================================
+//
+// MIGRATION: These hardcoded IDs are now FALLBACKS only.
+//
+// New code should use:
+//   - getLinearStates(teamId, apiKey) from ./linear-constants.ts
+//   - getLinearLabels(teamId, apiKey) from ./linear-constants.ts
+//   - getLinearTeamMembers(teamId, apiKey) from ./linear-constants.ts
+//
+// This enables testing with any Linear workspace, not just agentic-engineering-agency.
+// Old code still works but should migrate to dynamic lookups.
 
 export const LINEAR_BASE_URL = 'https://linear.app/agentic-engineering-agency';
 
 export const LINEAR_CONSTANTS = {
-  // SOL team (Solidus) — https://linear.app/agentic-engineering-agency/team/SOL/all
-  TEAM_ID: 'a81af9a1-6066-4cfa-9971-e937455d01c5',
+  // TRI team (agentic-engineering-agency) — used as fallback only
+  // Override with LINEAR_TEAM_ID env var
+  TEAM_ID: config.LINEAR_TEAM_ID,
 
+  // DEPRECATED: Use getLinearStates() instead
   STATES: {
     TRIAGE: 'bce0cec5-80ba-407e-aa98-248c380ce966',
     BACKLOG: 'a1b56fee-32c7-4c7d-b6cd-318380590a53',
@@ -146,6 +160,7 @@ export const LINEAR_CONSTANTS = {
     CANCELED: '6ff262e3-d016-4777-836b-1357cd535f73',
   },
 
+  // DEPRECATED: Use getLinearLabels() instead
   SEVERITY_LABELS: {
     CRITICAL: '47785580-5256-4240-9f11-cde67e06a4c3',
     HIGH: 'eef1c6e5-f3c0-4b0f-9702-189748af77f0',
@@ -153,12 +168,14 @@ export const LINEAR_CONSTANTS = {
     LOW: 'f4350e9c-96ea-44f8-931a-4af52aacf3ed',
   },
 
+  // DEPRECATED: Use getLinearLabels() instead
   CATEGORY_LABELS: {
     BUG: 'f599da19-8743-4569-a110-a666dc588811',
     FEATURE: '909d247a-40f4-48d5-a104-c238cc2ab45b',
     IMPROVEMENT: '50756390-d166-4b79-a740-ceefb203751f',
   },
 
+  // DEPRECATED: Use getLinearTeamMembers() instead
   MEMBERS: {
     FERNANDO: { linearId: '90b16a9c-3f47-49fc-8d98-abf3aa6ecb13', slackId: process.env.SLACK_USER_FERNANDO || '', name: 'Fernando' },
     KOKI: { linearId: 'c3f725e4-aa51-45d3-af43-d29a87077226', slackId: process.env.SLACK_USER_KOKI || '', name: 'Koki' },

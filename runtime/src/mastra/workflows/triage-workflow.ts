@@ -1,10 +1,30 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows';
 import { z } from 'zod';
-import { queryWiki } from '../../lib/wiki-rag';
-import { createLinearIssue, searchLinearIssues } from '../tools/linear';
-import { sendTicketNotification, sendResolutionNotification } from '../tools/resend';
+import { triageAgent } from '../agents/triage-agent';
+import { resolutionReviewer } from '../agents/resolution-reviewer';
+import { codeReviewAgent } from '../agents/code-review-agent';
+import { slackNotificationAgent } from '../agents/slack-notification-agent';
+import {
+  createLinearIssue,
+  updateLinearIssue,
+  getLinearIssue,
+  searchLinearIssues,
+  sendTicketNotification,
+  sendResolutionNotification,
+  commentOnGitHubPRTool,
+  getLinearIssueComments,
+} from '../tools/index';
 import { sendSlackTicketNotification, sendSlackResolutionNotification } from '../tools/slack';
-import { LINEAR_CONSTANTS, LINEAR_BASE_URL } from '../../lib/config';
+import { LINEAR_CONSTANTS, config } from '../../lib/config';
+import { queryWiki } from '../../lib/wiki-rag';
+import { resolveStateId, resolveLabelId } from '../tools/linear-state-resolver';
+
+// Helper to call tool.execute safely
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function callTool(tool: { execute?: (...args: any[]) => Promise<any> }, input: Record<string, unknown>): Promise<any> {
+  if (!tool.execute) return null;
+  return tool.execute({ context: input }, {});
+}
 
 // ---------------------------------------------------------------------------
 // Shared schemas
@@ -282,17 +302,75 @@ const ticketStep = createStep({
     assigneeName: z.string().optional().describe('Display name of the Linear assignee'),
   }),
   execute: async ({ inputData }) => {
-    // If duplicate, return existing issue info
-    if (inputData.isDuplicate && inputData.existingIssueId) {
-      console.log(`[ticket] Duplicate detected — returning existing issue ${inputData.existingIssueId}`);
+    try {
+      const severityToPriority: Record<string, number> = { P0: 1, P1: 2, P2: 3, P3: 4, P4: 4 };
+      const severityToLabelName: Record<string, string> = {
+        P0: 'CRITICAL',
+        P1: 'HIGH',
+        P2: 'MEDIUM',
+        P3: 'LOW',
+        P4: 'LOW',
+      };
+
+      if (inputData.isDuplicate && inputData.existingIssueId) {
+        await callTool(updateLinearIssue, {
+          issueId: inputData.existingIssueId,
+          description: `[Updated] Additional context:\n${inputData.triageSummary}`,
+        });
+        const existing = await callTool(getLinearIssue, { issueId: inputData.existingIssueId }).catch(() => null);
+        const existingAssignee = (existing as Record<string, unknown>)?.data as { assignee?: { email: string; name: string } | null } | undefined;
+        return {
+          issueId: inputData.existingIssueId,
+          issueUrl: inputData.existingIssueUrl ?? '',
+          wasUpdated: true,
+          severity: inputData.severity,
+          rootCause: inputData.rootCause,
+          triageSummary: inputData.triageSummary,
+          reporterEmail: inputData.reporterEmail,
+          assigneeEmail: existingAssignee?.assignee?.email,
+          assigneeName: existingAssignee?.assignee?.name,
+        };
+      }
+
+      // Resolve state and label IDs dynamically
+      const triageStateId = await resolveStateId('TRIAGE', config.LINEAR_API_KEY);
+      const severityLabelId = await resolveLabelId(severityToLabelName[inputData.severity], config.LINEAR_API_KEY);
+      const bugLabelId = await resolveLabelId('BUG', config.LINEAR_API_KEY);
+
+      const createResult = await callTool(createLinearIssue, {
+        title: inputData.triageSummary.slice(0, 120),
+        description: `## Root Cause\n${inputData.rootCause}\n\n## Details\n${inputData.enrichedDescription}\n\n## Suggested Files\n${inputData.suggestedFiles.join('\n')}\n\n---\n*Reporter: ${inputData.reporterEmail}*`,
+        teamId: LINEAR_CONSTANTS.TEAM_ID,
+        priority: severityToPriority[inputData.severity] ?? 3,
+        stateId: triageStateId,
+        labelIds: [severityLabelId, bugLabelId].filter(Boolean),
+      });
+
+      const created = createResult && typeof createResult === 'object' && 'data' in createResult
+        ? (createResult as Record<string, unknown>).data as { id?: string; url?: string } | undefined
+        : undefined;
+
+      let assigneeEmail: string | undefined;
+      let assigneeName: string | undefined;
+      if (created?.id) {
+        const issueDetails = await callTool(getLinearIssue, { issueId: created.id }).catch(() => null);
+        const details = (issueDetails as Record<string, unknown>)?.data as { assignee?: { email: string; name: string } | null } | undefined;
+        if (details?.assignee) {
+          assigneeEmail = details.assignee.email;
+          assigneeName = details.assignee.name;
+        }
+      }
+
       return {
-        issueId: inputData.existingIssueId,
-        issueUrl: inputData.existingIssueUrl ?? `${LINEAR_BASE_URL}/issue/${inputData.existingIssueId}`,
-        wasUpdated: true,
+        issueId: created?.id ?? inputData.existingIssueId,
+        issueUrl: created?.url ?? inputData.existingIssueUrl ?? '',
+        wasUpdated: false,
         severity: inputData.severity,
         rootCause: inputData.rootCause,
         triageSummary: inputData.triageSummary,
         reporterEmail: inputData.reporterEmail,
+        assigneeEmail,
+        assigneeName,
       };
     }
 
@@ -570,15 +648,98 @@ const verifyStep = createStep({
     let verdict: 'resolved' | 'partially_resolved' | 'unresolved';
     let verificationNotes: string;
 
-    if (newStatus === 'done' || newStatus === 'deployed' || newStatus === 'completed') {
+      // 2. Read comments from the Linear issue
+      let commentsText = '';
+      try {
+        const commentsResult = await callTool(getLinearIssueComments, { issueId: inputData.issueId });
+        if (commentsResult && typeof commentsResult === 'object' && 'success' in commentsResult && (commentsResult as Record<string, unknown>).success) {
+          const comments = ((commentsResult as Record<string, unknown>).data as { comments?: Array<{ body: string; user?: { name: string }; createdAt: string }> })?.comments ?? [];
+          if (comments.length > 0) {
+            commentsText = comments
+              .map(c => `[${c.user?.name ?? 'Unknown'}] ${c.body}`)
+              .join('\n\n');
+          }
+        }
+      } catch (commentsErr) {
+        console.error('[verify] Failed to read comments:', commentsErr instanceof Error ? commentsErr.message : commentsErr);
+      }
+
+      // 3. Build activity summary from comments
+      const activitySummary = commentsText
+        ? `Activity reported by the assignee:\n${commentsText}`
+        : 'No activity comments were left on the issue.';
+
+      // 4. Check for PR links
+      const prUrlMatch = description.match(/https:\/\/github\.com\/[^\s)]+\/pull\/\d+/);
+
+      if (!prUrlMatch) {
+        // No PR — use resolution-reviewer with comments context
+        const resolutionResult = await resolutionReviewer.generate(
+          `The Linear issue "${issueTitle}" was moved to "${inputData.webhookPayload.newStatus}".\n` +
+          `Original root cause: ${inputData.rootCause}\n` +
+          `Issue description:\n${description.slice(0, 2000)}\n\n` +
+          `## Comments from the assignee\n${commentsText || 'No comments were left.'}\n\n` +
+          `Based on the issue context, status change, and activity comments, ` +
+          `provide a resolution summary: was the issue addressed? What should the reporter know?`
+        );
+
+        return {
+          verdict: 'resolved' as const,
+          verificationNotes: resolutionResult.text?.slice(0, 1000) ?? `Issue ${issueTitle} marked as ${inputData.webhookPayload.newStatus}.`,
+          activitySummary,
+          issueId: inputData.issueId,
+          issueUrl: inputData.issueUrl,
+          severity: inputData.severity,
+          reporterEmail: inputData.reporterEmail,
+        };
+      }
+
+      // 5. Run resolution-reviewer and code-review-agent in parallel
+      const prUrl = prUrlMatch[0];
+      const [resolutionResult, codeReviewResult] = await Promise.all([
+        resolutionReviewer.generate(
+          `Verify if this fix resolves the incident.\nOriginal root cause: ${inputData.rootCause}\nPR: ${prUrl}\nIssue: ${inputData.issueUrl}\n\n## Assignee comments\n${commentsText || 'None'}`
+        ),
+        codeReviewAgent.generate(
+          `Review the code changes in this PR for quality and correctness.\nPR: ${prUrl}\nContext: This PR should fix: ${inputData.rootCause}`
+        ),
+      ]);
+
+      const hasIssues = codeReviewResult.text?.toLowerCase().includes('request-changes') ||
+        codeReviewResult.text?.toLowerCase().includes('critical') ||
+        codeReviewResult.text?.toLowerCase().includes('major');
+
+      if (hasIssues) {
+        await callTool(commentOnGitHubPRTool, {
+          prUrl,
+          body: `## Automated Code Review\n\n${codeReviewResult.text}\n\n---\n*Review by Triage SRE Agent*`,
+        });
+        // Resolve IN_REVIEW state dynamically
+        const inReviewStateId = await resolveStateId('IN_REVIEW', config.LINEAR_API_KEY);
+        if (inReviewStateId) {
+          await callTool(updateLinearIssue, {
+            issueId: inputData.issueId,
+            stateId: inReviewStateId,
+          });
+        }
+        return {
+          verdict: 'partially_resolved' as const,
+          verificationNotes: `Code review found issues. PR: ${prUrl}. ${resolutionResult.text?.slice(0, 500) ?? ''}`,
+          activitySummary,
+          issueId: inputData.issueId,
+          issueUrl: inputData.issueUrl,
+          severity: inputData.severity,
+          reporterEmail: inputData.reporterEmail,
+        };
+      }
+
       verdict = 'resolved';
-      verificationNotes = `Issue marked as "${webhookPayload.newStatus}" at ${webhookPayload.updatedAt}.${webhookPayload.deployUrl ? ` Deploy: ${webhookPayload.deployUrl}` : ''} Root cause was: "${inputData.rootCause}"`;
-    } else if (newStatus === 'in review' || newStatus === 'in progress') {
+      verificationNotes = `Fix verified. ${resolutionResult.text?.slice(0, 500) ?? ''}`;
+    } catch (error) {
+      console.error('[verify] Error:', error);
       verdict = 'partially_resolved';
-      verificationNotes = `Issue is "${webhookPayload.newStatus}" — fix is in progress but not yet verified. Root cause: "${inputData.rootCause}"`;
-    } else {
-      verdict = 'unresolved';
-      verificationNotes = `Issue status changed to "${webhookPayload.newStatus}" — does not indicate resolution. Root cause: "${inputData.rootCause}"`;
+      verificationNotes = `Verification encountered an error: ${error instanceof Error ? error.message : String(error)}`;
+    }
     }
 
     console.log(`[verify] Verdict: ${verdict} (status: ${webhookPayload.newStatus})`);

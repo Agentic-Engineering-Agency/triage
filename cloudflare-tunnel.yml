@@ -1,0 +1,6 @@
+tunnel: triage-hackathon
+credentials-file: /home/nonroot/.cloudflared/cert.json
+ingress:
+  - hostname: langfuse.agenticengineering.lat
+    service: http://langfuse-web:3000
+  - service: http_status:404

@@ -42,6 +42,7 @@ export const mastra = new Mastra({
       }),
 
       // GET /api/linear/issues — fetch and group by state
+      // Uses LINEAR_TEAM_ID from config (defaults to TRI team if not set)
       {
         path: '/api/linear/issues',
         method: 'GET' as const,
