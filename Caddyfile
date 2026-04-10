@@ -61,6 +61,13 @@
         }
     }
 
+    # Memory threads API (conversation history)
+    handle /memory/threads/* {
+        reverse_proxy runtime:4111 {
+            flush_interval -1
+        }
+    }
+
     # Project management API — only proxy XHR/fetch (not browser navigation)
     @projects_api {
         path /projects /projects/*

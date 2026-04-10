@@ -392,6 +392,40 @@ export const mastra = new Mastra({
         },
       },
 
+      // GET /memory/threads/:threadId/messages — fetch conversation history
+      {
+        path: '/memory/threads/:threadId/messages',
+        method: 'GET' as const,
+        createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
+          return async (c: Context) => {
+            try {
+              const threadId = c.req.param('threadId');
+              const agentId = c.req.query('agentId') || 'orchestrator';
+
+              if (!threadId) {
+                return c.json({ success: false, error: { code: 'MISSING_THREAD_ID', message: 'threadId is required' } }, 400);
+              }
+
+              const storage = m.getStorage();
+              const messagesStore = await storage?.getStore('messages');
+
+              if (!messagesStore) {
+                console.error('[memory] Messages store not available');
+                return c.json({ messages: [] });
+              }
+
+              // Fetch messages for this thread — Mastra memory stores by threadId + agentId
+              const messages = await messagesStore.list(threadId) as Array<Record<string, unknown>>;
+
+              return c.json({ messages: messages || [] });
+            } catch (error) {
+              console.error('[memory] Error fetching messages:', error instanceof Error ? error.message : String(error));
+              return c.json({ messages: [] });
+            }
+          };
+        },
+      },
+
       // Project management, integrations, webhook, and scoped routes
       ...projectRoutes,
       ...integrationRoutes,

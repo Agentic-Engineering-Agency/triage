@@ -75,7 +75,7 @@ function ChatPage() {
     prevThreadRef.current = activeThreadId
 
     const controller = new AbortController()
-    fetch(`/api/memory/threads/${activeThreadId}/messages?agentId=orchestrator`, { credentials: "include", signal: controller.signal })
+    fetch(`/memory/threads/${activeThreadId}/messages?agentId=orchestrator`, { credentials: "include", signal: controller.signal })
       .then((res) => (res.ok ? res.json() : null))
       .then((data: { messages?: Array<Record<string, unknown>> } | null) => {
         if (!data?.messages?.length) {
