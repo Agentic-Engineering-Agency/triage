@@ -24,6 +24,8 @@ export {
   listLinearIssuesTool,
   getTeamMembersTool,
   listLinearCyclesTool,
+  getLinearIssueComments,
+  getLinearIssueCommentsTool,
 } from './linear';
 
 export {
@@ -51,4 +53,4 @@ export { generateWikiTool } from './wiki-generate';
 export { processAttachmentsTool } from './attachments';
 export { displayTriageTool } from './display-triage';
 export { displayDuplicateTool } from './display-duplicate';
-export { commentOnGitHubPRTool } from './github';
+export { commentOnGitHubPRTool, findGitHubEvidenceForIssueTool } from './github';
