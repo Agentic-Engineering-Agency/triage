@@ -297,10 +297,30 @@ export const mastra = new Mastra({
                     // No evidence — move back to In Progress and nag the assignee.
                     console.log(`[webhook/linear] No evidence for ${issueId} — reverting to In Progress`);
 
-                    await updateLinearIssue.execute?.(
+                    const revertResult = await updateLinearIssue.execute?.(
                       { issueId, stateId: LINEAR_CONSTANTS.STATES.IN_PROGRESS } as never,
                       {} as never,
                     );
+                    const revertOk = !!revertResult
+                      && typeof revertResult === 'object'
+                      && 'success' in revertResult
+                      && (revertResult as { success: unknown }).success === true;
+                    if (!revertOk) {
+                      console.error(
+                        `[webhook/linear] Failed to revert ${issueId} to In Progress`,
+                        revertResult,
+                      );
+                      return c.json(
+                        {
+                          success: false,
+                          error: {
+                            code: 'STATE_UPDATE_FAILED',
+                            message: 'Could not revert Linear issue to In Progress',
+                          },
+                        },
+                        500,
+                      );
+                    }
 
                     // Post a Linear comment explaining the revert.
                     try {
@@ -367,10 +387,30 @@ export const mastra = new Mastra({
                   // Evidence found — advance to Done and notify reporter.
                   console.log(`[webhook/linear] Evidence found for ${issueId} — marking Done`);
 
-                  await updateLinearIssue.execute?.(
+                  const advanceResult = await updateLinearIssue.execute?.(
                     { issueId, stateId: LINEAR_CONSTANTS.STATES.DONE } as never,
                     {} as never,
                   );
+                  const advanceOk = !!advanceResult
+                    && typeof advanceResult === 'object'
+                    && 'success' in advanceResult
+                    && (advanceResult as { success: unknown }).success === true;
+                  if (!advanceOk) {
+                    console.error(
+                      `[webhook/linear] Failed to advance ${issueId} to Done`,
+                      advanceResult,
+                    );
+                    return c.json(
+                      {
+                        success: false,
+                        error: {
+                          code: 'STATE_UPDATE_FAILED',
+                          message: 'Could not advance Linear issue to Done',
+                        },
+                      },
+                      500,
+                    );
+                  }
 
                   const evidenceParts: string[] = [];
                   if (commentsHaveEvidence) {
