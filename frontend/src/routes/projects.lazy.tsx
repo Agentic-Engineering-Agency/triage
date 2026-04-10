@@ -12,6 +12,7 @@ import {
   Database,
   FileCode,
   ExternalLink,
+  Pencil,
 } from "lucide-react"
 
 export const Route = createLazyFileRoute("/projects")({
@@ -34,9 +35,29 @@ interface Project {
 function ProjectsPage() {
   const queryClient = useQueryClient()
   const [showForm, setShowForm] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState("")
   const [repoUrl, setRepoUrl] = useState("")
   const [branch, setBranch] = useState("main")
+  const [description, setDescription] = useState("")
+
+  const resetForm = () => {
+    setEditingId(null)
+    setName("")
+    setRepoUrl("")
+    setBranch("main")
+    setDescription("")
+    setShowForm(false)
+  }
+
+  const startEdit = (project: Project) => {
+    setEditingId(project.id)
+    setName(project.name)
+    setRepoUrl(project.repositoryUrl)
+    setBranch(project.branch || "main")
+    setDescription((project as unknown as { description?: string }).description ?? "")
+    setShowForm(true)
+  }
 
   const { data: projects, isLoading } = useQuery<Project[]>({
     queryKey: ["projects"],
@@ -50,21 +71,21 @@ function ProjectsPage() {
     refetchInterval: 5000, // Poll for status updates during processing
   })
 
-  const createMutation = useMutation({
+  const saveMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch("/projects", {
-        method: "POST",
+      const body = JSON.stringify({ name, repositoryUrl: repoUrl, branch, description })
+      const url = editingId ? `/projects/${editingId}` : "/projects"
+      const method = editingId ? "PATCH" : "POST"
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ name, repositoryUrl: repoUrl, branch }),
+        body,
       })
       return res.json()
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] })
-      setShowForm(false)
-      setName("")
-      setRepoUrl("")
-      setBranch("main")
+      resetForm()
     },
   })
 
@@ -79,6 +100,12 @@ function ProjectsPage() {
       queryClient.invalidateQueries({ queryKey: ["projects"] })
     },
   })
+
+  const handleDelete = (id: string, name: string) => {
+    if (window.confirm(`Delete project "${name}"? This cannot be undone.`)) {
+      deleteMutation.mutate(id)
+    }
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -98,7 +125,7 @@ function ProjectsPage() {
           </div>
         </div>
         <button
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => (showForm ? resetForm() : setShowForm(true))}
           className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity"
         >
           <Plus className="h-4 w-4" />
@@ -110,7 +137,7 @@ function ProjectsPage() {
       {showForm && (
         <div className="mx-6 mt-4 rounded-2xl bg-card border border-border/50 p-5 shadow-neu-sm">
           <h3 className="text-sm font-medium text-foreground mb-4">
-            Add Repository
+            {editingId ? "Edit Project" : "Add Repository"}
           </h3>
           <div className="grid gap-3">
             <div>
@@ -149,21 +176,33 @@ function ProjectsPage() {
                 className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                Description (optional)
+              </label>
+              <textarea
+                placeholder="Short description of this project"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={2}
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+              />
+            </div>
             <div className="flex gap-2 pt-1">
               <button
-                onClick={() => createMutation.mutate()}
-                disabled={!name || !repoUrl || createMutation.isPending}
+                onClick={() => saveMutation.mutate()}
+                disabled={!name || !repoUrl || saveMutation.isPending}
                 className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity disabled:opacity-50"
               >
-                {createMutation.isPending ? (
+                {saveMutation.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <FolderGit2 className="h-4 w-4" />
                 )}
-                Create & Generate Wiki
+                {editingId ? "Save Changes" : "Create & Generate Wiki"}
               </button>
               <button
-                onClick={() => setShowForm(false)}
+                onClick={resetForm}
                 className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
               >
                 Cancel
@@ -198,7 +237,8 @@ function ProjectsPage() {
               <ProjectCard
                 key={project.id}
                 project={project}
-                onDelete={() => deleteMutation.mutate(project.id)}
+                onEdit={() => startEdit(project)}
+                onDelete={() => handleDelete(project.id, project.name)}
                 isDeleting={deleteMutation.isPending}
               />
             ))}
@@ -211,10 +251,12 @@ function ProjectsPage() {
 
 function ProjectCard({
   project,
+  onEdit,
   onDelete,
   isDeleting,
 }: {
   project: Project
+  onEdit: () => void
   onDelete: () => void
   isDeleting: boolean
 }) {
@@ -281,6 +323,15 @@ function ProjectCard({
             />
             {status.label}
           </div>
+
+          {/* Edit button */}
+          <button
+            onClick={onEdit}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            title="Edit project"
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
 
           {/* Delete button */}
           <button

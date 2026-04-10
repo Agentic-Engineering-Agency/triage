@@ -82,6 +82,9 @@ services:
     networks:
       - app
       - langfuse
+    volumes:
+      - /Users/agent/hackathon:/opt/repos:ro
+      - repos:/data/repos
 
   libsql:
     image: ghcr.io/tursodatabase/libsql-server:v0.24.32
@@ -261,6 +264,11 @@ networks:
   langfuse:
     driver: bridge
 
-
-# No named volumes — all data is ephemeral (recreated on restart).
-# Wiki vectors regenerate via Projects page, Langfuse auto-seeds from env vars.
+volumes:
+  libsql_data:
+  repos:
+  langfuse_postgres_data:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_minio_data:
+  langfuse_redis_data:

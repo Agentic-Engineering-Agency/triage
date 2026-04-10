@@ -130,6 +130,21 @@ export const mastra = new Mastra({
         },
       },
 
+      // GET /api/config/status — check configuration status
+      {
+        path: '/api/config/status',
+        method: 'GET' as const,
+        handler: async (c: Context) => {
+          return c.json({
+            success: true,
+            data: {
+              linearConfigured: !!config.LINEAR_API_KEY,
+              openrouterConfigured: !!process.env.OPENROUTER_API_KEY,
+            },
+          });
+        },
+      },
+
       // GET /api/linear/members — list team members
       {
         path: '/api/linear/members',
@@ -159,7 +174,7 @@ export const mastra = new Mastra({
         },
       },
 
-      // POST /api/wiki/generate — start wiki generation
+      // POST /api/wiki/generate — start wiki generation via wiki-rag pipeline
       {
         path: '/api/wiki/generate',
         method: 'POST' as const,
@@ -169,9 +184,29 @@ export const mastra = new Mastra({
             if (!body.repoUrl) {
               return c.json({ success: false, error: { code: 'MISSING_REPO_URL', message: 'repoUrl is required' } }, 400);
             }
-            // TODO: Implement full wiki generation (git clone, file walk, generateWikiTool calls)
-            console.log(`[wiki/generate] Received request for repo: ${body.repoUrl}`);
-            return c.json({ success: true, data: { status: 'started', repoUrl: body.repoUrl } });
+
+            const { generateWiki } = await import('../lib/wiki-rag');
+            const { createClient } = await import('@libsql/client');
+            const crypto = await import('crypto');
+
+            const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+            const projectId = crypto.randomUUID();
+            const now = Date.now();
+
+            // Create project record
+            await db.execute({
+              sql: `INSERT INTO projects (id, name, repository_url, branch, status, created_at, updated_at) VALUES (?, ?, ?, 'main', 'processing', ?, ?)`,
+              args: [projectId, body.repoUrl.split('/').pop() || 'repo', body.repoUrl, now, now],
+            });
+
+            console.log(`[wiki/generate] Starting wiki generation for: ${body.repoUrl} (project: ${projectId})`);
+
+            // Run in background (non-blocking)
+            generateWiki(projectId, body.repoUrl).catch((err: Error) => {
+              console.error(`[wiki/generate] Pipeline error: ${err.message}`);
+            });
+
+            return c.json({ success: true, data: { status: 'processing', repoUrl: body.repoUrl, projectId } });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return c.json({ success: false, error: { code: 'WIKI_ERROR', message } }, 500);
@@ -179,12 +214,46 @@ export const mastra = new Mastra({
         },
       },
 
-      // GET /api/wiki/status — wiki generation status
+      // GET /api/wiki/status — wiki generation status (reads from projects table + counts from wiki_* tables)
       {
         path: '/api/wiki/status',
         method: 'GET' as const,
         handler: async (c: Context) => {
-          return c.json({ success: true, data: { total: 0, processed: 0, done: true } });
+          try {
+            const { createClient } = await import('@libsql/client');
+            const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+
+            // Get the latest project
+            const projectResult = await db.execute('SELECT id, status, error FROM projects ORDER BY created_at DESC LIMIT 1');
+            const project = projectResult.rows[0];
+            if (!project) {
+              return c.json({ success: true, data: { total: 0, processed: 0, done: true, status: 'idle' } });
+            }
+
+            // Count actual documents and chunks from the tables
+            const docsResult = await db.execute('SELECT COUNT(*) as count FROM wiki_documents WHERE project_id = ?', [project.id as string]);
+            const chunksResult = await db.execute('SELECT COUNT(*) as count FROM wiki_chunks WHERE document_id IN (SELECT id FROM wiki_documents WHERE project_id = ?)', [project.id as string]);
+
+            const docCount = Number(docsResult.rows[0]?.count ?? 0);
+            const chunkCount = Number(chunksResult.rows[0]?.count ?? 0);
+            const done = project.status === 'ready' || project.status === 'error';
+
+            return c.json({
+              success: true,
+              data: {
+                total: docCount + chunkCount,
+                processed: chunkCount, // chunks are the actual embeddings created
+                done,
+                status: project.status,
+                error: project.error || undefined,
+                documents: docCount,
+                chunks: chunkCount,
+              },
+            });
+          } catch (err) {
+            console.error('[wiki/status] Error:', err instanceof Error ? err.message : 'unknown');
+            return c.json({ success: true, data: { total: 0, processed: 0, done: false, status: 'error' } });
+          }
         },
       },
 

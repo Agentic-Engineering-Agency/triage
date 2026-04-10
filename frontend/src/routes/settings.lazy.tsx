@@ -20,6 +20,14 @@ function SettingsPage() {
   const [linearToken, setLinearToken] = useState('');
   const [tokenStatus, setTokenStatus] = useState<'idle' | 'valid' | 'invalid' | 'testing'>('idle');
   const [tokenError, setTokenError] = useState<string | null>(null);
+  const [wikiGenerating, setWikiGenerating] = useState(false);
+
+  // Check config status on load
+  const { data: configStatus } = useQuery<{ linearConfigured: boolean; openrouterConfigured: boolean }>({
+    queryKey: ['config-status'],
+    queryFn: () => apiFetch('/config/status'),
+    staleTime: 30000, // Cache for 30s
+  });
 
   // Notification email — stored in localStorage, falls back to hardcoded default
   const [notifyEmail, setNotifyEmail] = useState(
@@ -63,19 +71,28 @@ function SettingsPage() {
     queryFn: () => apiFetch('/linear/members'),
   });
 
-  // Wiki status polling
-  const [wikiGenerating, setWikiGenerating] = useState(false);
-  const { data: wikiStatus } = useQuery<{ total: number; processed: number; done: boolean }>({
+  // Wiki status polling — auto-detect if generation is in progress
+  const { data: wikiStatus, refetch: refetchWikiStatus } = useQuery<{ total: number; processed: number; done: boolean; status: string }>({
     queryKey: ['wiki-status'],
     queryFn: () => apiFetch('/wiki/status'),
-    refetchInterval: wikiGenerating ? 2000 : false,
-    enabled: wikiGenerating,
+    refetchInterval: wikiGenerating ? 2000 : 5000, // Poll every 5s even when not generating, to detect in-progress
+    enabled: true, // Always enabled for auto-detection
   });
+
+  // Auto-detect if wiki generation is in progress
+  useEffect(() => {
+    if (wikiStatus?.status === 'processing' && !wikiGenerating) {
+      setWikiGenerating(true);
+    }
+  }, [wikiStatus?.status, wikiGenerating]);
 
   // Wiki generate mutation
   const wikiMutation = useMutation({
     mutationFn: () => apiFetch('/wiki/generate', { method: 'POST', body: JSON.stringify({ repoUrl }) }),
-    onSuccess: () => setWikiGenerating(true),
+    onSuccess: () => {
+      setWikiGenerating(true);
+      refetchWikiStatus();
+    },
   });
 
   // Sync members
@@ -142,24 +159,40 @@ function SettingsPage() {
           <div className="bg-card border border-border rounded-lg p-4 space-y-4">
             <div>
               <label className="text-sm font-medium block mb-1">Linear API Token</label>
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={linearToken}
-                  onChange={(e) => { setLinearToken(e.target.value); setTokenStatus('idle'); setTokenError(null); }}
-                  placeholder="lin_api_... (configured server-side)"
-                  className="flex-1 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
-                />
-                <button
-                  onClick={testConnection}
-                  disabled={tokenStatus === 'testing'}
-                  className="px-3 py-2 text-sm font-medium border border-input rounded-md hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                >
-                  {tokenStatus === 'testing' ? 'Testing...' : 'Test Connection'}
-                </button>
-              </div>
+              {configStatus?.linearConfigured ? (
+                <div className="flex gap-2 items-center">
+                  <div className="flex-1 px-3 py-2 text-sm bg-background border border-input rounded-md flex items-center">
+                    <span className="text-muted-foreground">●●●●●●●●●●●●</span>
+                  </div>
+                  <button
+                    onClick={testConnection}
+                    disabled={tokenStatus === 'testing'}
+                    className="px-3 py-2 text-sm font-medium border border-input rounded-md hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    {tokenStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={linearToken}
+                    onChange={(e) => { setLinearToken(e.target.value); setTokenStatus('idle'); setTokenError(null); }}
+                    placeholder="lin_api_... (configured server-side)"
+                    className="flex-1 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <button
+                    onClick={testConnection}
+                    disabled={tokenStatus === 'testing'}
+                    className="px-3 py-2 text-sm font-medium border border-input rounded-md hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    {tokenStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+                  </button>
+                </div>
+              )}
               {tokenStatus === 'valid' && <p className="mt-1 text-xs text-green-500 font-medium">✓ Connected</p>}
               {tokenStatus === 'invalid' && <p className="mt-1 text-xs text-destructive font-medium">✗ {tokenError ?? 'Connection failed'}</p>}
+              {configStatus?.linearConfigured && <p className="mt-1 text-xs text-muted-foreground">Configured via environment variable</p>}
             </div>
 
             <div>

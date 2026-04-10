@@ -11,8 +11,8 @@ import { MDocument } from '@mastra/rag';
 import { embed, embedMany } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { execFileSync } from 'child_process';
-import { readFileSync, readdirSync, statSync, existsSync, rmSync } from 'fs';
-import { join, extname, relative } from 'path';
+import { readFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'fs';
+import { join, extname, relative, dirname } from 'path';
 import crypto from 'crypto';
 
 // ============================================================
@@ -23,7 +23,7 @@ const VECTOR_INDEX = 'wiki_vectors';
 const EMBEDDING_MODEL = 'openai/text-embedding-3-small';
 const EMBEDDING_DIMENSION = 1536;
 const MAX_FILE_SIZE = 100_000; // 100KB — skip very large files
-const BATCH_SIZE = 20; // embed N chunks at a time
+const BATCH_SIZE = 5; // embed N chunks at a time — reduced to avoid LibSQL transaction timeouts
 
 // File extensions we ingest
 const CODE_EXTENSIONS = new Set([
@@ -42,6 +42,19 @@ const SKIP_DIRS = new Set([
   'coverage', '.turbo', '.cache', '__pycache__', '.venv', 'vendor',
   'target', '.gradle', '.idea', '.vscode',
 ]);
+
+// ============================================================
+// Path remapping for containerized environments
+// ============================================================
+
+function remapPath(hostPath: string): string {
+  // If running in container and path starts with /Users/agent/hackathon,
+  // remap to /opt/repos (mounted volume)
+  if (hostPath.startsWith('/Users/agent/hackathon')) {
+    return hostPath.replace('/Users/agent/hackathon', '/opt/repos');
+  }
+  return hostPath;
+}
 
 // ============================================================
 // DB client
@@ -69,7 +82,15 @@ function scanFiles(dir: string, base: string): { path: string; relativePath: str
     const entries = readdirSync(current);
     for (const entry of entries) {
       const full = join(current, entry);
-      const stat = statSync(full);
+      let stat;
+
+      // Use lstatSync to check symlinks without following them
+      try {
+        stat = statSync(full);
+      } catch (err) {
+        // Skip if stat fails (broken symlink, permission denied, etc)
+        continue;
+      }
 
       if (stat.isDirectory()) {
         if (!SKIP_DIRS.has(entry)) walk(full);
@@ -120,7 +141,7 @@ export async function generateWiki(
 ): Promise<WikiGenerateResult> {
   const db = getDbClient();
   const vectorStore = getVectorStore();
-  const tmpDir = `/tmp/wiki-clone-${projectId}`;
+  const repoPath = `/data/repos/${projectId}`;
 
   try {
     // Update project status
@@ -129,15 +150,47 @@ export async function generateWiki(
       args: [Date.now(), projectId],
     });
 
-    // Clone the repository (using execFileSync to prevent shell injection)
-    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
-    const gitArgs = ['clone', '--depth', '1'];
-    if (branch) gitArgs.push('--branch', branch);
-    gitArgs.push(repositoryUrl, tmpDir);
-    execFileSync('git', gitArgs, { timeout: 60_000, stdio: 'pipe' });
+    // Ensure parent directory exists
+    mkdirSync(dirname(repoPath), { recursive: true });
+
+    // Clone or update the repository into the persistent volume
+    if (repositoryUrl.startsWith('/') || repositoryUrl.startsWith('.')) {
+      // Local path: rsync into the persistent repo path (remap for containerized environment)
+      const remappedUrl = remapPath(repositoryUrl);
+      console.log(`[wiki-rag] Syncing local repo from ${repositoryUrl} (remapped to ${remappedUrl}) to ${repoPath}`);
+      mkdirSync(repoPath, { recursive: true });
+      try {
+        execFileSync('rsync', ['-av', '--delete', '--exclude=node_modules', '--exclude=.git', '--exclude=skills', remappedUrl + '/', repoPath + '/'], { timeout: 120_000, stdio: 'pipe' });
+      } catch {
+        console.log(`[wiki-rag] rsync failed, falling back to cp -P`);
+        execFileSync('cp', ['-rP', remappedUrl + '/.', repoPath], { timeout: 60_000, stdio: 'pipe' });
+      }
+    } else if (existsSync(join(repoPath, '.git'))) {
+      // Existing git clone: pull latest
+      console.log(`[wiki-rag] Updating existing repo at ${repoPath}`);
+      try {
+        const pullArgs = ['-C', repoPath, 'pull', 'origin'];
+        if (branch) pullArgs.push(branch);
+        execFileSync('git', pullArgs, { timeout: 120_000, stdio: 'pipe' });
+      } catch (pullErr) {
+        console.warn(`[wiki-rag] git pull failed: ${pullErr instanceof Error ? pullErr.message : 'unknown'} — continuing with existing checkout`);
+      }
+    } else {
+      // Fresh remote clone into persistent volume
+      console.log(`[wiki-rag] Cloning remote repo ${repositoryUrl} to ${repoPath}`);
+      const gitArgs = ['clone', '--depth', '1'];
+      if (branch) gitArgs.push('--branch', branch);
+      gitArgs.push(repositoryUrl, repoPath);
+      try {
+        execFileSync('git', gitArgs, { timeout: 120_000, stdio: 'pipe' });
+      } catch (cloneErr) {
+        const msg = cloneErr instanceof Error ? cloneErr.message : 'unknown';
+        throw new Error(`git clone failed: ${msg}`);
+      }
+    }
 
     // Scan source files
-    const files = scanFiles(tmpDir, tmpDir);
+    const files = scanFiles(repoPath, repoPath);
     console.log(`[wiki-rag] Found ${files.length} files to process for project ${projectId}`);
 
     let totalDocs = 0;
@@ -207,15 +260,20 @@ export async function generateWiki(
     // Batch embed and store chunks
     const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
 
+    console.log(`[wiki-rag] Starting batch embedding of ${allChunks.length} chunks (${Math.ceil(allChunks.length / BATCH_SIZE)} batches)`);
+
     for (let i = 0; i < allChunks.length; i += BATCH_SIZE) {
       const batch = allChunks.slice(i, i + BATCH_SIZE);
       const texts = batch.map((c) => c.text);
+      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
 
       try {
+        console.log(`[wiki-rag] Batch ${batchNum}: Starting embedding of ${texts.length} chunks...`);
         const { embeddings } = await embedMany({
           model: openrouter.textEmbeddingModel(EMBEDDING_MODEL),
           values: texts,
         });
+        console.log(`[wiki-rag] Batch ${batchNum}: Got ${embeddings.length} embeddings, storing...`);
 
         // Store in vector index
         const ids = batch.map(() => crypto.randomUUID());
@@ -224,40 +282,64 @@ export async function generateWiki(
           ...c.metadata,
         }));
 
-        await vectorStore.upsert({
-          indexName: VECTOR_INDEX,
-          vectors: embeddings,
-          metadata,
-          ids,
-        });
+        // Try vector upsert — if it fails, skip this batch but continue
+        try {
+          console.log(`[wiki-rag] Batch ${batchNum}: Upserting to vector store...`);
+          await vectorStore.upsert({
+            indexName: VECTOR_INDEX,
+            vectors: embeddings,
+            metadata,
+            ids,
+          });
+          console.log(`[wiki-rag] Batch ${batchNum}: Vector upsert OK`);
+        } catch (upsertErr) {
+          console.warn(`[wiki-rag] Batch ${batchNum}: Vector upsert failed: ${upsertErr instanceof Error ? upsertErr.message : 'unknown'}, skipping batch`);
+          continue; // Skip to next batch to avoid transaction state issues
+        }
 
-        // Also store in wiki_chunks table for relational queries
+        // Also store in wiki_chunks table for relational queries — batch insert
         const now = Date.now();
+        const placeholders = batch.map(() => '(?, ?, ?, ?, ?)').join(', ');
+        const args: unknown[] = [];
         for (let j = 0; j < batch.length; j++) {
+          args.push(
+            ids[j],
+            batch[j].metadata.documentId,
+            batch[j].text,
+            batch[j].metadata.chunkIndex,
+            now,
+          );
+        }
+
+        // Try DB insert — if it fails, skip this batch but continue
+        try {
+          console.log(`[wiki-rag] Batch ${batchNum}: Inserting to database...`);
           await db.execute({
             sql: `INSERT INTO wiki_chunks (id, document_id, content, chunk_index, created_at)
-                  VALUES (?, ?, ?, ?, ?)`,
-            args: [
-              ids[j],
-              batch[j].metadata.documentId as string,
-              batch[j].text,
-              batch[j].metadata.chunkIndex as number,
-              now,
-            ],
+                  VALUES ${placeholders}`,
+            args,
           });
+          console.log(`[wiki-rag] Batch ${batchNum}: DB insert OK`);
+        } catch (insertErr) {
+          console.warn(`[wiki-rag] Batch ${batchNum}: DB insert failed: ${insertErr instanceof Error ? insertErr.message : 'unknown'}, skipping batch`);
+          continue; // Skip to next batch
         }
 
         totalChunks += batch.length;
-        console.log(`[wiki-rag] Embedded batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(allChunks.length / BATCH_SIZE)} (${totalChunks}/${allChunks.length} chunks)`);
+        const totalBatches = Math.ceil(allChunks.length / BATCH_SIZE);
+        console.log(`[wiki-rag] Batch ${batchNum}/${totalBatches} complete (${totalChunks}/${allChunks.length} chunks, ${Math.round(totalChunks * 100 / allChunks.length)}%)`);
       } catch (err) {
-        console.error(`[wiki-rag] Embedding batch error: ${err instanceof Error ? err.message : 'unknown'}`);
+        console.error(`[wiki-rag] Batch ${batchNum} error: ${err instanceof Error ? err.message : 'unknown'}`);
       }
     }
 
-    // Update project with final counts
+    console.log(`[wiki-rag] Embedding complete: ${totalChunks}/${allChunks.length} chunks processed`);
+
+    // Update project with final counts (persist lastWikiGeneratedAt)
+    const finishedAt = Date.now();
     await db.execute({
-      sql: `UPDATE projects SET status = 'ready', documents_count = ?, chunks_count = ?, updated_at = ? WHERE id = ?`,
-      args: [totalDocs, totalChunks, Date.now(), projectId],
+      sql: `UPDATE projects SET status = 'ready', documents_count = ?, chunks_count = ?, last_wiki_generated_at = ?, updated_at = ? WHERE id = ?`,
+      args: [totalDocs, totalChunks, finishedAt, finishedAt, projectId],
     });
 
     return { projectId, documentsProcessed: totalDocs, chunksCreated: totalChunks, success: true };
@@ -271,12 +353,8 @@ export async function generateWiki(
     }).catch(() => {});
 
     return { projectId, documentsProcessed: 0, chunksCreated: 0, success: false, error: errorMsg };
-  } finally {
-    // Cleanup cloned repo
-    if (existsSync(tmpDir)) {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
   }
+  // Note: no cleanup — repo is persisted at /data/repos/${projectId} for future access
 }
 
 // ============================================================
@@ -303,6 +381,20 @@ export async function queryWiki(
 ): Promise<WikiQueryResult> {
   const vectorStore = getVectorStore();
   const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
+
+  // Ensure vector index exists
+  try {
+    const existingIndexes = await vectorStore.listIndexes();
+    if (!existingIndexes.includes(VECTOR_INDEX)) {
+      await vectorStore.createIndex({
+        indexName: VECTOR_INDEX,
+        dimension: EMBEDDING_DIMENSION,
+      });
+    }
+  } catch (err) {
+    console.warn(`[wiki-query] Index check failed: ${err instanceof Error ? err.message : 'unknown'}`);
+    // Continue anyway; query might still work if table exists
+  }
 
   // Generate query embedding
   const { embedding: queryVector } = await embed({

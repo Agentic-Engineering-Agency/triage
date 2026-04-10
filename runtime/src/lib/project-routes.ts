@@ -22,18 +22,18 @@ export const listProjectsRoute = registerApiRoute('/projects', {
   handler: async (c) => {
     const db = getDb();
     const result = await db.execute(
-      'SELECT id, name, repository_url, branch, status, documents_count, chunks_count, error, created_at, updated_at FROM projects ORDER BY created_at DESC',
+      'SELECT id, name, repo_url, repo_default_branch, status, documents_count, chunks_count, wiki_error, created_at, updated_at FROM projects ORDER BY created_at DESC',
     );
 
     const projects = result.rows.map((row) => ({
       id: row.id,
       name: row.name,
-      repositoryUrl: row.repository_url,
-      branch: row.branch,
+      repositoryUrl: row.repo_url,
+      branch: row.repo_default_branch,
       status: row.status,
       documentsCount: row.documents_count,
       chunksCount: row.chunks_count,
-      error: row.error,
+      error: row.wiki_error,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -62,7 +62,7 @@ export const createProjectRoute = registerApiRoute('/projects', {
     const now = Date.now();
 
     await db.execute({
-      sql: `INSERT INTO projects (id, name, repository_url, branch, status, created_at, updated_at)
+      sql: `INSERT INTO projects (id, name, repo_url, repo_default_branch, status, created_at, updated_at)
             VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
       args: [id, name, repositoryUrl, branch || 'main', now, now],
     });
@@ -109,17 +109,71 @@ export const getProjectRoute = registerApiRoute('/projects/:id', {
     const project = {
       id: row.id,
       name: row.name,
-      repositoryUrl: row.repository_url,
-      branch: row.branch,
+      repositoryUrl: row.repo_url,
+      branch: row.repo_default_branch,
       status: row.status,
       documentsCount: row.documents_count,
       chunksCount: row.chunks_count,
-      error: row.error,
+      error: row.wiki_error,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
 
     return c.json({ success: true, data: project });
+  },
+});
+
+// ---------- PATCH /projects/:id ----------
+export const updateProjectRoute = registerApiRoute('/projects/:id', {
+  method: 'PATCH',
+  handler: async (c) => {
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const { name, repositoryUrl, branch, description } = body as {
+      name?: string;
+      repositoryUrl?: string;
+      branch?: string;
+      description?: string;
+    };
+
+    const db = getDb();
+
+    // Check project exists
+    const existing = await db.execute({
+      sql: 'SELECT * FROM projects WHERE id = ?',
+      args: [id],
+    });
+
+    if (existing.rows.length === 0) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: 'Project not found' } }, 404);
+    }
+
+    const row = existing.rows[0];
+    const updatedName = name ?? row.name;
+    const updatedUrl = repositoryUrl ?? row.repo_url;
+    const updatedBranch = branch ?? row.repo_default_branch;
+    const now = Date.now();
+
+    await db.execute({
+      sql: `UPDATE projects SET name = ?, repo_url = ?, repo_default_branch = ?, updated_at = ? WHERE id = ?`,
+      args: [updatedName, updatedUrl, updatedBranch, now, id],
+    });
+
+    return c.json({
+      success: true,
+      data: {
+        id,
+        name: updatedName,
+        repositoryUrl: updatedUrl,
+        branch: updatedBranch,
+        status: row.status,
+        documentsCount: row.documents_count,
+        chunksCount: row.chunks_count,
+        error: row.wiki_error,
+        createdAt: row.created_at,
+        updatedAt: now,
+      },
+    });
   },
 });
 
@@ -148,5 +202,6 @@ export const projectRoutes = [
   listProjectsRoute,
   createProjectRoute,
   getProjectRoute,
+  updateProjectRoute,
   deleteProjectRoute,
 ];

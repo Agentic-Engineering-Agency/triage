@@ -4,6 +4,7 @@ import { MessageSquare, LayoutGrid, Settings, Sun, Moon, FolderGit2, LogOut, Plu
 import { useAuth, signOut } from "@/hooks/use-auth"
 import { useTheme } from "@/components/theme-provider"
 import { ConversationProvider, useConversations } from "@/hooks/use-conversations"
+import { ProjectSelector } from "@/components/project-selector"
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -80,6 +81,14 @@ function AuthenticatedLayout() {
           <span className="font-heading text-lg font-semibold text-foreground">
             Triage
           </span>
+        </div>
+
+        {/* Divider */}
+        <div className="mx-4 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+
+        {/* Project selector */}
+        <div className="pt-3">
+          <ProjectSelector />
         </div>
 
         {/* Divider */}
