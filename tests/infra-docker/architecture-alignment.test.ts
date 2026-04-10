@@ -271,15 +271,14 @@ describe('REQ-A03: Docker Compose Override for Dev Mode', () => {
     expect(volumes.length).toBeGreaterThan(0);
   });
 
-  it('T-A17: override changes runtime command to mastra dev on port 4111', () => {
+  it('T-A17: override changes runtime command to mastra dev', () => {
     // GIVEN the runtime service override in docker-compose.override.yml
     // WHEN its command is inspected
-    // THEN it runs mastra dev with the explicit runtime port
+    // THEN it runs mastra dev (port configured via PORT env var)
     const override = loadOverride();
     const cmd = override.services?.runtime?.command;
     const cmdStr = Array.isArray(cmd) ? cmd.join(' ') : String(cmd || '');
     expect(cmdStr).toMatch(/mastra\s+dev/i);
-    expect(cmdStr).toMatch(/--port\s+4111/);
   });
 
   it('T-A03-NEG: base compose has no vite service (prod mode)', () => {

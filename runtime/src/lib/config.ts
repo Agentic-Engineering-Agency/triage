@@ -24,6 +24,11 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().email().optional(),
 
+  // Slack (optional — graceful degradation if not configured)
+  SLACK_BOT_TOKEN: z.string().optional(),
+  SLACK_CHANNEL_ID: z.string().optional(),
+  SLACK_SIGNING_SECRET: z.string().optional(),
+
   // Langfuse (optional — observability is not required for core function)
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_SECRET_KEY: z.string().optional(),
@@ -115,11 +120,16 @@ export const config = {
   RESEND_API_KEY: process.env.RESEND_API_KEY || undefined,
   RESEND_FROM_EMAIL: (fromEmail && z.string().email().safeParse(fromEmail).success) ? fromEmail : 'triage@agenticengineering.lat',
   GITHUB_TOKEN: process.env.GITHUB_TOKEN || undefined,
+  SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN || undefined,
+  SLACK_CHANNEL_ID: process.env.SLACK_CHANNEL_ID || undefined,
+  SLACK_SIGNING_SECRET: process.env.SLACK_SIGNING_SECRET || undefined,
 };
 
 // ============================================================
 // Linear constants (from Koki's Linear/Resend integration)
 // ============================================================
+
+export const LINEAR_BASE_URL = 'https://linear.app/agentic-engineering-agency';
 
 export const LINEAR_CONSTANTS = {
   TEAM_ID: '645a639b-39e2-4abe-8ded-3346d2f79f9f',
@@ -149,9 +159,9 @@ export const LINEAR_CONSTANTS = {
   },
 
   MEMBERS: {
-    FERNANDO: '90b16a9c-3f47-49fc-8d98-abf3aa6ecb13',
-    KOKI: 'c3f725e4-aa51-45d3-af43-d29a87077226',
-    CHENKO: '7d177d95-4df7-4dff-a3df-710f49eba663',
-    LALO: 'b17c4757-ceef-4a13-b3c4-fc2ae09d50de',
+    FERNANDO: { linearId: '90b16a9c-3f47-49fc-8d98-abf3aa6ecb13', slackId: process.env.SLACK_USER_FERNANDO || '', name: 'Fernando' },
+    KOKI: { linearId: 'c3f725e4-aa51-45d3-af43-d29a87077226', slackId: process.env.SLACK_USER_KOKI || '', name: 'Koki' },
+    CHENKO: { linearId: '7d177d95-4df7-4dff-a3df-710f49eba663', slackId: process.env.SLACK_USER_CHENKO || '', name: 'Chenko' },
+    LALO: { linearId: 'b17c4757-ceef-4a13-b3c4-fc2ae09d50de', slackId: process.env.SLACK_USER_LALO || '', name: 'Lalo' },
   },
 } as const;

@@ -34,6 +34,16 @@ export {
   sendResolutionEmailTool,
 } from './resend';
 
+export {
+  sendSlackTicketNotification,
+  sendSlackResolutionNotification,
+  sendSlackMessage,
+  // Aliases for agent registrations
+  sendSlackTicketNotificationTool,
+  sendSlackResolutionNotificationTool,
+  sendSlackMessageTool,
+} from './slack';
+
 export { queryWikiTool } from './wiki-query';
 
 export { generateWikiTool } from './wiki-generate';
