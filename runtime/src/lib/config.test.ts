@@ -172,12 +172,13 @@ describe('Config — runtime/src/lib/config.ts', () => {
       expect(LINEAR_CONSTANTS.CATEGORY_LABELS.IMPROVEMENT).toBe('50756390-d166-4b79-a740-ceefb203751f');
     });
 
-    it('LINEAR_CONSTANTS.MEMBERS contains 4 team members', async () => {
+    it('LINEAR_CONSTANTS.MEMBERS contains 4 team members with linearId and name', async () => {
       const { LINEAR_CONSTANTS } = await import('./config');
-      expect(LINEAR_CONSTANTS.MEMBERS.FERNANDO).toBe('90b16a9c-3f47-49fc-8d98-abf3aa6ecb13');
-      expect(LINEAR_CONSTANTS.MEMBERS.KOKI).toBe('c3f725e4-aa51-45d3-af43-d29a87077226');
-      expect(LINEAR_CONSTANTS.MEMBERS.CHENKO).toBe('7d177d95-4df7-4dff-a3df-710f49eba663');
-      expect(LINEAR_CONSTANTS.MEMBERS.LALO).toBe('b17c4757-ceef-4a13-b3c4-fc2ae09d50de');
+      expect(LINEAR_CONSTANTS.MEMBERS.FERNANDO.linearId).toBe('90b16a9c-3f47-49fc-8d98-abf3aa6ecb13');
+      expect(LINEAR_CONSTANTS.MEMBERS.KOKI.linearId).toBe('c3f725e4-aa51-45d3-af43-d29a87077226');
+      expect(LINEAR_CONSTANTS.MEMBERS.CHENKO.linearId).toBe('7d177d95-4df7-4dff-a3df-710f49eba663');
+      expect(LINEAR_CONSTANTS.MEMBERS.LALO.linearId).toBe('b17c4757-ceef-4a13-b3c4-fc2ae09d50de');
+      expect(LINEAR_CONSTANTS.MEMBERS.FERNANDO.name).toBe('Fernando');
     });
   });
 });
