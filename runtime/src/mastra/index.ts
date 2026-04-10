@@ -8,6 +8,8 @@ import type { Context } from 'hono';
 import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent } from './agents/index';
 import { triageWorkflow } from './workflows/index';
 import { auth } from '../lib/auth';
+import { projectRoutes } from '../lib/project-routes';
+import { webhookRoutes } from '../lib/webhook-routes';
 import { config, LINEAR_CONSTANTS } from '../lib/config';
 
 // Linear client singleton — only instantiate if API key is configured
@@ -195,19 +197,16 @@ export const mastra = new Mastra({
             if (!linearClient) {
               return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
             }
-
             const body = await c.req.json() as { url?: string };
             if (!body.url) {
               return c.json({ success: false, error: { code: 'MISSING_URL', message: 'url is required' } }, 400);
             }
-
             const result = await linearClient.createWebhook({
               url: body.url,
               teamId: LINEAR_CONSTANTS.TEAM_ID,
               resourceTypes: ['Issue'],
               enabled: true,
             });
-
             const webhook = await result.webhook;
             return c.json({ success: true, data: { id: webhook?.id, url: webhook?.url, enabled: webhook?.enabled } });
           } catch (error) {
@@ -231,7 +230,6 @@ export const mastra = new Mastra({
               const type = payload.type as string;
               const data = payload.data as Record<string, unknown> | undefined;
 
-              // Only handle issue updates
               if (action !== 'update' || type !== 'Issue' || !data) {
                 return c.json({ success: true, data: { received: true, skipped: true } });
               }
@@ -240,14 +238,12 @@ export const mastra = new Mastra({
               const issueState = data.state as { name?: string; type?: string } | undefined;
               const updatedAt = (data.updatedAt as string) ?? new Date().toISOString();
 
-              // Only trigger on completed state (Done)
               if (issueState?.type !== 'completed') {
                 return c.json({ success: true, data: { received: true, skipped: true, reason: 'state not completed' } });
               }
 
               console.log(`[webhook/linear] Issue ${issueId} marked as "${issueState.name}" — searching for suspended run`);
 
-              // Find the suspended workflow run for this issueId via storage
               const storage = m.getStorage();
               const workflowsStore = await storage?.getStore('workflows');
 
@@ -262,16 +258,13 @@ export const mastra = new Mastra({
                 perPage: false,
               });
 
-              // Match by issueId stored in the ticket step output inside the snapshot
               let matchedRunId: string | null = null;
               for (const run of runsResult.runs) {
                 const snapshot = typeof run.snapshot === 'string'
                   ? JSON.parse(run.snapshot) as Record<string, unknown>
                   : run.snapshot as unknown as Record<string, unknown>;
-
                 const context = snapshot?.context as Record<string, Record<string, unknown>> | undefined;
                 const ticketOutput = context?.['ticket']?.['output'] as Record<string, unknown> | undefined;
-
                 if (ticketOutput?.['issueId'] === issueId) {
                   matchedRunId = run.runId;
                   break;
@@ -284,17 +277,12 @@ export const mastra = new Mastra({
               }
 
               console.log(`[webhook/linear] Resuming run ${matchedRunId} for issue ${issueId}`);
-
-              // Resume the suspended step — fire and forget so webhook responds immediately
               const workflow = m.getWorkflow('triage-workflow');
               const workflowRun = await workflow.createRun({ runId: matchedRunId });
 
               workflowRun.resume({
                 step: 'suspend',
-                resumeData: {
-                  newStatus: issueState.name ?? 'Done',
-                  updatedAt,
-                },
+                resumeData: { newStatus: issueState.name ?? 'Done', updatedAt },
               }).catch((err: Error) => {
                 console.error('[webhook/linear] Resume error:', err.message);
               });
@@ -308,7 +296,7 @@ export const mastra = new Mastra({
         },
       },
 
-      // POST /api/workflows/triage-workflow/trigger — trigger the triage workflow
+      // POST /api/workflows/triage-workflow/trigger — manually trigger a workflow run
       {
         path: '/api/workflows/triage-workflow/trigger',
         method: 'POST' as const,
@@ -319,7 +307,6 @@ export const mastra = new Mastra({
               const workflow = m.getWorkflow('triage-workflow');
               const run = await workflow.createRun();
 
-              // Start the workflow in the background
               run.start({ inputData: body }).catch((err: Error) => {
                 console.error('[workflow/trigger] Error:', err.message);
               });
@@ -332,6 +319,10 @@ export const mastra = new Mastra({
           };
         },
       },
+
+      // Project management and simple webhook routes
+      ...projectRoutes,
+      ...webhookRoutes,
     ],
   },
 });

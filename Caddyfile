@@ -61,6 +61,20 @@
         }
     }
 
+    # Project management API — only proxy XHR/fetch (not browser navigation)
+    @projects_api {
+        path /projects /projects/*
+        header Accept *application/json*
+    }
+    handle @projects_api {
+        reverse_proxy runtime:4111
+    }
+
+    # Webhook callbacks (Linear, manual resume, etc.)
+    handle /webhooks/* {
+        reverse_proxy runtime:4111
+    }
+
     # Frontend: static or dev mode
     handle {
         import {$FRONTEND_MODE:static}-frontend

@@ -1,6 +1,6 @@
 import { createRootRoute, Link, Navigate, Outlet, useLocation, useNavigate } from "@tanstack/react-router"
 import { TanStackRouterDevtools } from "@tanstack/router-devtools"
-import { MessageSquare, LayoutGrid, Settings, Sun, Moon, LogOut, Plus, Trash2, Activity } from "lucide-react"
+import { MessageSquare, LayoutGrid, Settings, Sun, Moon, FolderGit2, LogOut, Plus, Trash2, Activity } from "lucide-react"
 import { useAuth, signOut } from "@/hooks/use-auth"
 import { useTheme } from "@/components/theme-provider"
 import { ConversationProvider, useConversations } from "@/hooks/use-conversations"
@@ -97,6 +97,9 @@ function AuthenticatedLayout() {
           </button>
           <NavLink to="/board" icon={<LayoutGrid className="h-4 w-4" />}>
             Board
+          </NavLink>
+          <NavLink to="/projects" icon={<FolderGit2 className="h-4 w-4" />}>
+            Projects
           </NavLink>
           <NavLink to="/settings" icon={<Settings className="h-4 w-4" />}>
             Settings
