@@ -140,7 +140,6 @@ const tables = [
     priority INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'triage',
     assignee_id TEXT REFERENCES auth_user(id),
-    project_id TEXT REFERENCES projects(id),
     reporter_email TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
