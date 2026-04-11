@@ -141,7 +141,7 @@ describe('Config — runtime/src/lib/config.ts', () => {
 
     it('LINEAR_CONSTANTS.TEAM_ID matches smoke-tested value', async () => {
       const { LINEAR_CONSTANTS } = await import('./config');
-      expect(LINEAR_CONSTANTS.TEAM_ID).toBe('645a639b-39e2-4abe-8ded-3346d2f79f9f');
+      expect(LINEAR_CONSTANTS.TEAM_ID).toBe('a81af9a1-6066-4cfa-9971-e937455d01c5');
     });
 
     it('LINEAR_CONSTANTS.STATES contains all workflow states', async () => {

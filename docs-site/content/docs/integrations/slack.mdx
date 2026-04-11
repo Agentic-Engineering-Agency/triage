@@ -1,0 +1,119 @@
+---
+title: Slack
+description: Channel notifications — ticket creation and resolution alerts with Block Kit formatting, severity emojis, and graceful degradation
+---
+
+Triage uses the [Slack Web API](https://api.slack.com/web) to post structured notifications at two points in the incident lifecycle: when a ticket is created (to the team channel) and when a resolution is verified (to the team channel with verdict).
+
+## Configuration
+
+```bash
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_CHANNEL_ID=C0123456789
+SLACK_SIGNING_SECRET=...  # For future webhook verification
+```
+
+All variables are optional at startup. Slack notifications are best-effort — if the bot token is not configured or a message fails, the workflow continues without interruption. Email notifications via Resend serve as the primary channel; Slack is a complementary real-time alert.
+
+### Setting Up a Slack App
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and create a new app
+2. Under **OAuth & Permissions**, add the `chat:write` bot scope
+3. Install the app to your workspace and copy the **Bot User OAuth Token** (`xoxb-...`)
+4. Invite the bot to your target channel: `/invite @your-bot-name`
+5. Copy the channel ID (right-click channel → "View channel details" → Channel ID)
+
+## The Three Tools
+
+### `sendSlackTicketNotification`
+
+Posts a ticket creation alert to the configured Slack channel using Block Kit.
+
+**Triggered by:** The `notify` step in `triage-workflow`, alongside `sendTicketEmailTool`.
+
+**Content (Block Kit message):**
+- Header with severity emoji (Critical, High, Medium, Low)
+- Ticket title and severity/priority fields
+- Assigned engineer name
+- Triage summary
+- Root cause analysis
+- Suggested files as a bullet list
+- Linear ticket link button
+
+### `sendSlackResolutionNotification`
+
+Posts a resolution verdict to the configured Slack channel.
+
+**Triggered by:** The `notify-resolution` step in `triage-workflow`, alongside `sendResolutionEmailTool`.
+
+**Content (Block Kit message):**
+- Header with verdict emoji (resolved, partially resolved, unresolved)
+- Original ticket title
+- Verdict and confidence score
+- Verification analysis
+- Remaining risks (if any)
+- Linear ticket link button
+
+### `sendSlackMessage`
+
+Sends a plain-text message to a Slack channel. Used for ad-hoc notifications outside the triage workflow (e.g., system status updates).
+
+## Severity Emoji Mapping
+
+| Severity | Emoji |
+|----------|-------|
+| Critical | Red circle |
+| High | Orange circle |
+| Medium | Yellow circle |
+| Low | Green circle |
+
+| Verdict | Emoji |
+|---------|-------|
+| resolved | Green check |
+| partially_resolved | Warning sign |
+| unresolved | Red X |
+
+## Channel Resolution
+
+Each tool accepts an optional `channel` parameter. The resolution order is:
+
+1. Explicit `channel` parameter (if provided)
+2. `SLACK_CHANNEL_ID` environment variable
+3. If neither is set, the notification is skipped with a warning log
+
+## Error Handling
+
+All tools follow the standard graceful degradation pattern:
+
+```typescript
+// Bot token not configured — silent skip
+if (!slackClient) {
+  console.log(`[Slack] Skipping notification (SLACK_BOT_TOKEN not configured)`);
+  return { success: true };
+}
+
+// No channel available
+if (!channel) {
+  console.warn('[Slack] No channel specified and SLACK_CHANNEL_ID not set — skipping');
+  return { success: true };
+}
+```
+
+Errors are logged but do not throw — the calling workflow step handles the result and continues. The `notify` step treats email and Slack independently: `notificationSent` is true if either channel succeeded.
+
+## Security
+
+- **Minimal scopes:** The bot requires only `chat:write` — no read access to messages, files, or user data
+- **Module-level singleton:** The `WebClient` is instantiated once at module load, preventing token leakage across requests
+- **No message reading:** The bot only posts messages; it never reads channel history or user messages
+- **Signing secret:** `SLACK_SIGNING_SECRET` is available for verifying incoming Slack events (webhook signature validation for future interactive features)
+
+## Testing Slack in Development
+
+Set `SLACK_BOT_TOKEN` to a valid bot token for a test workspace. Messages will appear in the configured channel. Alternatively, leave it unset and check the runtime logs:
+
+```bash
+docker compose logs -f runtime | grep '\[Slack\]'
+```
+
+The test suite (`runtime/src/mastra/tools/slack.test.ts`) validates tool registration, graceful degradation, Block Kit formatting, severity-to-emoji mapping, and channel resolution logic without making real API calls.

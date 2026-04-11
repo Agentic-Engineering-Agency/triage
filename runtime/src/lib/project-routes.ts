@@ -2,10 +2,12 @@
  * Project management API routes — CRUD for projects and wiki generation triggers.
  *
  * Routes:
- *   GET  /projects         — list all projects
- *   POST /projects         — create project + trigger wiki generation
- *   GET  /projects/:id     — get project details with stats
- *   DELETE /projects/:id   — delete project and its wiki data
+ *   GET  /projects             — list all projects (scoped to user)
+ *   POST /projects             — create project + trigger wiki generation
+ *   GET  /projects/:id         — get project details with stats
+ *   PATCH /projects/:id        — update project
+ *   DELETE /projects/:id       — delete project and its wiki data
+ *   POST /projects/init-default — create default project for first-login
  */
 import { registerApiRoute } from '@mastra/core/server';
 import { createClient } from '@libsql/client';

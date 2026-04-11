@@ -1,9 +1,9 @@
 ---
 title: Integrations
-description: Linear, Resend, OpenRouter, and Langfuse — how Triage connects to external services
+description: Linear, Resend, Slack, OpenRouter, and Langfuse — how Triage connects to external services
 ---
 
-Triage connects to four external services. All integrations are optional at startup — the runtime validates their keys lazily (when a tool actually calls the service). This means the stack starts and runs even if no integrations are configured, with graceful degradation at each level.
+Triage connects to five external services. All integrations are optional at startup — the runtime validates their keys lazily (when a tool actually calls the service). This means the stack starts and runs even if no integrations are configured, with graceful degradation at each level.
 
 ## Integration Overview
 
@@ -11,6 +11,7 @@ Triage connects to four external services. All integrations are optional at star
 |-------------|---------|-----------|---------|
 | [Linear](/docs/integrations/linear) | Issue tracking — ticket creation, updates, webhooks | Optional | Tickets stored in `local_tickets` LibSQL table |
 | [Resend](/docs/integrations/resend) | Email notifications to assignees and reporters | Optional | Notification logged and skipped |
+| [Slack](/docs/integrations/slack) | Channel notifications with Block Kit formatting | Optional | Notification logged and skipped; email is primary channel |
 | [OpenRouter](/docs/integrations/openrouter) | LLM API router — all model calls | **Required** | 3-model fallback chains (no hard failure) |
 | [Langfuse](/docs/integrations/langfuse) | LLM observability — traces, latency, cost | Optional | Tracing silently skipped |
 
@@ -56,6 +57,14 @@ When Langfuse is configured but unreachable:
 
 `GITHUB_TOKEN` is validated in the env schema but the GitHub integration is currently a stub. It is referenced in tool definitions for future PR-aware triage context. Set it now to ensure compatibility when it becomes active.
 
-## Slack and Jira (Stubs)
+### Slack Unavailable
 
-`SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`, `SLACK_SIGNING_SECRET`, `JIRA_BASE_URL`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` are defined in `.env.example` for future use. They are not currently wired to any tool or agent.
+When `SLACK_BOT_TOKEN` is not set or when Slack API calls fail:
+- `sendSlackTicketNotification` logs `[Slack] Skipping ticket notification (SLACK_BOT_TOKEN not configured)` and returns `{ success: true }`
+- `sendSlackResolutionNotification` and `sendSlackMessage` behave the same
+- The `notify` step treats email and Slack independently — `notificationSent` is true if either channel succeeded
+- When the token is set but `SLACK_CHANNEL_ID` is missing and no explicit channel is provided, a warning is logged and the notification is skipped
+
+## Jira (Stub)
+
+`JIRA_BASE_URL`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` are defined in `.env.example` for future use. They are not currently wired to any tool or agent.

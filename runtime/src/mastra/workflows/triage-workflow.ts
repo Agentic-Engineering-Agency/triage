@@ -1,5 +1,8 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows';
 import { z } from 'zod';
+import crypto from 'crypto';
+import { createClient } from '@libsql/client';
+import { queryWiki } from '../../lib/wiki-rag';
 import { triageAgent } from '../agents/triage-agent';
 import { resolutionReviewer } from '../agents/resolution-reviewer';
 import { codeReviewAgent } from '../agents/code-review-agent';
@@ -37,6 +40,8 @@ const incidentReportSchema = z.object({
   reporterEmail: z.string().email().describe('Reporter email address'),
   /** Optional repo context (org/repo) for RAG lookup */
   repository: z.string().optional().describe('GitHub org/repo for codebase wiki lookup'),
+  /** Optional project ID (from local projects table) for evidence lookup later */
+  projectId: z.string().uuid().optional().describe('Local project ID for later GitHub evidence lookup'),
 });
 
 // ---------------------------------------------------------------------------
@@ -57,6 +62,7 @@ const intakeStep = createStep({
     enrichedDescription: z.string().describe('Combined text + image descriptions'),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
     hasImages: z.boolean(),
   }),
   execute: async ({ inputData }) => {
@@ -68,6 +74,7 @@ const intakeStep = createStep({
       enrichedDescription,
       reporterEmail: inputData.reporterEmail,
       repository: inputData.repository,
+      projectId: inputData.projectId,
       hasImages: (inputData.images?.length ?? 0) > 0,
     };
   },
@@ -90,6 +97,7 @@ const triageStep = createStep({
     enrichedDescription: z.string(),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
     hasImages: z.boolean(),
   }),
   outputSchema: z.object({
@@ -100,13 +108,17 @@ const triageStep = createStep({
     enrichedDescription: z.string(),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
-    // 1. Query wiki RAG for relevant code context
+    // 1. Query wiki RAG for relevant code context, scoped to the project
+    // when one is provided. Without the projectId filter, once more than one
+    // project is indexed the search can ground triage on the wrong codebase
+    // and produce misattributed root causes.
     let wikiResults: Awaited<ReturnType<typeof queryWiki>> | null = null;
     try {
-      wikiResults = await queryWiki(inputData.enrichedDescription);
-      console.log(`[triage] Wiki RAG returned ${wikiResults.totalResults} results`);
+      wikiResults = await queryWiki(inputData.enrichedDescription, inputData.projectId ?? undefined);
+      console.log(`[triage] Wiki RAG returned ${wikiResults.totalResults} results${inputData.projectId ? ` (scoped to project ${inputData.projectId})` : ' (global)'}`);
     } catch (err) {
       console.error('[triage] Wiki RAG query failed, continuing with heuristic triage:', err instanceof Error ? err.message : err);
     }
@@ -163,6 +175,7 @@ const triageStep = createStep({
       enrichedDescription: inputData.enrichedDescription,
       reporterEmail: inputData.reporterEmail,
       repository: inputData.repository,
+      projectId: inputData.projectId,
     };
   },
 });
@@ -188,6 +201,7 @@ const dedupStep = createStep({
     enrichedDescription: z.string(),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
   }),
   outputSchema: z.object({
     isDuplicate: z.boolean(),
@@ -202,6 +216,7 @@ const dedupStep = createStep({
     enrichedDescription: z.string(),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     let isDuplicate = false;
@@ -213,13 +228,14 @@ const dedupStep = createStep({
       // Extract keywords from the triage summary for search
       const searchQuery = inputData.enrichedDescription.slice(0, 200);
 
-      const searchResult = await searchLinearIssues.execute({
-        context: {
+      const searchResult = await searchLinearIssues.execute?.(
+        {
           query: searchQuery,
           teamId: LINEAR_CONSTANTS.TEAM_ID,
           limit: 5,
         },
-      });
+        {} as never,
+      );
 
       if (searchResult && typeof searchResult === 'object' && 'success' in searchResult && searchResult.success) {
         const data = (searchResult as { success: true; data: { issues: Array<{ id: string; identifier: string; title: string; url: string }> } }).data;
@@ -258,6 +274,7 @@ const dedupStep = createStep({
       enrichedDescription: inputData.enrichedDescription,
       reporterEmail: inputData.reporterEmail,
       repository: inputData.repository,
+      projectId: inputData.projectId,
     };
   },
 });
@@ -287,6 +304,7 @@ const ticketStep = createStep({
     enrichedDescription: z.string(),
     reporterEmail: z.string(),
     repository: z.string().optional(),
+    projectId: z.string().optional(),
   }),
   outputSchema: z.object({
     issueId: z.string().describe('Linear issue identifier'),
@@ -300,8 +318,64 @@ const ticketStep = createStep({
     assigneeName: z.string().optional().describe('Display name of the Linear assignee'),
   }),
   execute: async ({ inputData }) => {
+    // If duplicate, return existing issue info and persist a local_tickets row
+    if (inputData.isDuplicate && inputData.existingIssueId) {
+      console.log(`[ticket] Duplicate detected — returning existing issue ${inputData.existingIssueId}`);
+
+      // Also persist a local_tickets row for the matched duplicate. Older
+      // Linear issues (created before Phase 2b) otherwise have no local row,
+      // leaving the In Review evidence-check handler without reporter email
+      // or project context to bounce them back. Best-effort: a DB failure
+      // here must not block the workflow.
+      try {
+        const priorityMap: Record<string, number> = { P0: 1, P1: 1, P2: 2, P3: 3, P4: 4 };
+        const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+        const now = Date.now();
+        await db.execute({
+          sql: `INSERT INTO local_tickets
+                (id, linear_issue_id, title, description, severity, priority, status, assignee_id, project_id, reporter_email, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [
+            crypto.randomUUID(),
+            inputData.existingIssueId,
+            `[${inputData.severity}] ${inputData.enrichedDescription.slice(0, 100)}`,
+            inputData.triageSummary,
+            inputData.severity,
+            priorityMap[inputData.severity] ?? 3,
+            'duplicate_detected',
+            null,
+            inputData.projectId ?? null,
+            inputData.reporterEmail,
+            now,
+            now,
+          ],
+        });
+        console.log(`[ticket] Persisted local_tickets row for dedup-hit ${inputData.existingIssueId}`);
+      } catch (dbErr) {
+        console.error('[ticket] local_tickets insert (dedup hit) failed (non-fatal):', dbErr instanceof Error ? dbErr.message : dbErr);
+      }
+
+      return {
+        issueId: inputData.existingIssueId,
+        issueUrl: inputData.existingIssueUrl ?? '',
+        wasUpdated: true,
+        severity: inputData.severity,
+        rootCause: inputData.rootCause,
+        triageSummary: inputData.triageSummary,
+        reporterEmail: inputData.reporterEmail,
+      };
+    }
+
+    // Map P0-P4 severity to Linear priority number (1=Urgent, 2=High, 3=Medium, 4=Low)
+    const severityToPriority: Record<string, number> = { P0: 1, P1: 1, P2: 2, P3: 3, P4: 4 };
+    const priority = severityToPriority[inputData.severity] ?? 3;
+
+    // Build ticket title from description
+    const title = `[${inputData.severity}] ${inputData.enrichedDescription.slice(0, 100)}`;
+
     try {
-      const severityToPriority: Record<string, number> = { P0: 1, P1: 2, P2: 3, P3: 4, P4: 4 };
+      // Resolve state and label IDs dynamically
+      const triageStateId = await resolveStateId('TRIAGE', config.LINEAR_API_KEY);
       const severityToLabelName: Record<string, string> = {
         P0: 'CRITICAL',
         P1: 'HIGH',
@@ -309,81 +383,88 @@ const ticketStep = createStep({
         P3: 'LOW',
         P4: 'LOW',
       };
-
-      if (inputData.isDuplicate && inputData.existingIssueId) {
-        await callTool(updateLinearIssue, {
-          issueId: inputData.existingIssueId,
-          description: `[Updated] Additional context:\n${inputData.triageSummary}`,
-        });
-        const existing = await callTool(getLinearIssue, { issueId: inputData.existingIssueId }).catch(() => null);
-        const existingAssignee = (existing as Record<string, unknown>)?.data as { assignee?: { email: string; name: string } | null } | undefined;
-        return {
-          issueId: inputData.existingIssueId,
-          issueUrl: inputData.existingIssueUrl ?? '',
-          wasUpdated: true,
-          severity: inputData.severity,
-          rootCause: inputData.rootCause,
-          triageSummary: inputData.triageSummary,
-          reporterEmail: inputData.reporterEmail,
-          assigneeEmail: existingAssignee?.assignee?.email,
-          assigneeName: existingAssignee?.assignee?.name,
-        };
-      }
-
-      // Resolve state and label IDs dynamically
-      const triageStateId = await resolveStateId('TRIAGE', config.LINEAR_API_KEY);
       const severityLabelId = await resolveLabelId(severityToLabelName[inputData.severity], config.LINEAR_API_KEY);
       const bugLabelId = await resolveLabelId('BUG', config.LINEAR_API_KEY);
+      const labelIds = [severityLabelId, bugLabelId].filter(Boolean);
 
-      const createResult = await callTool(createLinearIssue, {
-        title: inputData.triageSummary.slice(0, 120),
-        description: `## Root Cause\n${inputData.rootCause}\n\n## Details\n${inputData.enrichedDescription}\n\n## Suggested Files\n${inputData.suggestedFiles.join('\n')}\n\n---\n*Reporter: ${inputData.reporterEmail}*`,
+      const result = await callTool(createLinearIssue, {
         teamId: LINEAR_CONSTANTS.TEAM_ID,
-        priority: severityToPriority[inputData.severity] ?? 3,
+        title,
+        description: `## Root Cause\n${inputData.rootCause}\n\n## Details\n${inputData.enrichedDescription}\n\n## Suggested Files\n${inputData.suggestedFiles.join('\n')}\n\n---\n*Reporter: ${inputData.reporterEmail}*`,
+        priority,
+        labelIds,
         stateId: triageStateId,
-        labelIds: [severityLabelId, bugLabelId].filter(Boolean),
       });
 
-      const created = createResult && typeof createResult === 'object' && 'data' in createResult
-        ? (createResult as Record<string, unknown>).data as { id?: string; url?: string } | undefined
+      const created = result && typeof result === 'object' && 'data' in result
+        ? (result as Record<string, unknown>).data as { id?: string; identifier?: string; url?: string } | undefined
         : undefined;
 
-      let assigneeEmail: string | undefined;
-      let assigneeName: string | undefined;
       if (created?.id) {
+        console.log(`[ticket] Created Linear issue: ${created.identifier ?? created.id}`);
+
+        // Persist a local_tickets row so the In Review webhook handler can
+        // recover the reporter email + project context later. Best-effort.
+        try {
+          const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+          const now = Date.now();
+          await db.execute({
+            sql: `INSERT INTO local_tickets
+                  (id, linear_issue_id, title, description, severity, priority, status, assignee_id, project_id, reporter_email, created_at, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [
+              crypto.randomUUID(),
+              created.id,
+              title,
+              inputData.triageSummary,
+              inputData.severity,
+              priority,
+              'in_triage',
+              null,
+              inputData.projectId ?? null,
+              inputData.reporterEmail,
+              now,
+              now,
+            ],
+          });
+          console.log(`[ticket] Persisted local_tickets row for ${created.identifier ?? created.id}`);
+        } catch (dbErr) {
+          console.error('[ticket] local_tickets insert failed (non-fatal):', dbErr instanceof Error ? dbErr.message : dbErr);
+        }
+
+        let assigneeEmail: string | undefined;
+        let assigneeName: string | undefined;
         const issueDetails = await callTool(getLinearIssue, { issueId: created.id }).catch(() => null);
         const details = (issueDetails as Record<string, unknown>)?.data as { assignee?: { email: string; name: string } | null } | undefined;
         if (details?.assignee) {
           assigneeEmail = details.assignee.email;
           assigneeName = details.assignee.name;
         }
+
+        return {
+          issueId: created.id,
+          issueUrl: created.url ?? '',
+          wasUpdated: false,
+          severity: inputData.severity,
+          rootCause: inputData.rootCause,
+          triageSummary: inputData.triageSummary,
+          reporterEmail: inputData.reporterEmail,
+          assigneeEmail,
+          assigneeName,
+        };
       }
 
-      return {
-        issueId: created?.id ?? inputData.existingIssueId,
-        issueUrl: created?.url ?? inputData.existingIssueUrl ?? '',
-        wasUpdated: false,
-        severity: inputData.severity,
-        rootCause: inputData.rootCause,
-        triageSummary: inputData.triageSummary,
-        reporterEmail: inputData.reporterEmail,
-        assigneeEmail,
-        assigneeName,
-      };
+      // Linear call returned but was unsuccessful
+      console.error('[ticket] Linear createIssue returned unsuccessful:', result);
     } catch (err) {
-      console.error('[ticket] Linear operation failed:', err instanceof Error ? err.message : err);
-      // Fallback: return placeholder so workflow can continue (graceful degradation)
-      const fallbackId = `local-${Date.now()}`;
-      return {
-        issueId: fallbackId,
-        issueUrl: '',
-        wasUpdated: false,
-        severity: inputData.severity,
-        rootCause: inputData.rootCause,
-        triageSummary: inputData.triageSummary,
-        reporterEmail: inputData.reporterEmail,
-      };
+      console.error('[ticket] Linear createIssue failed:', err instanceof Error ? err.message : err);
     }
+
+    // Linear creation failed. We cannot proceed with the notify+suspend
+    // flow because there is no Linear webhook to resume on.
+    throw new Error(
+      `[ticket] Linear createIssue failed — cannot proceed without a real Linear issue. Last error above.`,
+    );
   },
 });
 
@@ -566,7 +647,8 @@ const suspendStep = createStep({
  * **verify** – Run resolution verification after the fix is deployed.
  *
  * Checks the webhook payload status to determine if the fix was deployed
- * and produces a verification verdict.
+ * and produces a verification verdict. Uses resolution-reviewer and
+ * code-review-agent for PR analysis when available.
  */
 const verifyStep = createStep({
   id: 'verify',
@@ -670,8 +752,17 @@ const verifyStep = createStep({
       verificationNotes = `Fix verified. ${resolutionResult.text?.slice(0, 500) ?? ''}`;
     } catch (error) {
       console.error('[verify] Error:', error);
-      verdict = 'partially_resolved';
-      verificationNotes = `Verification encountered an error: ${error instanceof Error ? error.message : String(error)}`;
+      // Fall back to status-based verdict
+      if (newStatus === 'done' || newStatus === 'deployed' || newStatus === 'completed') {
+        verdict = 'resolved';
+        verificationNotes = `Issue marked as "${webhookPayload.newStatus}" at ${webhookPayload.updatedAt}. Root cause was: "${inputData.rootCause}"`;
+      } else if (newStatus === 'in review' || newStatus === 'in progress') {
+        verdict = 'partially_resolved';
+        verificationNotes = `Issue is "${webhookPayload.newStatus}" — fix is in progress but not yet verified. Root cause: "${inputData.rootCause}"`;
+      } else {
+        verdict = 'unresolved';
+        verificationNotes = `Issue status changed to "${webhookPayload.newStatus}" — does not indicate resolution. Root cause: "${inputData.rootCause}"`;
+      }
     }
 
     console.log(`[verify] Verdict: ${verdict} (status: ${webhookPayload.newStatus})`);
