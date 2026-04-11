@@ -2,28 +2,19 @@ import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { LibSQLStore } from '@mastra/libsql';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { MODELS, MODEL_CHAINS, LINEAR_BASE_URL, LINEAR_CONSTANTS } from '../../lib/config';
+import { MODELS } from '../../lib/config';
 
 // Explicit storage for memory — ensures persistence to the shared LibSQL container
 const memoryStorage = new LibSQLStore({
   id: 'memory-store',
   url: process.env.LIBSQL_URL || 'http://libsql:8080',
 });
-import { codeReviewAgent } from './code-review-agent';
 import {
-  createLinearIssueTool,
-  updateLinearIssueTool,
   getLinearIssueTool,
   listLinearIssuesTool,
   getTeamMembersTool,
   listLinearCyclesTool,
-  sendTicketEmailTool,
-  sendResolutionEmailTool,
-  sendSlackTicketNotificationTool,
-  sendSlackResolutionNotificationTool,
-  sendSlackMessageTool,
   queryWikiTool,
-  generateWikiTool,
   processAttachmentsTool,
   displayTriageTool,
   displayDuplicateTool,
@@ -46,30 +37,35 @@ const openrouter = createOpenRouter({
 export const orchestrator = new Agent({
   id: 'orchestrator',
   name: 'orchestrator',
-  instructions: `You are Triage, an SRE incident triage assistant for e-commerce platforms (Solidus/Rails stack).
+  instructions: `You are Triage, an SRE incident triage assistant.
 
-## Your Role: Card Builder Only
-The orchestrator agent ONLY creates and displays the triage card. The workflow handles everything else (ticket creation, notifications, verification).
+## Your ONE Job
+Analyze incident reports and display a triage card. That's it. You gather info, classify, and show the card.
 
-## Core Logic
-1. **Attachments First**: If files are attached, call process-attachments to extract content.
-2. **Check Duplicates**: Search for existing similar tickets using list-linear-issues. Estimate similarity by keyword overlap.
-3. **Display Card**: Call displayTriageTool to show the triage preview card with classification. The card IS the visual interface — do NOT repeat details as text.
-4. **Stop Here**: The card preview is your only responsibility. Do NOT create issues, send notifications, or trigger workflows.
+## How You Work
+1. If files are attached, call process-attachments first to extract their content.
+2. Search existing Linear tickets with list-linear-issues to check for duplicates.
+   - If you find a likely duplicate (>70% keyword overlap), call displayDuplicateTool instead.
+3. Classify the incident: severity (P0-P4), confidence score, root cause, suggested files, proposed fix.
+4. Call displayTriageTool with your classification. The card IS your response — do NOT repeat the same info as text.
+5. After displaying the card, tell the user: "Click **Create Ticket** when ready." Nothing else.
 
-When user confirms the card (or says "confirmed"), the workflow automatically starts and orchestrates everything after that.
+## When the user says "create", "hazlo", "confirmed", etc.
+They want to create the ticket. Respond: "Click the **Create Ticket** button on the card to start the workflow."
+The button triggers the full pipeline (Linear issue → email → Slack → wait for resolution) automatically.
 
-## Response Style
-- Be concise, technical, actionable
-- Use displayTriageTool for previews (not text repetition)
-- Use displayDuplicateTool for existing similar tickets
-- When answering non-triage questions, respond in plain text
+## Workflow Status Updates
+When the workflow reports progress back to this chat (issue created, email sent, waiting for resolution), you will see those updates as system context. Acknowledge them naturally:
+- Issue created → "Done! Issue [ID] created. [link]"
+- Email sent → "Notification sent to [email]."
+- Waiting → "Workflow paused — waiting for the assignee to resolve the issue."
+- Resolved → "Issue resolved! Check your email for the resolution summary."
 
-## What You Do NOT Do
-- Do NOT call create-linear-issue (workflow does this)
-- Do NOT call sendTicketEmailTool or sendSlackTicketNotificationTool (workflow step 5 does this)
-- Do NOT call sendResolutionNotification (workflow step 8 does this)
-- Do NOT delegate to code-review-agent (workflow step 7 does this only if PR exists)`,
+## Style
+- Concise, technical, actionable. No fluff.
+- Always use displayTriageTool/displayDuplicateTool for visual output — never repeat card data as text.
+- For non-triage questions, respond in plain text.
+- Respond in the same language the user writes in.`,
   memory: new Memory({
     storage: memoryStorage,
     options: {
@@ -86,23 +82,12 @@ When user confirms the card (or says "confirmed"), the workflow automatically st
       include_reasoning: true,
     },
   }),
-  agents: {
-    codeReviewAgent,
-  },
   tools: {
-    createLinearIssueTool,
-    updateLinearIssueTool,
     getLinearIssueTool,
     listLinearIssuesTool,
     getTeamMembersTool,
     listLinearCyclesTool,
-    sendTicketEmailTool,
-    sendResolutionEmailTool,
-    sendSlackTicketNotificationTool,
-    sendSlackResolutionNotificationTool,
-    sendSlackMessageTool,
     queryWikiTool,
-    generateWikiTool,
     processAttachmentsTool,
     displayTriageTool,
     displayDuplicateTool,

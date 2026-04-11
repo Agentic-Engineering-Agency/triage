@@ -1,15 +1,17 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, useNavigate } from "@tanstack/react-router"
 import { useChat } from "@ai-sdk/react"
 import { DefaultChatTransport } from "ai"
 import { useRef, useState, useCallback, useEffect, useMemo } from "react"
-import { Send, Paperclip, X, ZoomIn, FileText, FileCode, File as FileIcon, Brain, ChevronDown } from "lucide-react"
+import { Send, Paperclip, X, ZoomIn, FileText, FileCode, File as FileIcon, Brain, ChevronDown, FolderGit2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { toolComponents, DuplicatePrompt } from "@/components/tool-registry"
 import { TriageCard } from "@/components/triage-card"
 import { getDraft, saveDraft, clearDraft } from "@/lib/chat-draft"
 import { useAuth } from "@/hooks/use-auth"
 import { useConversations } from "@/hooks/use-conversations"
+import { useCurrentProjectId } from "@/components/project-selector"
 import { apiFetch } from "@/lib/api"
+import { getConfig } from "@/lib/config"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -37,6 +39,8 @@ interface Attachment {
 
 function ChatPage() {
   const { user, isLoading: authLoading } = useAuth()
+  const [currentProjectId] = useCurrentProjectId()
+  const navigate = useNavigate()
 
   // Guard: don't render until auth is verified to ensure ConversationProvider is available
   if (authLoading) {
@@ -47,15 +51,45 @@ function ChatPage() {
     )
   }
 
+  // Gate: require a project to be selected
+  if (!currentProjectId) {
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="max-w-md text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <FolderGit2 className="h-6 w-6" />
+          </div>
+          <h2 className="font-heading text-lg font-semibold mb-2">
+            Select or create a project to start triaging
+          </h2>
+          <p className="text-muted-foreground text-sm mb-4">
+            A project is required before you can use the chat.
+          </p>
+          <button
+            onClick={() => navigate({ to: "/projects" })}
+            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity"
+          >
+            <FolderGit2 className="h-4 w-4" />
+            Go to Projects
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   const { activeThreadId, updateTitle, ensureConversation, refreshConversations } = useConversations()
 
   const threadIdRef = useRef(activeThreadId)
   threadIdRef.current = activeThreadId
 
+  const projectIdRef = useRef(currentProjectId)
+  projectIdRef.current = currentProjectId
+
   const transport = useMemo(() => new DefaultChatTransport({
     api: "/chat",
     credentials: "include",
     body: () => ({
+      projectId: projectIdRef.current,
       memory: {
         thread: threadIdRef.current,
         resource: user?.id ?? "anonymous",
@@ -76,9 +110,26 @@ function ChatPage() {
     prevThreadRef.current = activeThreadId
 
     const controller = new AbortController()
-    fetch(`/memory/threads/${activeThreadId}/messages?agentId=orchestrator`, { credentials: "include", signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { messages?: Array<Record<string, unknown>> } | null) => {
+
+    // Fetch messages and persisted card states in parallel
+    const messagesP = fetch(`/memory/threads/${activeThreadId}/messages?agentId=orchestrator`, { credentials: "include", signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null)) as Promise<{ messages?: Array<Record<string, unknown>> } | null>
+
+    const cardStatesP = apiFetch<{ cardStates: Record<string, { state: string; linearUrl?: string }> }>(`/memory/card-states/${activeThreadId}`)
+      .catch(() => ({ cardStates: {} as Record<string, { state: string; linearUrl?: string }> }))
+
+    Promise.all([messagesP, cardStatesP]).then(([data, persistedCards]) => {
+        // Restore persisted card states into React state
+        if (persistedCards.cardStates && Object.keys(persistedCards.cardStates).length > 0) {
+          const restored: Record<string, { state: "submitting" | "confirmed" | "error"; errorMessage?: string }> = {}
+          for (const [key, val] of Object.entries(persistedCards.cardStates)) {
+            restored[key] = { state: val.state as "confirmed" | "error" }
+          }
+          setCardStates(restored)
+        } else {
+          setCardStates({})
+        }
+
         if (!data?.messages?.length) {
           // New thread with no messages — clear any stale UI messages
           setMessages([])
@@ -317,23 +368,137 @@ function ChatPage() {
   )
 
   // ---- Ticket actions ----
-  // When user clicks "Create Ticket" on the triage card, trigger the workflow directly
+  // When user clicks "Create Ticket" on the triage card, stream workflow progress via SSE
   const handleCreateTicket = async (triageData: Record<string, unknown>, cardKey: string) => {
     const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat'
     setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'submitting' } }))
+
+    // Helper to append an assistant message to the chat
+    const appendAssistantMessage = (text: string) => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `workflow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: 'assistant' as const,
+          parts: [{ type: 'text' as const, text }],
+          createdAt: new Date(),
+        },
+      ] as unknown as Parameters<typeof setMessages>[0])
+    }
+
     try {
-      await apiFetch('/workflows/triage-workflow/trigger', {
+      const config = await getConfig()
+      const response = await fetch(`${config.apiUrl}/workflows/triage-workflow/stream`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           description: triageData.summary ?? '',
           reporterEmail,
           repository: 'Agentic-Engineering-Agency/triage',
+          threadId: activeThreadId,
         }),
       })
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Stream request failed: ${response.status}`)
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let linearUrl = ''
+      let issueId = ''
+
+      // Step message mapping — only emit once per logical phase
+      const emittedPhases = new Set<string>()
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const event = JSON.parse(line.slice(6)) as {
+              step: string
+              status: string
+              message?: string
+              data?: Record<string, unknown>
+            }
+
+            // Map workflow steps to user-friendly progress messages
+            if ((event.step === 'intake' || event.step === 'triage') && !emittedPhases.has('analyze')) {
+              emittedPhases.add('analyze')
+              appendAssistantMessage('Analyzing incident...')
+            } else if (event.step === 'dedup' && event.status === 'completed' && !emittedPhases.has('dedup')) {
+              emittedPhases.add('dedup')
+              appendAssistantMessage('Checking for duplicates...')
+            } else if (event.step === 'ticket' && event.status === 'completed' && !emittedPhases.has('ticket')) {
+              emittedPhases.add('ticket')
+              issueId = (event.data?.issueId as string) ?? ''
+              linearUrl = (event.data?.issueUrl as string) ?? ''
+              const issueLabel = issueId || 'New issue'
+              const linkText = linearUrl ? ` — [View in Linear](${linearUrl})` : ''
+              appendAssistantMessage(`\u2713 Issue created: **${issueLabel}**${linkText}`)
+            } else if (event.step === 'notify-email' && event.status === 'completed' && !emittedPhases.has('notify-email')) {
+              emittedPhases.add('notify-email')
+              appendAssistantMessage(`\u2713 ${event.message ?? 'Email notification sent'}`)
+            } else if (event.step === 'notify-slack' && event.status === 'completed' && !emittedPhases.has('notify-slack')) {
+              emittedPhases.add('notify-slack')
+              appendAssistantMessage('\u2713 Slack notification sent')
+            } else if (event.step === 'suspend' && event.status === 'suspended' && !emittedPhases.has('suspend')) {
+              emittedPhases.add('suspend')
+              linearUrl = (event.data?.issueUrl as string) ?? linearUrl
+              issueId = (event.data?.issueId as string) ?? issueId
+              const viewLink = linearUrl ? `\n\n[View in Linear \u2192](${linearUrl})` : ''
+              appendAssistantMessage(`\u23f8 Waiting for assignee to resolve the issue...${viewLink}`)
+            } else if (event.status === 'error') {
+              appendAssistantMessage(`\u2717 Error in ${event.step}: ${event.message ?? 'Unknown error'}`)
+            }
+          } catch {
+            // Ignore malformed SSE lines
+          }
+        }
+      }
+
       setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'confirmed' } }))
+
+      // Persist card state so it survives page reload
+      const [messageId, toolIndexStr] = cardKey.split(/-(?=[^-]*$)/)
+      apiFetch('/memory/card-state', {
+        method: 'POST',
+        body: JSON.stringify({
+          threadId: activeThreadId,
+          messageId,
+          toolIndex: Number(toolIndexStr),
+          state: 'confirmed',
+          linearUrl: linearUrl || (triageData.linearUrl as string) ?? undefined,
+        }),
+      }).catch((err) => console.error('[chat] Failed to persist card state:', err))
+
+      // Persist a summary message to the conversation thread via memory init endpoint
+      const summaryParts = ['Workflow completed.']
+      if (issueId) summaryParts.push(`Issue: ${issueId}.`)
+      if (linearUrl) summaryParts.push(`URL: ${linearUrl}`)
+      summaryParts.push('Status: Waiting for resolution.')
+
+      apiFetch('/memory/save-message', {
+        method: 'POST',
+        body: JSON.stringify({
+          threadId: activeThreadId,
+          role: 'assistant',
+          content: summaryParts.join(' '),
+        }),
+      }).catch((err) => console.error('[chat] Failed to persist workflow summary:', err))
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create ticket'
       setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'error', errorMessage: message } }))
+      appendAssistantMessage(`\u2717 Ticket creation failed: ${message}`)
     }
   }
 

@@ -122,6 +122,12 @@ const tables = [
     embedding F32_BLOB(1536),
     created_at INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS linear_sync_cache (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    team_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    synced_at INTEGER NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS local_tickets (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -135,6 +141,36 @@ const tables = [
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     synced_at INTEGER
+  )`,
+  `CREATE TABLE IF NOT EXISTS workflow_runs (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL UNIQUE,
+    thread_id TEXT NOT NULL,
+    issue_id TEXT,
+    issue_url TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS card_states (
+    id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    tool_index INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'confirmed',
+    linear_url TEXT,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS llm_usage (
+    id TEXT PRIMARY KEY,
+    project_id TEXT,
+    agent_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    duration_ms INTEGER,
+    thread_id TEXT,
+    created_at INTEGER NOT NULL
   )`,
 ];
 
@@ -154,6 +190,11 @@ const indexes = [
   `CREATE INDEX IF NOT EXISTS idx_wiki_documents_project_id ON wiki_documents(project_id)`,
   `CREATE INDEX IF NOT EXISTS idx_wiki_chunks_document_id ON wiki_chunks(document_id)`,
   `CREATE INDEX IF NOT EXISTS idx_local_tickets_project_id ON local_tickets(project_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_card_states_thread_id ON card_states(thread_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_workflow_runs_run_id ON workflow_runs(run_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_workflow_runs_issue_id ON workflow_runs(issue_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_llm_usage_project_id ON llm_usage(project_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_llm_usage_created_at ON llm_usage(created_at)`,
 ];
 
 for (const sql of indexes) {

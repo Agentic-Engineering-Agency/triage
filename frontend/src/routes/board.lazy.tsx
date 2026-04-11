@@ -1,16 +1,19 @@
-import { createLazyFileRoute } from '@tanstack/react-router';
-import { useQuery } from '@tanstack/react-query';
-import { useState, useMemo } from 'react';
+import { createLazyFileRoute, useNavigate } from '@tanstack/react-router';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { apiFetch } from '@/lib/api';
+import { useCurrentProjectId } from '@/components/project-selector';
 import {
   ChevronDown,
   ChevronRight,
   Filter,
+  FolderGit2,
   LayoutGrid,
   Star,
   MoreHorizontal,
   Plus,
   Circle,
+  RefreshCw,
 } from 'lucide-react';
 
 export const Route = createLazyFileRoute('/board')({ component: BoardPage });
@@ -94,6 +97,16 @@ function getInitials(name: string): string {
 
 function getAllIssues(data: GroupedIssues): LinearIssue[] {
   return Object.values(data).flat();
+}
+
+function formatTimeAgo(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const diffMin = Math.floor(diffMs / 60_000);
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  return `${Math.floor(diffHr / 24)}d ago`;
 }
 
 // Deterministic color from string (for avatars)
@@ -391,9 +404,6 @@ function CycleSidebar({
                 <Star className={`h-3.5 w-3.5 ${starred ? 'fill-amber-400 text-amber-400' : ''}`} />
               </button>
               <div className="flex-1" />
-              <button className="text-muted-foreground hover:text-foreground">
-                <MoreHorizontal className="h-4 w-4" />
-              </button>
             </div>
           </>
         )}
@@ -404,11 +414,6 @@ function CycleSidebar({
           </div>
         )}
 
-        {/* Add link input */}
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-border/50 text-muted-foreground text-[11px] hover:border-border transition-colors cursor-pointer">
-          <Plus className="h-3 w-3" />
-          <span>Add document or link...</span>
-        </div>
       </div>
 
       {/* Progress section */}
@@ -522,17 +527,59 @@ function CycleSidebar({
 // ---------- Main Page ----------
 
 function BoardPage() {
+  const [currentProjectId] = useCurrentProjectId();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
   const { data, isLoading, error } = useQuery<GroupedIssues>({
     queryKey: ['linear-issues'],
     queryFn: () => apiFetch('/linear/issues'),
-    refetchInterval: 30_000,
+    staleTime: 300_000, // 5 minutes — data is cached on the server
+    enabled: !!currentProjectId,
   });
 
   const { data: cycleData } = useQuery<CycleData | null>({
     queryKey: ['linear-cycle-active'],
     queryFn: () => apiFetch('/linear/cycle/active'),
-    refetchInterval: 60_000,
+    staleTime: 300_000,
+    enabled: !!currentProjectId,
   });
+
+  // Sync status query
+  const { data: syncStatus } = useQuery<{ lastSyncedAt: string | null; syncInProgress: boolean }>({
+    queryKey: ['linear-sync-status'],
+    queryFn: () => apiFetch('/linear/sync/status'),
+    refetchInterval: 30_000,
+    enabled: !!currentProjectId,
+  });
+
+  // Manual sync mutation
+  const syncMutation = useMutation({
+    mutationFn: () => apiFetch('/linear/sync', { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['linear-issues'] });
+      queryClient.invalidateQueries({ queryKey: ['linear-sync-status'] });
+    },
+  });
+
+  const handleSync = useCallback(() => {
+    if (!syncMutation.isPending) {
+      syncMutation.mutate();
+    }
+  }, [syncMutation]);
+
+  // Trigger a sync on mount (session start)
+  useEffect(() => {
+    if (currentProjectId) {
+      apiFetch('/linear/sync', { method: 'POST' })
+        .then(() => {
+          queryClient.invalidateQueries({ queryKey: ['linear-issues'] });
+          queryClient.invalidateQueries({ queryKey: ['linear-sync-status'] });
+        })
+        .catch(() => { /* sync failure is non-fatal */ });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProjectId]);
 
   const issues = data ?? {};
   const allIssues = useMemo(() => getAllIssues(issues), [issues]);
@@ -572,6 +619,32 @@ function BoardPage() {
     }
     return counts;
   }, [issues]);
+
+  // Gate: require a project to be selected
+  if (!currentProjectId) {
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="max-w-md text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <FolderGit2 className="h-6 w-6" />
+          </div>
+          <h2 className="text-lg font-heading font-semibold mb-2">
+            Select or create a project to view the board
+          </h2>
+          <p className="text-muted-foreground text-sm mb-4">
+            A project is required before you can use the board.
+          </p>
+          <button
+            onClick={() => navigate({ to: '/projects' })}
+            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity"
+          >
+            <FolderGit2 className="h-4 w-4" />
+            Go to Projects
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -656,7 +729,21 @@ function BoardPage() {
           <span className="font-medium">{cycleData?.name ?? 'Board'}</span>
           <span className="ml-3 text-[12px] text-muted-foreground">{totalCount} Issues</span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          {syncStatus?.lastSyncedAt && (
+            <span className="text-[11px] text-muted-foreground">
+              Last synced: {formatTimeAgo(syncStatus.lastSyncedAt)}
+            </span>
+          )}
+          <button
+            onClick={handleSync}
+            disabled={syncMutation.isPending || syncStatus?.syncInProgress}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors disabled:opacity-50"
+            title="Resync from Linear"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${syncMutation.isPending || syncStatus?.syncInProgress ? 'animate-spin' : ''}`} />
+            Resync
+          </button>
           <button className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
             <Filter className="h-4 w-4" />
           </button>

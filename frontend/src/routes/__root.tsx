@@ -114,15 +114,9 @@ function AuthenticatedLayout() {
             Settings
           </NavLink>
 
-          <a
-            href="https://langfuse.agenticengineering.lat"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-all hover:text-foreground hover:bg-muted/30"
-          >
-            <Activity className="h-4 w-4" />
+          <NavLink to="/observability" icon={<Activity className="h-4 w-4" />}>
             Observability
-          </a>
+          </NavLink>
         </nav>
 
         {/* Divider */}

@@ -114,6 +114,15 @@ export const messages = sqliteTable('messages', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
+// ─── Linear Sync Cache ───────────────────────────────────────────
+
+export const linearSyncCache = sqliteTable('linear_sync_cache', {
+  id: text('id').primaryKey().default('default'),
+  teamId: text('team_id').notNull(),
+  data: text('data').notNull(),
+  syncedAt: integer('synced_at', { mode: 'timestamp' }).notNull(),
+});
+
 // ─── Linear Issues ────────────────────────────────────────────────
 
 export const linearIssues = sqliteTable('linear_issues', {

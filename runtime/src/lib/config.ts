@@ -30,11 +30,6 @@ const envSchema = z.object({
   SLACK_CHANNEL_ID: z.string().optional(),
   SLACK_SIGNING_SECRET: z.string().optional(),
 
-  // Langfuse (optional — observability is not required for core function)
-  LANGFUSE_PUBLIC_KEY: z.string().optional(),
-  LANGFUSE_SECRET_KEY: z.string().optional(),
-  LANGFUSE_BASEURL: z.string().optional(),
-
   // GitHub (optional — used for repo-aware triage)
   GITHUB_TOKEN: z.string().optional(),
 });

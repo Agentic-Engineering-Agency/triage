@@ -12,7 +12,6 @@ import {
   sendTicketNotification,
   sendResolutionNotification,
   commentOnGitHubPRTool,
-  getLinearIssueComments,
 } from '../tools/index';
 import { sendSlackTicketNotification, sendSlackResolutionNotification } from '../tools/slack';
 import { LINEAR_CONSTANTS, config } from '../../lib/config';
@@ -371,68 +370,20 @@ const ticketStep = createStep({
         assigneeEmail,
         assigneeName,
       };
-    }
-
-    // Map P0-P4 severity to Linear priority number (1=Urgent, 2=High, 3=Medium, 4=Low)
-    const severityToPriority: Record<string, number> = { P0: 1, P1: 1, P2: 2, P3: 3, P4: 4 };
-    const priority = severityToPriority[inputData.severity] ?? 3;
-
-    // Map severity to label IDs
-    const severityToLabel: Record<string, string> = {
-      P0: LINEAR_CONSTANTS.SEVERITY_LABELS.CRITICAL,
-      P1: LINEAR_CONSTANTS.SEVERITY_LABELS.HIGH,
-      P2: LINEAR_CONSTANTS.SEVERITY_LABELS.MEDIUM,
-      P3: LINEAR_CONSTANTS.SEVERITY_LABELS.LOW,
-      P4: LINEAR_CONSTANTS.SEVERITY_LABELS.LOW,
-    };
-    const labelIds = [severityToLabel[inputData.severity]].filter(Boolean);
-
-    // Build ticket title from description
-    const title = `[${inputData.severity}] ${inputData.enrichedDescription.slice(0, 100)}`;
-
-    try {
-      const result = await createLinearIssue.execute({
-        context: {
-          teamId: LINEAR_CONSTANTS.TEAM_ID,
-          title,
-          description: inputData.triageSummary,
-          priority,
-          labelIds,
-          stateId: LINEAR_CONSTANTS.STATES.TRIAGE,
-        },
-      });
-
-      if (result && typeof result === 'object' && 'success' in result && result.success) {
-        const data = (result as { success: true; data: { id: string; identifier: string; url: string; title: string } }).data;
-        console.log(`[ticket] Created Linear issue: ${data.identifier}`);
-        return {
-          issueId: data.id,
-          issueUrl: data.url,
-          wasUpdated: false,
-          severity: inputData.severity,
-          rootCause: inputData.rootCause,
-          triageSummary: inputData.triageSummary,
-          reporterEmail: inputData.reporterEmail,
-        };
-      }
-
-      // Linear call returned but was unsuccessful — fallback
-      console.error('[ticket] Linear createIssue returned unsuccessful:', result);
     } catch (err) {
-      console.error('[ticket] Linear createIssue failed:', err instanceof Error ? err.message : err);
+      console.error('[ticket] Linear operation failed:', err instanceof Error ? err.message : err);
+      // Fallback: return placeholder so workflow can continue (graceful degradation)
+      const fallbackId = `local-${Date.now()}`;
+      return {
+        issueId: fallbackId,
+        issueUrl: '',
+        wasUpdated: false,
+        severity: inputData.severity,
+        rootCause: inputData.rootCause,
+        triageSummary: inputData.triageSummary,
+        reporterEmail: inputData.reporterEmail,
+      };
     }
-
-    // Fallback: return placeholder so workflow can continue (graceful degradation)
-    const fallbackId = `local-${Date.now()}`;
-    return {
-      issueId: fallbackId,
-      issueUrl: `${LINEAR_BASE_URL}/issue/${fallbackId}`,
-      wasUpdated: false,
-      severity: inputData.severity,
-      rootCause: inputData.rootCause,
-      triageSummary: inputData.triageSummary,
-      reporterEmail: inputData.reporterEmail,
-    };
   },
 });
 
@@ -483,96 +434,42 @@ const notifyStep = createStep({
 
     // Send email notification via Resend
     try {
-<<<<<<< HEAD
-      await sendTicketNotification.execute({
-        context: {
-          to: inputData.reporterEmail,
-          ticketTitle: inputData.triageSummary.slice(0, 100),
-          severity,
-          priority,
-=======
-      const severityMap: Record<string, 'Critical'|'High'|'Medium'|'Low'> = { P0: 'Critical', P1: 'High', P2: 'Medium', P3: 'Low', P4: 'Low' };
-      const severity = severityMap[inputData.severity] ?? 'Medium';
       const notifyEmail = inputData.assigneeEmail ?? inputData.reporterEmail;
       const notifyName = inputData.assigneeName ?? 'Team';
 
-      // Send email notification to assignee
       await callTool(sendTicketNotification, {
         to: notifyEmail,
         ticketTitle: inputData.triageSummary.slice(0, 120),
         severity,
-        priority: ({ P0: 1, P1: 2, P2: 3, P3: 4, P4: 4 } as Record<string, number>)[inputData.severity] ?? 3,
+        priority,
         summary: inputData.triageSummary,
         linearUrl: inputData.issueUrl,
         assigneeName: notifyName,
         linearIssueId: inputData.issueId,
       });
-
-      // Send Slack notification via agent
-      try {
-        const ticketData = {
-          ticketTitle: inputData.triageSummary.slice(0, 120),
-          severity,
->>>>>>> aeed8ca (feat: integrate Slack notification agent into workflow)
-          summary: inputData.triageSummary,
-          linearUrl: inputData.issueUrl,
-          assigneeName: 'On-Call Engineer',
-          linearIssueId: inputData.issueId,
-<<<<<<< HEAD
-        },
-      });
       emailSent = true;
-      console.log(`[notify] Email notification sent to ${inputData.reporterEmail}`);
+      console.log(`[notify] Email notification sent to ${notifyEmail}`);
     } catch (err) {
       console.error('[notify] Email notification failed:', err instanceof Error ? err.message : err);
-=======
-        };
-        await slackNotificationAgent.generate(
-          `Format and send this ticket notification to Slack: ${JSON.stringify(ticketData)}`
-        );
-        console.log('[notify] Slack notification sent via agent');
-      } catch (slackErr) {
-        console.error('[notify] Slack notification failed (non-blocking):', slackErr instanceof Error ? slackErr.message : slackErr);
-      }
-
-      return {
-        notificationSent: true,
-        issueId: inputData.issueId,
-        issueUrl: inputData.issueUrl,
-        severity: inputData.severity,
-        rootCause: inputData.rootCause,
-        reporterEmail: inputData.reporterEmail,
-      };
-    } catch (error) {
-      console.error('[notify] Error:', error);
-      return {
-        notificationSent: false,
-        issueId: inputData.issueId,
-        issueUrl: inputData.issueUrl,
-        severity: inputData.severity,
-        rootCause: inputData.rootCause,
-        reporterEmail: inputData.reporterEmail,
-      };
->>>>>>> aeed8ca (feat: integrate Slack notification agent into workflow)
     }
 
-    // Send Slack notification
+    // Send Slack notification via agent
     try {
-      await sendSlackTicketNotification.execute({
-        context: {
-          ticketTitle: inputData.triageSummary.slice(0, 100),
-          severity,
-          priority,
-          summary: inputData.triageSummary,
-          linearUrl: inputData.issueUrl,
-          assigneeName: 'On-Call Engineer',
-          linearIssueId: inputData.issueId,
-        },
-      });
+      const ticketData = {
+        ticketTitle: inputData.triageSummary.slice(0, 120),
+        severity,
+        summary: inputData.triageSummary,
+        linearUrl: inputData.issueUrl,
+        assigneeName: inputData.assigneeName ?? 'On-Call Engineer',
+        linearIssueId: inputData.issueId,
+      };
+      await slackNotificationAgent.generate(
+        `Format and send this ticket notification to Slack: ${JSON.stringify(ticketData)}`
+      );
       slackSent = true;
-      console.log(`[notify] Slack notification sent`);
-    } catch (err) {
-      console.error('[notify] Slack notification failed:', err instanceof Error ? err.message : err);
+      console.log('[notify] Slack notification sent via agent');
+    } catch (slackErr) {
+      console.error('[notify] Slack notification failed (non-blocking):', slackErr instanceof Error ? slackErr.message : slackErr);
     }
 
     return {
@@ -702,45 +599,29 @@ const verifyStep = createStep({
     let verdict: 'resolved' | 'partially_resolved' | 'unresolved';
     let verificationNotes: string;
 
-      // 2. Read comments from the Linear issue
-      let commentsText = '';
-      try {
-        const commentsResult = await callTool(getLinearIssueComments, { issueId: inputData.issueId });
-        if (commentsResult && typeof commentsResult === 'object' && 'success' in commentsResult && (commentsResult as Record<string, unknown>).success) {
-          const comments = ((commentsResult as Record<string, unknown>).data as { comments?: Array<{ body: string; user?: { name: string }; createdAt: string }> })?.comments ?? [];
-          if (comments.length > 0) {
-            commentsText = comments
-              .map(c => `[${c.user?.name ?? 'Unknown'}] ${c.body}`)
-              .join('\n\n');
-          }
-        }
-      } catch (commentsErr) {
-        console.error('[verify] Failed to read comments:', commentsErr instanceof Error ? commentsErr.message : commentsErr);
-      }
+    try {
+      // 1. Fetch issue details for context
+      const issueResult = await callTool(getLinearIssue, { issueId: inputData.issueId });
+      const issueData = issueResult && typeof issueResult === 'object' && 'data' in issueResult
+        ? (issueResult as Record<string, unknown>).data as Record<string, unknown> | undefined
+        : undefined;
+      const description = String(issueData?.description ?? '');
 
-      // 3. Build activity summary from comments
-      const activitySummary = commentsText
-        ? `Activity reported by the assignee:\n${commentsText}`
-        : 'No activity comments were left on the issue.';
-
-      // 4. Check for PR links
+      // 2. Check for PR links in the issue description
       const prUrlMatch = description.match(/https:\/\/github\.com\/[^\s)]+\/pull\/\d+/);
 
       if (!prUrlMatch) {
-        // No PR — use resolution-reviewer with comments context
+        // No PR found — use resolution-reviewer for verdict
         const resolutionResult = await resolutionReviewer.generate(
-          `The Linear issue "${issueTitle}" was moved to "${inputData.webhookPayload.newStatus}".\n` +
+          `The Linear issue was moved to "${inputData.webhookPayload.newStatus}".\n` +
           `Original root cause: ${inputData.rootCause}\n` +
           `Issue description:\n${description.slice(0, 2000)}\n\n` +
-          `## Comments from the assignee\n${commentsText || 'No comments were left.'}\n\n` +
-          `Based on the issue context, status change, and activity comments, ` +
-          `provide a resolution summary: was the issue addressed? What should the reporter know?`
+          `Based on the status change, provide a resolution summary.`
         );
 
         return {
           verdict: 'resolved' as const,
-          verificationNotes: resolutionResult.text?.slice(0, 1000) ?? `Issue ${issueTitle} marked as ${inputData.webhookPayload.newStatus}.`,
-          activitySummary,
+          verificationNotes: resolutionResult.text?.slice(0, 1000) ?? `Issue marked as ${inputData.webhookPayload.newStatus}.`,
           issueId: inputData.issueId,
           issueUrl: inputData.issueUrl,
           severity: inputData.severity,
@@ -748,11 +629,11 @@ const verifyStep = createStep({
         };
       }
 
-      // 5. Run resolution-reviewer and code-review-agent in parallel
+      // 3. Run resolution-reviewer and code-review-agent in parallel
       const prUrl = prUrlMatch[0];
       const [resolutionResult, codeReviewResult] = await Promise.all([
         resolutionReviewer.generate(
-          `Verify if this fix resolves the incident.\nOriginal root cause: ${inputData.rootCause}\nPR: ${prUrl}\nIssue: ${inputData.issueUrl}\n\n## Assignee comments\n${commentsText || 'None'}`
+          `Verify if this fix resolves the incident.\nOriginal root cause: ${inputData.rootCause}\nPR: ${prUrl}\nIssue: ${inputData.issueUrl}`
         ),
         codeReviewAgent.generate(
           `Review the code changes in this PR for quality and correctness.\nPR: ${prUrl}\nContext: This PR should fix: ${inputData.rootCause}`
@@ -768,7 +649,6 @@ const verifyStep = createStep({
           prUrl,
           body: `## Automated Code Review\n\n${codeReviewResult.text}\n\n---\n*Review by Triage SRE Agent*`,
         });
-        // Resolve IN_REVIEW state dynamically
         const inReviewStateId = await resolveStateId('IN_REVIEW', config.LINEAR_API_KEY);
         if (inReviewStateId) {
           await callTool(updateLinearIssue, {
@@ -779,7 +659,6 @@ const verifyStep = createStep({
         return {
           verdict: 'partially_resolved' as const,
           verificationNotes: `Code review found issues. PR: ${prUrl}. ${resolutionResult.text?.slice(0, 500) ?? ''}`,
-          activitySummary,
           issueId: inputData.issueId,
           issueUrl: inputData.issueUrl,
           severity: inputData.severity,
@@ -793,7 +672,6 @@ const verifyStep = createStep({
       console.error('[verify] Error:', error);
       verdict = 'partially_resolved';
       verificationNotes = `Verification encountered an error: ${error instanceof Error ? error.message : String(error)}`;
-    }
     }
 
     console.log(`[verify] Verdict: ${verdict} (status: ${webhookPayload.newStatus})`);
@@ -860,7 +738,6 @@ const notifyResolutionStep = createStep({
       console.error('[notify-resolution] Email notification failed:', err instanceof Error ? err.message : err);
     }
 
-<<<<<<< HEAD
     // Send resolution Slack notification via agent
     try {
       const resolutionData = {

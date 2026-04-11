@@ -13,8 +13,10 @@ import { projectRoutes } from '../lib/project-routes';
 import { webhookRoutes } from '../lib/webhook-routes';
 import { integrationRoutes } from '../lib/integration-routes';
 import { scopedRoutes } from '../lib/scoped-routes';
+import { observabilityRoutes } from '../lib/observability-routes';
 import { config, LINEAR_CONSTANTS } from '../lib/config';
 import { getMemoryInitializationContext } from '../lib/memory-context-init';
+import { syncLinearIssues, getCachedIssues, getLastSyncedAt, isSyncInProgress, initLinearSync } from '../lib/linear-sync';
 
 // Linear client singleton — only instantiate if API key is configured
 const linearClient = config.LINEAR_API_KEY ? new LinearClient({ apiKey: config.LINEAR_API_KEY }) : null;
@@ -44,8 +46,8 @@ export const mastra = new Mastra({
         },
       }),
 
-      // GET /api/linear/issues — fetch and group by state
-      // Uses LINEAR_TEAM_ID from config (defaults to TRI team if not set)
+      // GET /api/linear/issues — serve from local cache (synced from Linear API)
+      // Falls back to a live sync if cache is empty
       {
         path: '/api/linear/issues',
         method: 'GET' as const,
@@ -55,38 +57,13 @@ export const mastra = new Mastra({
               return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
             }
 
-            const issues = await linearClient.issues({
-              filter: { team: { id: { eq: LINEAR_CONSTANTS.TEAM_ID } } },
-              first: 50,
-            });
+            // Try reading from cache first
+            let grouped = await getCachedIssues();
 
-            const grouped: Record<string, Array<Record<string, unknown>>> = {};
-            for (const issue of issues.nodes) {
-              const state = await issue.state;
-              const stateName = state?.name ?? 'Unknown';
-              if (!grouped[stateName]) grouped[stateName] = [];
-
-              const assigneeNode = await issue.assignee;
-              const labelsConnection = await issue.labels();
-              let projectName: string | null = null;
-              try {
-                const proj = await issue.project;
-                if (proj) projectName = proj.name;
-              } catch { /* project may not exist */ }
-
-              grouped[stateName].push({
-                id: issue.id,
-                identifier: issue.identifier,
-                title: issue.title,
-                priority: issue.priority,
-                estimate: issue.estimate ?? null,
-                project: projectName,
-                url: issue.url,
-                createdAt: issue.createdAt?.toISOString?.() ?? String(issue.createdAt),
-                updatedAt: issue.updatedAt?.toISOString?.() ?? String(issue.updatedAt),
-                assignee: assigneeNode ? { id: assigneeNode.id, name: assigneeNode.name } : null,
-                labels: labelsConnection.nodes.map((l: { id: string; name: string; color: string }) => ({ id: l.id, name: l.name, color: l.color })),
-              });
+            // If cache is empty, trigger a sync and wait for it
+            if (!grouped) {
+              console.log('[api/linear/issues] Cache empty, triggering sync...');
+              grouped = await syncLinearIssues();
             }
 
             return c.json({ success: true, data: grouped });
@@ -94,6 +71,48 @@ export const mastra = new Mastra({
             const message = error instanceof Error ? error.message : String(error);
             return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
           }
+        },
+      },
+
+      // POST /api/linear/sync — trigger a manual sync from Linear API
+      {
+        path: '/api/linear/sync',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            if (!linearClient) {
+              return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
+            }
+
+            const grouped = await syncLinearIssues();
+            const totalIssues = Object.values(grouped).flat().length;
+
+            return c.json({
+              success: true,
+              data: {
+                issueCount: totalIssues,
+                syncedAt: getLastSyncedAt()?.toISOString() ?? null,
+              },
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
+          }
+        },
+      },
+
+      // GET /api/linear/sync/status — check when data was last synced
+      {
+        path: '/api/linear/sync/status',
+        method: 'GET' as const,
+        handler: async (c: Context) => {
+          return c.json({
+            success: true,
+            data: {
+              lastSyncedAt: getLastSyncedAt()?.toISOString() ?? null,
+              syncInProgress: isSyncInProgress(),
+            },
+          });
         },
       },
 
@@ -355,9 +374,43 @@ export const mastra = new Mastra({
               const workflow = m.getWorkflow('triage-workflow');
               const workflowRun = await workflow.createRun({ runId: matchedRunId });
 
+              // Resume in background — after completion, save resolution message to the chat thread
               workflowRun.resume({
                 step: 'suspend',
                 resumeData: { newStatus: issueState.name ?? 'Done', updatedAt },
+              }).then(async () => {
+                console.log(`[webhook/linear] Workflow resumed and completed for run ${matchedRunId}`);
+                // Look up the threadId from workflow_runs table
+                const dbClient = (await import('@libsql/client')).createClient({
+                  url: process.env.LIBSQL_URL || 'http://libsql:8080',
+                });
+                const row = await dbClient.execute({
+                  sql: `SELECT thread_id, issue_url FROM workflow_runs WHERE run_id = ?`,
+                  args: [matchedRunId],
+                });
+                const threadId = row.rows[0]?.thread_id as string | undefined;
+                const issueUrl = (row.rows[0]?.issue_url as string) || '';
+                if (threadId) {
+                  const viewLink = issueUrl ? ` — [View in Linear](${issueUrl})` : '';
+                  const resolutionMsg = `\u2705 Issue resolved! The assignee marked it as "${issueState.name ?? 'Done'}". Resolution notifications have been sent. Check your email for details.${viewLink}`;
+                  // Save to the conversation thread
+                  const messagesStore = (await m.getStorage()?.getStore('messages')) as unknown as { add: (msg: Record<string, unknown>) => Promise<void> } | undefined;
+                  if (messagesStore?.add) {
+                    await messagesStore.add({
+                      id: `resolution-${Date.now()}`,
+                      threadId,
+                      role: 'assistant',
+                      content: { parts: [{ type: 'text', text: resolutionMsg }] },
+                      createdAt: new Date().toISOString(),
+                    });
+                  }
+                  // Update run status
+                  await dbClient.execute({
+                    sql: `UPDATE workflow_runs SET status = 'completed' WHERE run_id = ?`,
+                    args: [matchedRunId],
+                  });
+                  console.log(`[webhook/linear] Resolution message saved to thread ${threadId}`);
+                }
               }).catch((err: Error) => {
                 console.error('[webhook/linear] Resume error:', err.message);
               });
@@ -391,6 +444,143 @@ export const mastra = new Mastra({
               const message = error instanceof Error ? error.message : String(error);
               return c.json({ success: false, error: { code: 'WORKFLOW_ERROR', message } }, 500);
             }
+          };
+        },
+      },
+
+      // POST /api/workflows/triage-workflow/stream — run workflow with SSE progress streaming
+      {
+        path: '/api/workflows/triage-workflow/stream',
+        method: 'POST' as const,
+        createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
+          return async (c: Context) => {
+            // SSE headers
+            c.header('Content-Type', 'text/event-stream');
+            c.header('Cache-Control', 'no-cache');
+            c.header('Connection', 'keep-alive');
+
+            const body = await c.req.json() as Record<string, unknown>;
+            const threadId = body.threadId as string | undefined;
+
+            // Helper to format an SSE message
+            const sseMessage = (data: Record<string, unknown>) =>
+              `data: ${JSON.stringify(data)}\n\n`;
+
+            return c.body(
+              new ReadableStream({
+                async start(controller) {
+                  const encoder = new TextEncoder();
+                  const send = (data: Record<string, unknown>) => {
+                    try { controller.enqueue(encoder.encode(sseMessage(data))); } catch { /* stream closed */ }
+                  };
+
+                  try {
+                    const workflow = m.getWorkflow('triage-workflow');
+                    const run = await workflow.createRun();
+
+                    // Save runId → threadId mapping for webhook resolution notifications
+                    if (threadId) {
+                      const dbClient = (await import('@libsql/client')).createClient({
+                        url: process.env.LIBSQL_URL || 'http://libsql:8080',
+                      });
+                      await dbClient.execute({
+                        sql: `INSERT OR REPLACE INTO workflow_runs (id, run_id, thread_id, status, created_at) VALUES (?, ?, ?, 'running', ?)`,
+                        args: [run.runId, run.runId, threadId, Date.now()],
+                      }).catch((err: Error) => console.error('[workflow/stream] Failed to save run mapping:', err.message));
+                    }
+
+                    send({ step: 'intake', status: 'running', message: 'Analyzing incident...' });
+
+                    // Run the workflow — this promise resolves when it completes or suspends
+                    const result = await run.start({ inputData: body });
+
+                    // Read workflow snapshot to extract per-step results
+                    const snapshot = (result as Record<string, unknown>)?.snapshot
+                      ?? (run as unknown as Record<string, unknown>).snapshot;
+                    const snapshotObj = typeof snapshot === 'string' ? JSON.parse(snapshot) : snapshot;
+                    const ctx = (snapshotObj as Record<string, unknown>)?.context as Record<string, Record<string, unknown>> | undefined;
+
+                    // Ordered steps to report
+                    const stepDefs = [
+                      { id: 'intake', label: 'Analyzing incident...' },
+                      { id: 'triage', label: 'Classifying severity and root cause...' },
+                      { id: 'dedup', label: 'Checking for duplicates...' },
+                      { id: 'ticket', label: 'Creating Linear ticket...' },
+                      { id: 'notify', label: 'Sending notifications...' },
+                      { id: 'suspend', label: 'Waiting for assignee to resolve the issue...' },
+                    ];
+
+                    for (const def of stepDefs) {
+                      const stepCtx = ctx?.[def.id];
+                      const output = stepCtx?.output as Record<string, unknown> | undefined;
+                      const error = stepCtx?.error as string | undefined;
+
+                      if (error) {
+                        send({ step: def.id, status: 'error', message: error });
+                        break;
+                      }
+
+                      if (def.id === 'suspend') {
+                        // Suspend step — workflow paused here
+                        const ticketOutput = ctx?.['ticket']?.output as Record<string, unknown> | undefined;
+                        send({
+                          step: 'suspend',
+                          status: 'suspended',
+                          message: def.label,
+                          data: {
+                            issueId: ticketOutput?.issueId,
+                            issueUrl: ticketOutput?.issueUrl,
+                          },
+                        });
+                        break;
+                      }
+
+                      if (output) {
+                        if (def.id === 'ticket') {
+                          // Emit ticket step with key fields only
+                          send({
+                            step: 'ticket',
+                            status: 'completed',
+                            message: `Issue created: ${output.issueId ?? 'N/A'}`,
+                            data: { issueId: output.issueId, issueUrl: output.issueUrl, wasUpdated: output.wasUpdated },
+                          });
+                          // Update workflow_runs with issueId for webhook resolution lookup
+                          if (threadId && output.issueId) {
+                            const dbClient2 = (await import('@libsql/client')).createClient({
+                              url: process.env.LIBSQL_URL || 'http://libsql:8080',
+                            });
+                            dbClient2.execute({
+                              sql: `UPDATE workflow_runs SET issue_id = ?, issue_url = ?, status = 'suspended' WHERE run_id = ?`,
+                              args: [output.issueId as string, (output.issueUrl as string) ?? '', run.runId],
+                            }).catch((err: Error) => console.error('[workflow/stream] Failed to update run mapping:', err.message));
+                          }
+                        } else if (def.id === 'notify') {
+                          // Emit separate events for email and slack notifications
+                          send({ step: def.id, status: 'completed', message: def.label, data: output });
+                          if (output.notificationSent) {
+                            const reporterEmail = output.reporterEmail as string | undefined;
+                            if (reporterEmail) {
+                              send({ step: 'notify-email', status: 'completed', message: `Email sent to ${reporterEmail}` });
+                            }
+                            send({ step: 'notify-slack', status: 'completed', message: 'Slack notification sent' });
+                          }
+                        } else {
+                          send({ step: def.id, status: 'completed', message: def.label, data: output });
+                        }
+                      }
+                    }
+
+                    send({ step: 'done', status: 'done', message: 'Workflow stream complete' });
+                  } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    console.error('[workflow/stream] Error:', message);
+                    send({ step: 'error', status: 'error', message });
+                  } finally {
+                    try { controller.close(); } catch { /* already closed */ }
+                  }
+                },
+              }),
+            );
           };
         },
       },
@@ -471,6 +661,135 @@ export const mastra = new Mastra({
         },
       },
 
+      // POST /api/memory/save-message — persist an arbitrary message to a conversation thread
+      {
+        path: '/api/memory/save-message',
+        method: 'POST' as const,
+        createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
+          return async (c: Context) => {
+            try {
+              const body = await c.req.json() as { threadId?: string; role?: string; content?: string };
+
+              if (!body.threadId || !body.content) {
+                return c.json({ success: false, error: { code: 'MISSING_FIELDS', message: 'threadId and content are required' } }, 400);
+              }
+
+              const storage = m.getStorage();
+              const messagesStore = await storage?.getStore('messages');
+
+              if (!messagesStore) {
+                return c.json({ success: false, error: { code: 'NO_STORAGE', message: 'Memory storage not available' } }, 500);
+              }
+
+              await messagesStore.add(body.threadId, {
+                role: body.role ?? 'assistant',
+                content: body.content,
+                timestamp: new Date().toISOString(),
+              } as unknown as Record<string, unknown>);
+
+              return c.json({ success: true, data: { saved: true } });
+            } catch (error) {
+              console.error('[memory/save-message] Error:', error instanceof Error ? error.message : String(error));
+              return c.json({ success: false, error: { code: 'SAVE_ERROR', message: 'Failed to save message' } }, 500);
+            }
+          };
+        },
+      },
+
+      // POST /api/memory/card-state — persist triage card confirmed/error state
+      {
+        path: '/api/memory/card-state',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            const body = await c.req.json() as {
+              threadId?: string;
+              messageId?: string;
+              toolIndex?: number;
+              state?: string;
+              linearUrl?: string;
+            };
+
+            if (!body.threadId || !body.messageId || body.toolIndex === undefined || !body.state) {
+              return c.json({ success: false, error: { code: 'MISSING_FIELDS', message: 'threadId, messageId, toolIndex, and state are required' } }, 400);
+            }
+
+            const { createClient } = await import('@libsql/client');
+            const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+
+            // Ensure card_states table exists (idempotent)
+            await db.execute(`CREATE TABLE IF NOT EXISTS card_states (
+              id TEXT PRIMARY KEY,
+              thread_id TEXT NOT NULL,
+              message_id TEXT NOT NULL,
+              tool_index INTEGER NOT NULL,
+              state TEXT NOT NULL DEFAULT 'confirmed',
+              linear_url TEXT,
+              created_at INTEGER NOT NULL
+            )`);
+
+            const id = `${body.threadId}-${body.messageId}-${body.toolIndex}`;
+            await db.execute({
+              sql: `INSERT OR REPLACE INTO card_states (id, thread_id, message_id, tool_index, state, linear_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              args: [id, body.threadId, body.messageId, body.toolIndex, body.state, body.linearUrl ?? null, Date.now()],
+            });
+
+            console.log(`[memory/card-state] Saved state=${body.state} for ${id}`);
+            return c.json({ success: true, data: { saved: true } });
+          } catch (error) {
+            console.error('[memory/card-state] Error:', error instanceof Error ? error.message : String(error));
+            return c.json({ success: false, error: { code: 'CARD_STATE_ERROR', message: 'Failed to save card state' } }, 500);
+          }
+        },
+      },
+
+      // GET /api/memory/card-states/:threadId — fetch persisted card states for a thread
+      {
+        path: '/api/memory/card-states/:threadId',
+        method: 'GET' as const,
+        handler: async (c: Context) => {
+          try {
+            const threadId = c.req.param('threadId');
+            if (!threadId) {
+              return c.json({ success: true, data: { cardStates: {} } });
+            }
+
+            const { createClient } = await import('@libsql/client');
+            const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+
+            // Ensure table exists (in case it hasn't been created yet)
+            await db.execute(`CREATE TABLE IF NOT EXISTS card_states (
+              id TEXT PRIMARY KEY,
+              thread_id TEXT NOT NULL,
+              message_id TEXT NOT NULL,
+              tool_index INTEGER NOT NULL,
+              state TEXT NOT NULL DEFAULT 'confirmed',
+              linear_url TEXT,
+              created_at INTEGER NOT NULL
+            )`);
+
+            const result = await db.execute({
+              sql: 'SELECT message_id, tool_index, state, linear_url FROM card_states WHERE thread_id = ?',
+              args: [threadId],
+            });
+
+            const cardStates: Record<string, { state: string; linearUrl?: string }> = {};
+            for (const row of result.rows) {
+              const key = `${row.message_id}-${row.tool_index}`;
+              cardStates[key] = {
+                state: row.state as string,
+                ...(row.linear_url ? { linearUrl: row.linear_url as string } : {}),
+              };
+            }
+
+            return c.json({ success: true, data: { cardStates } });
+          } catch (error) {
+            console.error('[memory/card-states] Error:', error instanceof Error ? error.message : String(error));
+            return c.json({ success: true, data: { cardStates: {} } });
+          }
+        },
+      },
+
       // POST /api/test/slack — test Slack message sending
       {
         path: '/api/test/slack',
@@ -541,6 +860,10 @@ export const mastra = new Mastra({
       ...integrationRoutes,
       ...scopedRoutes,
       ...webhookRoutes,
+      ...observabilityRoutes,
     ],
   },
 });
+
+// Initialize Linear sync on startup (non-blocking)
+initLinearSync();

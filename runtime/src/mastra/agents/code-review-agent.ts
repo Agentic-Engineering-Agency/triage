@@ -126,7 +126,7 @@ Always produce structured output matching the codeReviewOutputSchema:
 - Mastra tools use \`createTool()\` — verify inputSchema/outputSchema match execute()
 - All API responses use \`{ success: true, data } | { success: false, error: { code, message } }\`
 - Database naming: snake_case tables/columns, camelCase in TypeScript
-- Error paths should always log to Langfuse for observability`,
+- Error paths should always log for observability`,
   model: openrouter(MODELS.mercury),
   tools: {
     queryWikiTool,

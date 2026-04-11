@@ -17,6 +17,8 @@ services:
       - app
 
   frontend:
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
     environment:
       FRONTEND_MODE: dev
 

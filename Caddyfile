@@ -31,6 +31,13 @@
 
     # --- Backend API routes (all proxied to runtime:4111) ---
 
+    # Observability API (registerApiRoute serves without /api prefix)
+    @obs_api path /api/observability/*
+    handle @obs_api {
+        uri replace /api/observability /observability
+        reverse_proxy runtime:4111
+    }
+
     # Mastra built-in API (/api/agents/*, /api/workflows/*, etc.)
     handle /api/* {
         reverse_proxy runtime:4111 {
@@ -84,6 +91,6 @@
 
     # Frontend: static or dev mode
     handle {
-        import static-frontend
+        import dev-frontend
     }
 }
