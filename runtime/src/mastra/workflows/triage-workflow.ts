@@ -51,6 +51,10 @@ const incidentReportSchema = z.object({
   assigneeEmail: z.string().optional().describe('Email of the assignee for notification'),
   /** Optional display name of the assignee */
   assigneeName: z.string().optional().describe('Display name of the assignee'),
+  /** Optional Linear cycle ID (resolved by orchestrator from user-provided deadline) */
+  cycleId: z.string().optional().describe('Linear cycle ID to assign the issue to'),
+  /** Optional deadline the user mentioned, ISO date (YYYY-MM-DD) */
+  dueDate: z.string().optional().describe('Deadline extracted from user message'),
 });
 
 // ---------------------------------------------------------------------------
@@ -76,6 +80,8 @@ const intakeStep = createStep({
     assigneeId: z.string().optional(),
     assigneeEmail: z.string().optional(),
     assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     // Image processing is handled by the orchestrator agent via chat.
@@ -91,6 +97,8 @@ const intakeStep = createStep({
       assigneeId: inputData.assigneeId,
       assigneeEmail: inputData.assigneeEmail,
       assigneeName: inputData.assigneeName,
+      cycleId: inputData.cycleId,
+      dueDate: inputData.dueDate,
     };
   },
 });
@@ -117,6 +125,8 @@ const triageStep = createStep({
     assigneeId: z.string().optional(),
     assigneeEmail: z.string().optional(),
     assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   outputSchema: z.object({
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']).describe('Incident severity'),
@@ -130,6 +140,8 @@ const triageStep = createStep({
     assigneeId: z.string().optional(),
     assigneeEmail: z.string().optional(),
     assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     // 1. Query wiki RAG for relevant code context, scoped to the project
@@ -200,6 +212,8 @@ const triageStep = createStep({
       assigneeId: inputData.assigneeId,
       assigneeEmail: inputData.assigneeEmail,
       assigneeName: inputData.assigneeName,
+      cycleId: inputData.cycleId,
+      dueDate: inputData.dueDate,
     };
   },
 });
@@ -229,6 +243,8 @@ const dedupStep = createStep({
     assigneeId: z.string().optional(),
     assigneeEmail: z.string().optional(),
     assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   outputSchema: z.object({
     isDuplicate: z.boolean(),
@@ -247,6 +263,8 @@ const dedupStep = createStep({
     assigneeId: z.string().optional(),
     assigneeEmail: z.string().optional(),
     assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     let isDuplicate = false;
@@ -308,6 +326,8 @@ const dedupStep = createStep({
       assigneeId: inputData.assigneeId,
       assigneeEmail: inputData.assigneeEmail,
       assigneeName: inputData.assigneeName,
+      cycleId: inputData.cycleId,
+      dueDate: inputData.dueDate,
     };
   },
 });
@@ -341,6 +361,8 @@ const ticketStep = createStep({
     assigneeId: z.string().optional(),
     assigneeEmail: z.string().optional(),
     assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   outputSchema: z.object({
     issueId: z.string().describe('Linear issue identifier'),
@@ -420,17 +442,21 @@ const ticketStep = createStep({
       const todoStateId = (await resolveStateId('TODO', config.LINEAR_API_KEY))
         || (await resolveStateId('BACKLOG', config.LINEAR_API_KEY));
 
-      // Resolve the currently-active Linear cycle so new issues land on
-      // the sprint automatically instead of sitting cycle-less.
-      let activeCycleId: string | undefined;
-      try {
-        const cyclesResult = await callTool(listLinearCycles, {});
-        const cyclesData = (cyclesResult as { data?: { cycles?: Array<{ id: string }> } } | undefined)?.data;
-        if (cyclesData?.cycles && cyclesData.cycles.length > 0) {
-          activeCycleId = cyclesData.cycles[0].id;
+      // Cycle resolution: prefer the cycleId the orchestrator chose (based on
+      // the user-provided deadline). Fall back to the currently-active cycle
+      // only when the orchestrator didn't pick one — preserves the legacy
+      // behaviour for flows that don't propagate a cycleId.
+      let activeCycleId: string | undefined = inputData.cycleId;
+      if (!activeCycleId) {
+        try {
+          const cyclesResult = await callTool(listLinearCycles, {});
+          const cyclesData = (cyclesResult as { data?: { cycles?: Array<{ id: string }> } } | undefined)?.data;
+          if (cyclesData?.cycles && cyclesData.cycles.length > 0) {
+            activeCycleId = cyclesData.cycles[0].id;
+          }
+        } catch (cycleErr) {
+          console.warn('[ticket] Failed to resolve active cycle:', cycleErr instanceof Error ? cycleErr.message : cycleErr);
         }
-      } catch (cycleErr) {
-        console.warn('[ticket] Failed to resolve active cycle:', cycleErr instanceof Error ? cycleErr.message : cycleErr);
       }
 
       const severityToLabelName: Record<string, string> = {
@@ -556,6 +582,8 @@ const notifyStep = createStep({
     reporterEmail: z.string(),
     assigneeEmail: z.string().optional(),
     assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   outputSchema: z.object({
     notificationSent: z.boolean(),

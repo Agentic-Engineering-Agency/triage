@@ -401,6 +401,8 @@ function ChatPage() {
           assigneeId: triageData.assigneeId,
           assigneeEmail: triageData.assigneeEmail,
           assigneeName: triageData.assigneeName,
+          cycleId: triageData.cycleId,
+          dueDate: triageData.dueDate,
         }),
       })
 
