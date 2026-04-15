@@ -42,41 +42,6 @@ function ChatPage() {
   const [currentProjectId] = useCurrentProjectId()
   const navigate = useNavigate()
 
-  // Guard: don't render until auth is verified to ensure ConversationProvider is available
-  if (authLoading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-      </div>
-    )
-  }
-
-  // Gate: require a project to be selected
-  if (!currentProjectId) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="max-w-md text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            <FolderGit2 className="h-6 w-6" />
-          </div>
-          <h2 className="font-heading text-lg font-semibold mb-2">
-            Select or create a project to start triaging
-          </h2>
-          <p className="text-muted-foreground text-sm mb-4">
-            A project is required before you can use the chat.
-          </p>
-          <button
-            onClick={() => navigate({ to: "/projects" })}
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity"
-          >
-            <FolderGit2 className="h-4 w-4" />
-            Go to Projects
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   const { activeThreadId, updateTitle, ensureConversation, refreshConversations } = useConversations()
 
   const threadIdRef = useRef(activeThreadId)
@@ -555,6 +520,41 @@ function ChatPage() {
   }
 
   const hasMessages = messages.length > 0
+
+  // Guard: don't render chat UI until auth is verified.
+  if (authLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    )
+  }
+
+  // Gate: require a project to be selected.
+  if (!currentProjectId) {
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="max-w-md text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <FolderGit2 className="h-6 w-6" />
+          </div>
+          <h2 className="font-heading text-lg font-semibold mb-2">
+            Select or create a project to start triaging
+          </h2>
+          <p className="text-muted-foreground text-sm mb-4">
+            A project is required before you can use the chat.
+          </p>
+          <button
+            onClick={() => navigate({ to: "/projects" })}
+            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity"
+          >
+            <FolderGit2 className="h-4 w-4" />
+            Go to Projects
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-full flex-col">
