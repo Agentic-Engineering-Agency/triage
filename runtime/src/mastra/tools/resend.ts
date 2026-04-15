@@ -18,6 +18,10 @@ function safeHref(url: string): string {
 // PII masking helper – prevents logging raw email addresses
 const maskEmail = (e: string) => e.replace(/^(.)(.*)(@.*)$/, '$1***$3');
 
+// Email subjects cannot contain CR/LF — Resend (and SMTP) rejects them.
+// Also cap length so markdown-heavy titles don't break the send.
+const sanitizeSubject = (s: string) => (s || '').replace(/[\r\n]+/g, ' ').slice(0, 200).trim();
+
 // Module-level singleton (REQ-6)
 // Only instantiate if API key is configured (M5)
 const resendClient = config.RESEND_API_KEY ? new Resend(config.RESEND_API_KEY) : null;
@@ -39,7 +43,7 @@ export const sendTicketNotification = createTool({
       const { data, error } = await resendClient.emails.send({
         from: `Triage <${FROM_EMAIL}>`,
         to: ctx.to as string,
-        subject: `[${ctx.severity}] New Triage Ticket: ${ctx.ticketTitle}`,
+        subject: sanitizeSubject(`[${ctx.severity}] New Triage Ticket: ${ctx.ticketTitle}`),
         html: renderTicketNotificationHtml(ctx as { assigneeName: string; ticketTitle: string; severity: string; priority: number; summary: string; linearUrl: string }),
         headers: {
           'Idempotency-Key': `ticket-notify/${ctx.linearIssueId}`,
@@ -75,7 +79,7 @@ export const sendResolutionNotification = createTool({
       const { data, error } = await resendClient.emails.send({
         from: `Triage <${FROM_EMAIL}>`,
         to,
-        subject: `[Resolved] ${ctx.originalTitle}`,
+        subject: sanitizeSubject(`[Resolved] ${ctx.originalTitle}`),
         html: renderResolutionNotificationHtml(ctx as { originalTitle: string; resolutionSummary: string; prLink?: string; linearUrl: string }),
         headers: {
           'Idempotency-Key': `resolution-notify/${ctx.linearIssueId}`,

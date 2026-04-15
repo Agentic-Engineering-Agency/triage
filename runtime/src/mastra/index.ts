@@ -1168,6 +1168,35 @@ export const mastra = new Mastra({
         },
       },
 
+      // POST /api/test/email — test Resend email sending
+      {
+        path: '/api/test/email',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            const body = await c.req.json() as { to?: string; subject?: string };
+            const to = body.to || 'ricardo.soberanisr@gmail.com';
+            const result = await sendTicketNotification.execute?.(
+              {
+                to,
+                ticketTitle: body.subject || 'Triage email test',
+                severity: 'Low',
+                priority: 3,
+                summary: 'This is a direct test of the Resend email tool from /api/test/email.',
+                linearUrl: 'https://linear.app/agentic-engineering-agency',
+                assigneeName: 'Test Recipient',
+                linearIssueId: `test-${Date.now()}`,
+              } as never,
+              {} as never,
+            );
+            return c.json({ success: true, to, result });
+          } catch (error) {
+            console.error('[test/email] Error:', error);
+            return c.json({ success: false, error: error instanceof Error ? error.message : String(error) }, 500);
+          }
+        },
+      },
+
       // POST /api/test/slack — test Slack message sending
       {
         path: '/api/test/slack',
