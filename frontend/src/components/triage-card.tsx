@@ -16,6 +16,9 @@ export interface TriageCardProps {
   fileReferences?: Array<{ filePath: string; lineNumber?: number }>
   proposedFix?: string
   linearUrl?: string
+  assigneeId?: string
+  assigneeName?: string
+  assigneeEmail?: string
   errorMessage?: string
   isSubmitting?: boolean
   onCreateTicket?: () => void
@@ -32,6 +35,7 @@ export function TriageCard({
   fileReferences,
   proposedFix,
   linearUrl,
+  assigneeName,
   errorMessage,
   isSubmitting = false,
   onCreateTicket,
@@ -82,6 +86,13 @@ export function TriageCard({
         {severity && <SeverityBadge severity={severity} />}
         {normalizedConfidence !== undefined && <ConfidenceScore score={normalizedConfidence} />}
       </div>
+
+      {/* Assignee */}
+      {assigneeName && (
+        <div className="mb-2 text-xs text-muted-foreground">
+          Assigned to: <span className="font-medium text-foreground">{assigneeName}</span>
+        </div>
+      )}
 
       {/* Title */}
       {title && (

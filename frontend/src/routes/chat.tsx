@@ -102,11 +102,14 @@ function ChatPage() {
     id: activeThreadId,
   })
 
-  // Load messages from server when switching threads
+  // Load messages from server when mounting or switching threads.
+  // We intentionally refetch on every mount (not just when activeThreadId
+  // changes) so navigating away (/board) and back restores the conversation
+  // instead of showing an empty chat until the user manually switches.
+  // Streaming protection: skip refetch only while useChat is actively streaming.
   const prevThreadRef = useRef<string | null>(null)
   useEffect(() => {
-    // Skip if we're staying on the same thread (avoids re-fetch during streaming)
-    if (prevThreadRef.current === activeThreadId) return
+    if (prevThreadRef.current === activeThreadId && (status === 'streaming' || status === 'submitted')) return
     prevThreadRef.current = activeThreadId
 
     const controller = new AbortController()
@@ -183,6 +186,7 @@ function ChatPage() {
       })
       .catch(() => { /* thread doesn't exist yet — that's fine */ })
     return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeThreadId, setMessages])
 
   // Auto-title from first user message + refresh thread list after response completes
@@ -369,22 +373,54 @@ function ChatPage() {
 
   // ---- Ticket actions ----
   // When user clicks "Create Ticket" on the triage card, stream workflow progress via SSE
+  // into a single WorkflowTimeline component that updates in-place as events arrive.
   const handleCreateTicket = async (triageData: Record<string, unknown>, cardKey: string) => {
     const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat'
     setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'submitting' } }))
 
-    // Helper to append an assistant message to the chat
-    const appendAssistantMessage = (text: string) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `workflow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          role: 'assistant' as const,
-          parts: [{ type: 'text' as const, text }],
-          createdAt: new Date(),
-        },
-      ] as unknown as Parameters<typeof setMessages>[0])
+    // Steps accumulated in one assistant message rendered as WorkflowTimeline.
+    type TStep = { step: string; status: 'running' | 'completed' | 'error' | 'suspended'; message?: string; data?: Record<string, unknown> }
+    const timelineMessageId = `workflow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const collectedSteps: TStep[] = []
+    let active = true
+
+    const renderTimeline = () => {
+      const timelinePart = {
+        type: 'tool-workflowTimeline',
+        state: 'output-available',
+        output: { steps: [...collectedSteps], active },
+      }
+      setMessages((prev) => {
+        const arr = prev as unknown as Array<{ id: string; role: string; parts: unknown[]; createdAt?: Date }>
+        const existingIdx = arr.findIndex((m) => m.id === timelineMessageId)
+        if (existingIdx >= 0) {
+          const next = arr.slice()
+          next[existingIdx] = { ...arr[existingIdx], parts: [timelinePart] }
+          return next as unknown as Parameters<typeof setMessages>[0]
+        }
+        return [
+          ...arr,
+          { id: timelineMessageId, role: 'assistant', parts: [timelinePart], createdAt: new Date() },
+        ] as unknown as Parameters<typeof setMessages>[0]
+      })
     }
+
+    const addStep = (s: TStep) => {
+      // Replace any 'running' entry for the same stepId instead of duplicating
+      const existingRunningIdx = collectedSteps.findIndex((x) => x.step === s.step && x.status === 'running')
+      if (existingRunningIdx >= 0 && s.status !== 'running') {
+        collectedSteps[existingRunningIdx] = s
+      } else if (!collectedSteps.some((x) => x.step === s.step && x.status === s.status)) {
+        collectedSteps.push(s)
+      }
+      renderTimeline()
+    }
+
+    // Seed with an initial running step so the timeline shows immediately
+    addStep({ step: 'intake', status: 'running', message: 'Analyzing incident' })
+
+    let linearUrl = ''
+    let issueId = ''
 
     try {
       const config = await getConfig()
@@ -397,6 +433,9 @@ function ChatPage() {
           reporterEmail,
           repository: 'Agentic-Engineering-Agency/triage',
           threadId: activeThreadId,
+          assigneeId: triageData.assigneeId,
+          assigneeEmail: triageData.assigneeEmail,
+          assigneeName: triageData.assigneeName,
         }),
       })
 
@@ -407,11 +446,6 @@ function ChatPage() {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      let linearUrl = ''
-      let issueId = ''
-
-      // Step message mapping — only emit once per logical phase
-      const emittedPhases = new Set<string>()
 
       while (true) {
         const { done, value } = await reader.read()
@@ -424,47 +458,24 @@ function ChatPage() {
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
           try {
-            const event = JSON.parse(line.slice(6)) as {
-              step: string
-              status: string
-              message?: string
-              data?: Record<string, unknown>
-            }
+            const event = JSON.parse(line.slice(6)) as TStep & { step: string }
 
-            // Map workflow steps to user-friendly progress messages
-            if ((event.step === 'intake' || event.step === 'triage') && !emittedPhases.has('analyze')) {
-              emittedPhases.add('analyze')
-              appendAssistantMessage('Analyzing incident...')
-            } else if (event.step === 'dedup' && event.status === 'completed' && !emittedPhases.has('dedup')) {
-              emittedPhases.add('dedup')
-              appendAssistantMessage('Checking for duplicates...')
-            } else if (event.step === 'ticket' && event.status === 'completed' && !emittedPhases.has('ticket')) {
-              emittedPhases.add('ticket')
-              issueId = (event.data?.issueId as string) ?? ''
-              linearUrl = (event.data?.issueUrl as string) ?? ''
-              const issueLabel = issueId || 'New issue'
-              const linkText = linearUrl ? ` — [View in Linear](${linearUrl})` : ''
-              appendAssistantMessage(`\u2713 Issue created: **${issueLabel}**${linkText}`)
-            } else if (event.step === 'notify-email' && event.status === 'completed' && !emittedPhases.has('notify-email')) {
-              emittedPhases.add('notify-email')
-              appendAssistantMessage(`\u2713 ${event.message ?? 'Email notification sent'}`)
-            } else if (event.step === 'notify-slack' && event.status === 'completed' && !emittedPhases.has('notify-slack')) {
-              emittedPhases.add('notify-slack')
-              appendAssistantMessage('\u2713 Slack notification sent')
-            } else if (event.step === 'suspend' && event.status === 'suspended' && !emittedPhases.has('suspend')) {
-              emittedPhases.add('suspend')
-              linearUrl = (event.data?.issueUrl as string) ?? linearUrl
-              issueId = (event.data?.issueId as string) ?? issueId
-              const viewLink = linearUrl ? `\n\n[View in Linear \u2192](${linearUrl})` : ''
-              appendAssistantMessage(`\u23f8 Waiting for assignee to resolve the issue...${viewLink}`)
-            } else if (event.status === 'error') {
-              appendAssistantMessage(`\u2717 Error in ${event.step}: ${event.message ?? 'Unknown error'}`)
-            }
+            // Track ticket metadata for persistence & link rendering
+            if (event.data?.issueId) issueId = event.data.issueId as string
+            if (event.data?.issueUrl) linearUrl = event.data.issueUrl as string
+
+            // Skip the "done" synthetic event — it just marks stream end
+            if (event.step === 'done') continue
+
+            addStep(event)
           } catch {
             // Ignore malformed SSE lines
           }
         }
       }
+
+      active = false
+      renderTimeline()
 
       setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'confirmed' } }))
 
@@ -477,28 +488,35 @@ function ChatPage() {
           messageId,
           toolIndex: Number(toolIndexStr),
           state: 'confirmed',
-          linearUrl: linearUrl || (triageData.linearUrl as string) ?? undefined,
+          linearUrl: linearUrl || ((triageData.linearUrl as string) ?? undefined),
         }),
       }).catch((err) => console.error('[chat] Failed to persist card state:', err))
 
-      // Persist a summary message to the conversation thread via memory init endpoint
-      const summaryParts = ['Workflow completed.']
-      if (issueId) summaryParts.push(`Issue: ${issueId}.`)
-      if (linearUrl) summaryParts.push(`URL: ${linearUrl}`)
-      summaryParts.push('Status: Waiting for resolution.')
-
+      // Persist the WorkflowTimeline tool invocation so reloads reconstruct
+      // the same visual. Stored as a tool-invocation part in the Mastra
+      // message store; the thread-load effect converts it back to tool-*.
       apiFetch('/memory/save-message', {
         method: 'POST',
         body: JSON.stringify({
           threadId: activeThreadId,
           role: 'assistant',
-          content: summaryParts.join(' '),
+          parts: [
+            {
+              type: 'tool-invocation',
+              toolInvocation: {
+                toolName: 'workflowTimeline',
+                state: 'result',
+                result: { steps: collectedSteps, active: false },
+              },
+            },
+          ],
         }),
-      }).catch((err) => console.error('[chat] Failed to persist workflow summary:', err))
+      }).catch((err) => console.error('[chat] Failed to persist workflow timeline:', err))
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create ticket'
+      active = false
+      addStep({ step: 'error', status: 'error', message })
       setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'error', errorMessage: message } }))
-      appendAssistantMessage(`\u2717 Ticket creation failed: ${message}`)
     }
   }
 

@@ -1,5 +1,6 @@
 import type { ComponentType } from "react"
 import { TriageCard } from "./triage-card"
+import { WorkflowTimeline } from "./workflow-timeline"
 
 /**
  * Static tool → component map for Mastra generative UI.
@@ -17,6 +18,7 @@ export const toolComponents: Record<string, ComponentType<any>> = {
   // Mastra uses the object key (not the tool's `id`) as the tool name in the stream.
   displayTriageTool: TriageCard,
   displayDuplicateTool: DuplicatePrompt,
+  workflowTimeline: WorkflowTimeline,
 }
 
 /**
