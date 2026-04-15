@@ -138,43 +138,13 @@ export const config = {
 
 export const LINEAR_BASE_URL = 'https://linear.app/agentic-engineering-agency';
 
+/**
+ * Linear configuration — only the team ID is static (from env).
+ * States, labels, and members are resolved dynamically via Linear API
+ * using the helpers in src/lib/linear-constants.ts and
+ * src/mastra/tools/linear-state-resolver.ts. This lets the system work
+ * with any Linear workspace without hardcoded IDs.
+ */
 export const LINEAR_CONSTANTS = {
-  // TRI team (agentic-engineering-agency) — used as fallback only
-  // Override with LINEAR_TEAM_ID env var
   TEAM_ID: config.LINEAR_TEAM_ID,
-
-  // DEPRECATED: Use getLinearStates() instead
-  STATES: {
-    TRIAGE: 'bce0cec5-80ba-407e-aa98-248c380ce966',
-    BACKLOG: 'a1b56fee-32c7-4c7d-b6cd-318380590a53',
-    TODO: '52a97f3f-481b-40f9-8187-237dc282a47d',
-    IN_PROGRESS: '3aba585d-1838-4a0e-9651-c4a2c9032dfb',
-    IN_REVIEW: '3425bc21-40e6-457d-9b8a-4386e0509d79',
-    DONE: '40c24407-f5d5-4489-b5ac-ef964373d954',
-    DUPLICATE: '9f2f1444-3a4b-46db-858c-f643a6d5aecb',
-    CANCELED: '6ff262e3-d016-4777-836b-1357cd535f73',
-  },
-
-  // DEPRECATED: Use getLinearLabels() instead
-  SEVERITY_LABELS: {
-    CRITICAL: '47785580-5256-4240-9f11-cde67e06a4c3',
-    HIGH: 'eef1c6e5-f3c0-4b0f-9702-189748af77f0',
-    MEDIUM: 'bd743933-cd2f-4b05-a832-669aefb2af77',
-    LOW: 'f4350e9c-96ea-44f8-931a-4af52aacf3ed',
-  },
-
-  // DEPRECATED: Use getLinearLabels() instead
-  CATEGORY_LABELS: {
-    BUG: 'f599da19-8743-4569-a110-a666dc588811',
-    FEATURE: '909d247a-40f4-48d5-a104-c238cc2ab45b',
-    IMPROVEMENT: '50756390-d166-4b79-a740-ceefb203751f',
-  },
-
-  // DEPRECATED: Use getLinearTeamMembers() instead
-  MEMBERS: {
-    FERNANDO: { linearId: '90b16a9c-3f47-49fc-8d98-abf3aa6ecb13', slackId: process.env.SLACK_USER_FERNANDO || '', name: 'Fernando' },
-    KOKI: { linearId: 'c3f725e4-aa51-45d3-af43-d29a87077226', slackId: process.env.SLACK_USER_KOKI || '', name: 'Koki' },
-    CHENKO: { linearId: '7d177d95-4df7-4dff-a3df-710f49eba663', slackId: process.env.SLACK_USER_CHENKO || '', name: 'Chenko' },
-    LALO: { linearId: 'b17c4757-ceef-4a13-b3c4-fc2ae09d50de', slackId: process.env.SLACK_USER_LALO || '', name: 'Lalo' },
-  },
 } as const;

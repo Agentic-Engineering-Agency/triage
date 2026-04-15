@@ -12,6 +12,7 @@ import {
   updateLinearIssue,
   getLinearIssue,
   searchLinearIssues,
+  listLinearCycles,
   sendTicketNotification,
   sendResolutionNotification,
   commentOnGitHubPRTool,
@@ -24,7 +25,9 @@ import { resolveStateId, resolveLabelId } from '../tools/linear-state-resolver';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function callTool(tool: { execute?: (...args: any[]) => Promise<any> }, input: Record<string, unknown>): Promise<any> {
   if (!tool.execute) return null;
-  return tool.execute({ context: input }, {});
+  // Mastra v1.4+ passes tool args at top level, not wrapped in { context }.
+  // Pass both shapes for compatibility — tools read from whichever is present.
+  return tool.execute({ ...input, context: input }, {});
 }
 
 // ---------------------------------------------------------------------------
@@ -42,6 +45,12 @@ const incidentReportSchema = z.object({
   repository: z.string().optional().describe('GitHub org/repo for codebase wiki lookup'),
   /** Optional project ID (from local projects table) for evidence lookup later */
   projectId: z.string().uuid().optional().describe('Local project ID for later GitHub evidence lookup'),
+  /** Optional Linear user ID of the assignee (resolved by orchestrator) */
+  assigneeId: z.string().optional().describe('Linear user ID of the assignee'),
+  /** Optional email of the assignee for notification */
+  assigneeEmail: z.string().optional().describe('Email of the assignee for notification'),
+  /** Optional display name of the assignee */
+  assigneeName: z.string().optional().describe('Display name of the assignee'),
 });
 
 // ---------------------------------------------------------------------------
@@ -64,6 +73,9 @@ const intakeStep = createStep({
     repository: z.string().optional(),
     projectId: z.string().optional(),
     hasImages: z.boolean(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     // Image processing is handled by the orchestrator agent via chat.
@@ -76,6 +88,9 @@ const intakeStep = createStep({
       repository: inputData.repository,
       projectId: inputData.projectId,
       hasImages: (inputData.images?.length ?? 0) > 0,
+      assigneeId: inputData.assigneeId,
+      assigneeEmail: inputData.assigneeEmail,
+      assigneeName: inputData.assigneeName,
     };
   },
 });
@@ -99,6 +114,9 @@ const triageStep = createStep({
     repository: z.string().optional(),
     projectId: z.string().optional(),
     hasImages: z.boolean(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
   }),
   outputSchema: z.object({
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']).describe('Incident severity'),
@@ -109,6 +127,9 @@ const triageStep = createStep({
     reporterEmail: z.string(),
     repository: z.string().optional(),
     projectId: z.string().optional(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     // 1. Query wiki RAG for relevant code context, scoped to the project
@@ -176,6 +197,9 @@ const triageStep = createStep({
       reporterEmail: inputData.reporterEmail,
       repository: inputData.repository,
       projectId: inputData.projectId,
+      assigneeId: inputData.assigneeId,
+      assigneeEmail: inputData.assigneeEmail,
+      assigneeName: inputData.assigneeName,
     };
   },
 });
@@ -202,6 +226,9 @@ const dedupStep = createStep({
     reporterEmail: z.string(),
     repository: z.string().optional(),
     projectId: z.string().optional(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
   }),
   outputSchema: z.object({
     isDuplicate: z.boolean(),
@@ -217,6 +244,9 @@ const dedupStep = createStep({
     reporterEmail: z.string(),
     repository: z.string().optional(),
     projectId: z.string().optional(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     let isDuplicate = false;
@@ -275,6 +305,9 @@ const dedupStep = createStep({
       reporterEmail: inputData.reporterEmail,
       repository: inputData.repository,
       projectId: inputData.projectId,
+      assigneeId: inputData.assigneeId,
+      assigneeEmail: inputData.assigneeEmail,
+      assigneeName: inputData.assigneeName,
     };
   },
 });
@@ -305,6 +338,9 @@ const ticketStep = createStep({
     reporterEmail: z.string(),
     repository: z.string().optional(),
     projectId: z.string().optional(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
   }),
   outputSchema: z.object({
     issueId: z.string().describe('Linear issue identifier'),
@@ -343,7 +379,7 @@ const ticketStep = createStep({
             inputData.severity,
             priorityMap[inputData.severity] ?? 3,
             'duplicate_detected',
-            null,
+            inputData.assigneeId ?? null,
             inputData.projectId ?? null,
             inputData.reporterEmail,
             now,
@@ -363,6 +399,8 @@ const ticketStep = createStep({
         rootCause: inputData.rootCause,
         triageSummary: inputData.triageSummary,
         reporterEmail: inputData.reporterEmail,
+        assigneeEmail: inputData.assigneeEmail,
+        assigneeName: inputData.assigneeName,
       };
     }
 
@@ -374,8 +412,27 @@ const ticketStep = createStep({
     const title = `[${inputData.severity}] ${inputData.enrichedDescription.slice(0, 100)}`;
 
     try {
-      // Resolve state and label IDs dynamically
-      const triageStateId = await resolveStateId('TRIAGE', config.LINEAR_API_KEY);
+      // Resolve state + label IDs dynamically from the current team.
+      // IMPORTANT: Linear defaults new issues to the "Triage" state when
+      // stateId is not specified, which hides them from the main board. We
+      // must explicitly target "Todo" (or "Backlog" as fallback) so issues
+      // show up on the board immediately for the assignee.
+      const todoStateId = (await resolveStateId('TODO', config.LINEAR_API_KEY))
+        || (await resolveStateId('BACKLOG', config.LINEAR_API_KEY));
+
+      // Resolve the currently-active Linear cycle so new issues land on
+      // the sprint automatically instead of sitting cycle-less.
+      let activeCycleId: string | undefined;
+      try {
+        const cyclesResult = await callTool(listLinearCycles, {});
+        const cyclesData = (cyclesResult as { data?: { cycles?: Array<{ id: string }> } } | undefined)?.data;
+        if (cyclesData?.cycles && cyclesData.cycles.length > 0) {
+          activeCycleId = cyclesData.cycles[0].id;
+        }
+      } catch (cycleErr) {
+        console.warn('[ticket] Failed to resolve active cycle:', cycleErr instanceof Error ? cycleErr.message : cycleErr);
+      }
+
       const severityToLabelName: Record<string, string> = {
         P0: 'CRITICAL',
         P1: 'HIGH',
@@ -387,14 +444,18 @@ const ticketStep = createStep({
       const bugLabelId = await resolveLabelId('BUG', config.LINEAR_API_KEY);
       const labelIds = [severityLabelId, bugLabelId].filter(Boolean);
 
-      const result = await callTool(createLinearIssue, {
+      const createArgs: Record<string, unknown> = {
         teamId: LINEAR_CONSTANTS.TEAM_ID,
         title,
         description: `## Root Cause\n${inputData.rootCause}\n\n## Details\n${inputData.enrichedDescription}\n\n## Suggested Files\n${inputData.suggestedFiles.join('\n')}\n\n---\n*Reporter: ${inputData.reporterEmail}*`,
         priority,
-        labelIds,
-        stateId: triageStateId,
-      });
+      };
+      if (labelIds.length > 0) createArgs.labelIds = labelIds;
+      if (inputData.assigneeId) createArgs.assigneeId = inputData.assigneeId;
+      if (todoStateId) createArgs.stateId = todoStateId;
+      if (activeCycleId) createArgs.cycleId = activeCycleId;
+
+      const result = await callTool(createLinearIssue, createArgs);
 
       const created = result && typeof result === 'object' && 'data' in result
         ? (result as Record<string, unknown>).data as { id?: string; identifier?: string; url?: string } | undefined
@@ -420,7 +481,7 @@ const ticketStep = createStep({
               inputData.severity,
               priority,
               'in_triage',
-              null,
+              inputData.assigneeId ?? null,
               inputData.projectId ?? null,
               inputData.reporterEmail,
               now,
@@ -432,13 +493,18 @@ const ticketStep = createStep({
           console.error('[ticket] local_tickets insert failed (non-fatal):', dbErr instanceof Error ? dbErr.message : dbErr);
         }
 
-        let assigneeEmail: string | undefined;
-        let assigneeName: string | undefined;
-        const issueDetails = await callTool(getLinearIssue, { issueId: created.id }).catch(() => null);
-        const details = (issueDetails as Record<string, unknown>)?.data as { assignee?: { email: string; name: string } | null } | undefined;
-        if (details?.assignee) {
-          assigneeEmail = details.assignee.email;
-          assigneeName = details.assignee.name;
+        // Prefer assignee info propagated from the orchestrator's triage card.
+        // If missing, fall back to fetching it from the just-created Linear issue
+        // (e.g., when an auto-assignment rule kicked in).
+        let assigneeEmail: string | undefined = inputData.assigneeEmail;
+        let assigneeName: string | undefined = inputData.assigneeName;
+        if (!assigneeEmail || !assigneeName) {
+          const issueDetails = await callTool(getLinearIssue, { issueId: created.id }).catch(() => null);
+          const details = (issueDetails as Record<string, unknown>)?.data as { assignee?: { email: string; name: string } | null } | undefined;
+          if (details?.assignee) {
+            assigneeEmail = assigneeEmail ?? details.assignee.email;
+            assigneeName = assigneeName ?? details.assignee.name;
+          }
         }
 
         return {
@@ -498,6 +564,7 @@ const notifyStep = createStep({
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     rootCause: z.string(),
     reporterEmail: z.string(),
+    notifiedEmail: z.string().optional().describe('Actual email recipient (assignee or reporter fallback)'),
   }),
   execute: async ({ inputData }) => {
     // Map P0-P4 to notification severity labels
@@ -512,13 +579,15 @@ const notifyStep = createStep({
 
     let emailSent = false;
     let slackSent = false;
+    const notifyEmail = inputData.assigneeEmail ?? inputData.reporterEmail;
 
-    // Send email notification via Resend
+    // Send email notification via Resend.
+    // Target the ASSIGNEE (the person who must resolve the issue). Falls back
+    // to reporterEmail only if no assignee was resolved (degraded mode).
     try {
-      const notifyEmail = inputData.assigneeEmail ?? inputData.reporterEmail;
       const notifyName = inputData.assigneeName ?? 'Team';
 
-      await callTool(sendTicketNotification, {
+      const emailResult = await callTool(sendTicketNotification, {
         to: notifyEmail,
         ticketTitle: inputData.triageSummary.slice(0, 120),
         severity,
@@ -528,8 +597,15 @@ const notifyStep = createStep({
         assigneeName: notifyName,
         linearIssueId: inputData.issueId,
       });
-      emailSent = true;
-      console.log(`[notify] Email notification sent to ${notifyEmail}`);
+      // Validate the tool reported success — Resend may have rejected the
+      // subject or rate-limited, in which case we must not claim "sent".
+      if (emailResult && typeof emailResult === 'object' && 'success' in emailResult && (emailResult as { success: boolean }).success) {
+        emailSent = true;
+        console.log(`[notify] Email notification sent to ${notifyEmail}`);
+      } else {
+        const errMsg = (emailResult as { error?: string })?.error ?? 'unknown error';
+        console.error(`[notify] Email send returned failure for ${notifyEmail}: ${errMsg}`);
+      }
     } catch (err) {
       console.error('[notify] Email notification failed:', err instanceof Error ? err.message : err);
     }
@@ -560,6 +636,7 @@ const notifyStep = createStep({
       severity: inputData.severity,
       rootCause: inputData.rootCause,
       reporterEmail: inputData.reporterEmail,
+      notifiedEmail: emailSent ? notifyEmail : undefined,
     };
   },
 });

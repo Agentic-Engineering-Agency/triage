@@ -7,16 +7,19 @@ import { z } from 'zod';
 // Priority: 0 (No priority) through 4 (Low)
 export const prioritySchema = z.number().int().min(0).max(4);
 
-// Create a new Linear ticket
+// Create a new Linear ticket.
+// Note: IDs use z.string().optional() instead of .uuid().optional() because
+// Mastra's tool-arg deserialization sometimes passes empty strings, which
+// .uuid() rejects. The handler validates/falls-back as needed.
 export const ticketCreateSchema = z.object({
   title: z.string().min(1),
   description: z.string(),
-  teamId: z.string().uuid().optional().describe('Linear team ID — defaults to configured team if omitted'),
+  teamId: z.string().optional().describe('Linear team ID — defaults to configured team if omitted'),
   priority: prioritySchema,
-  assigneeId: z.string().uuid().optional(),
-  labelIds: z.array(z.string().uuid()).optional(),
-  stateId: z.string().uuid().optional(),
-  cycleId: z.string().uuid().optional().describe('Linear cycle ID to assign the issue to'),
+  assigneeId: z.string().optional(),
+  labelIds: z.array(z.string()).optional(),
+  stateId: z.string().optional(),
+  cycleId: z.string().optional().describe('Linear cycle ID to assign the issue to'),
 });
 
 // Response from creating a ticket
@@ -33,15 +36,16 @@ export const ticketResponseSchema = z.object({
   error: z.string().optional(),
 });
 
-// Update an existing ticket
+// Update an existing ticket.
+// IDs are z.string().optional() (not .uuid()) for Mastra arg-passing compatibility.
 export const ticketUpdateSchema = z.object({
   issueId: z.string().min(1),
   title: z.string().max(500).optional(),
   description: z.string().max(50000).optional(),
   priority: prioritySchema.optional(),
-  assigneeId: z.string().uuid().optional(),
-  stateId: z.string().uuid().optional(),
-  labelIds: z.array(z.string().uuid()).optional(),
+  assigneeId: z.string().optional(),
+  stateId: z.string().optional(),
+  labelIds: z.array(z.string()).optional(),
 });
 
 // Full issue detail response
@@ -80,12 +84,13 @@ export const issueDetailSchema = z.object({
   error: z.string().optional(),
 });
 
-// Search query parameters
+// Search query parameters.
+// IDs are z.string().optional() (not .uuid()) for Mastra arg-passing compatibility.
 export const issueSearchSchema = z.object({
   query: z.string().min(1).max(1000).optional(),
-  teamId: z.string().uuid().optional(),
+  teamId: z.string().optional(),
   status: z.string().optional(),
-  assigneeId: z.string().uuid().optional(),
+  assigneeId: z.string().optional(),
   labels: z.array(z.string()).optional(),
   priority: prioritySchema.optional(),
   limit: z.number().min(1).max(50).default(10),
@@ -160,8 +165,12 @@ export const resolutionNotificationSchema = z.object({
 // Input schema for fetching a single issue by ID
 export const issueIdInputSchema = z.object({ issueId: z.string().min(1) });
 
-// Input schema for fetching team members by team ID
-export const teamIdInputSchema = z.object({ teamId: z.string().uuid().optional().describe('Linear team ID — defaults to configured team if omitted') });
+// Input schema for fetching team members by team ID.
+// teamId is optional and accepts empty string (Mastra sometimes sends "").
+// The handler falls back to LINEAR_CONSTANTS.TEAM_ID when not provided.
+export const teamIdInputSchema = z.object({
+  teamId: z.string().optional().describe('Linear team ID — defaults to configured team if omitted'),
+});
 
 // Email send response
 export const emailResponseSchema = z.object({

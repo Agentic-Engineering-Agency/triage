@@ -18,16 +18,21 @@ function getDb() {
   return createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
 }
 
+// Extract session token from Better Auth cookie.
+// Cookie format: "better-auth.session_token=<token>.<signature>" (URL-encoded)
+function extractSessionToken(cookieHeader: string | undefined): string | null {
+  if (!cookieHeader) return null;
+  const match = cookieHeader.match(/better-auth\.session_token=([^;]+)/);
+  if (!match) return null;
+  const raw = decodeURIComponent(match[1]);
+  // Strip the .signature suffix — we only need the token itself
+  const dotIndex = raw.indexOf('.');
+  return dotIndex >= 0 ? raw.slice(0, dotIndex) : raw;
+}
+
 // Helper to get userId from session cookie
 function getUserIdFromCookies(cookieHeader: string | undefined): string | null {
-  if (!cookieHeader) return null;
-  const sessionMatch = cookieHeader.match(/session=([^;]+)/);
-  if (!sessionMatch) return null;
-
-  const sessionToken = sessionMatch[1];
-  // In a real app, you'd decrypt and validate this session token
-  // For now, we'll look it up in the auth_session table
-  return sessionToken;
+  return extractSessionToken(cookieHeader);
 }
 
 // ---------- POST /projects/init-default ----------
@@ -37,7 +42,7 @@ export const initDefaultProjectRoute = registerApiRoute('/projects/init-default'
   handler: async (c) => {
     try {
       const cookieHeader = c.req.header('cookie');
-      const sessionToken = cookieHeader?.match(/session=([^;]+)/)?.[1];
+      const sessionToken = extractSessionToken(cookieHeader);
 
       if (!sessionToken) {
         return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No session found' } }, 401);
@@ -118,7 +123,7 @@ export const listProjectsRoute = registerApiRoute('/projects', {
   handler: async (c) => {
     try {
       const cookieHeader = c.req.header('cookie');
-      const sessionToken = cookieHeader?.match(/session=([^;]+)/)?.[1];
+      const sessionToken = extractSessionToken(cookieHeader);
 
       if (!sessionToken) {
         return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No session found' } }, 401);
@@ -171,7 +176,7 @@ export const createProjectRoute = registerApiRoute('/projects', {
   handler: async (c) => {
     try {
       const cookieHeader = c.req.header('cookie');
-      const sessionToken = cookieHeader?.match(/session=([^;]+)/)?.[1];
+      const sessionToken = extractSessionToken(cookieHeader);
 
       if (!sessionToken) {
         return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No session found' } }, 401);
@@ -243,7 +248,7 @@ export const getProjectRoute = registerApiRoute('/projects/:id', {
   handler: async (c) => {
     try {
       const cookieHeader = c.req.header('cookie');
-      const sessionToken = cookieHeader?.match(/session=([^;]+)/)?.[1];
+      const sessionToken = extractSessionToken(cookieHeader);
 
       if (!sessionToken) {
         return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No session found' } }, 401);
@@ -302,7 +307,7 @@ export const updateProjectRoute = registerApiRoute('/projects/:id', {
   handler: async (c) => {
     try {
       const cookieHeader = c.req.header('cookie');
-      const sessionToken = cookieHeader?.match(/session=([^;]+)/)?.[1];
+      const sessionToken = extractSessionToken(cookieHeader);
 
       if (!sessionToken) {
         return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No session found' } }, 401);
@@ -380,7 +385,7 @@ export const deleteProjectRoute = registerApiRoute('/projects/:id', {
   handler: async (c) => {
     try {
       const cookieHeader = c.req.header('cookie');
-      const sessionToken = cookieHeader?.match(/session=([^;]+)/)?.[1];
+      const sessionToken = extractSessionToken(cookieHeader);
 
       if (!sessionToken) {
         return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No session found' } }, 401);

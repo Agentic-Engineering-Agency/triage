@@ -132,7 +132,7 @@ const tables = [
   )`,
   `CREATE TABLE IF NOT EXISTS local_tickets (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
     linear_issue_id TEXT,
     title TEXT NOT NULL,
     description TEXT NOT NULL,
@@ -218,6 +218,13 @@ const alters = [
   // are no preexisting rows to worry about.
   { table: 'local_tickets', col: 'project_id', sql: `ALTER TABLE local_tickets ADD COLUMN project_id TEXT REFERENCES projects(id)` },
   { table: 'wiki_documents', col: 'project_id', sql: `ALTER TABLE wiki_documents ADD COLUMN project_id TEXT` },
+  // projects table columns added on the upgrade path
+  { table: 'projects', col: 'status', sql: `ALTER TABLE projects ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'` },
+  { table: 'projects', col: 'wiki_error', sql: `ALTER TABLE projects ADD COLUMN wiki_error TEXT` },
+  { table: 'projects', col: 'documents_count', sql: `ALTER TABLE projects ADD COLUMN documents_count INTEGER DEFAULT 0` },
+  { table: 'projects', col: 'chunks_count', sql: `ALTER TABLE projects ADD COLUMN chunks_count INTEGER DEFAULT 0` },
+  { table: 'projects', col: 'repo_url', sql: `ALTER TABLE projects ADD COLUMN repo_url TEXT` },
+  { table: 'projects', col: 'repo_default_branch', sql: `ALTER TABLE projects ADD COLUMN repo_default_branch TEXT DEFAULT 'main'` },
 ];
 for (const a of alters) {
   try {

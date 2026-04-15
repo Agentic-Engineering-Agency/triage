@@ -66,6 +66,10 @@ export const displayTriageInputSchema = z.object({
     .optional()
     .describe('URL of the created Linear ticket'),
 
+  assigneeId: z.string().optional().describe('Linear user ID of the assignee'),
+  assigneeName: z.string().optional().describe('Display name of the assignee (e.g., "Koki")'),
+  assigneeEmail: z.string().optional().describe('Email of the assignee for notification'),
+
   /** Error message to display when state is error */
   errorMessage: z
     .string()
