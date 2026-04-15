@@ -35,14 +35,31 @@
 
     # --- Backend API routes (all proxied to runtime:4111) ---
 
-    # Observability API (registerApiRoute serves without /api prefix)
+    # registerApiRoute routes are served WITHOUT the /api prefix by Mastra.
+    # Strip /api from the path for these specific route groups before proxying.
+
+    # Observability API
     @obs_api path /api/observability/*
     handle @obs_api {
         uri replace /api/observability /observability
         reverse_proxy runtime:4111
     }
 
-    # Mastra built-in API (/api/agents/*, /api/workflows/*, etc.)
+    # Projects API (project-routes.ts uses registerApiRoute('/projects/...'))
+    @projects_api_prefixed path /api/projects /api/projects/*
+    handle @projects_api_prefixed {
+        uri replace /api/projects /projects
+        reverse_proxy runtime:4111
+    }
+
+    # Integrations API
+    @integrations_api path /api/integrations/*
+    handle @integrations_api {
+        uri replace /api/integrations /integrations
+        reverse_proxy runtime:4111
+    }
+
+    # Mastra built-in API + inline routes (/api/agents/*, /api/workflows/*, /api/linear/*, /api/memory/*, etc.)
     handle /api/* {
         reverse_proxy runtime:4111 {
             flush_interval -1
