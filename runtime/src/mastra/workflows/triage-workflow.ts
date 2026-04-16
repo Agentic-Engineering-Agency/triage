@@ -917,9 +917,12 @@ const notifyResolutionStep = createStep({
     let emailSent = false;
     let slackSent = false;
 
-    // Send resolution email via Resend
+    // Send resolution email via Resend.
+    // sendResolutionNotification returns { success: false, error } on failure
+    // instead of throwing — so check result.success explicitly. Otherwise a
+    // silently-failed send would still log "Resolution email sent".
     try {
-      await sendResolutionNotification.execute({
+      const emailResult = await sendResolutionNotification.execute({
         context: {
           to: inputData.reporterEmail,
           originalTitle: ticketTitle,
@@ -928,13 +931,21 @@ const notifyResolutionStep = createStep({
           linearIssueId: inputData.issueId,
         },
       });
-      emailSent = true;
-      console.log(`[notify-resolution] Resolution email sent to ${inputData.reporterEmail}`);
+      if (emailResult && typeof emailResult === 'object' && 'success' in emailResult && (emailResult as { success: boolean }).success) {
+        emailSent = true;
+        console.log(`[notify-resolution] Resolution email sent to ${inputData.reporterEmail}`);
+      } else {
+        const errMsg = (emailResult as { error?: string })?.error ?? 'unknown error';
+        console.error(`[notify-resolution] Email send returned failure for ${inputData.reporterEmail}: ${errMsg}`);
+      }
     } catch (err) {
       console.error('[notify-resolution] Email notification failed:', err instanceof Error ? err.message : err);
     }
 
-    // Send resolution Slack notification via agent
+    // Send resolution Slack notification via agent.
+    // agent.generate() can throw on LLM errors (credit limit, timeout) — we
+    // keep catching those — but there's no boolean to verify delivery, so we
+    // rely solely on the absence of an exception.
     try {
       const resolutionData = {
         ticketTitle: `Issue ${inputData.issueId}`,

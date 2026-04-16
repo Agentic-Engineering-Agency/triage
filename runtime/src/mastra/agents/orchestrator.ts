@@ -88,12 +88,16 @@ When the workflow reports progress back to this chat (issue created, email sent,
       generateTitle: true,
     },
   }),
+  // Mercury-2 stays primary (fast text, cheap). include_reasoning was
+  // making OpenRouter reserve the model's full 50k-token output capacity,
+  // which triggered spurious 402s on keys with lower balances. Dropped it —
+  // mercury-2 is a text-only model, reasoning tokens don't help classification.
+  // max_tokens bumped to 4000 to leave room for tool-call JSON payloads.
   model: openrouter(MODELS.mercury, {
     extraBody: {
       models: [MODELS.mercury, MODELS.orchestratorFallback1],
       route: 'fallback',
-      max_tokens: 2000,
-      include_reasoning: true,
+      max_tokens: 4000,
     },
   }),
   tools: {
