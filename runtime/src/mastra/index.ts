@@ -22,6 +22,7 @@ import { getLinearIssueComments, updateLinearIssue } from './tools/linear';
 import { findGitHubEvidenceForIssueTool } from './tools/github';
 import { sendTicketNotification, sendResolutionNotification } from './tools/resend';
 import { sendSlackTicketNotification, sendSlackResolutionNotification } from './tools/slack';
+import { logUsage } from '../lib/usage-logger';
 
 // Paranoid anchored regex for parsing a repository URL. Bounded lengths,
 // single-pass, no catastrophic backtracking.
@@ -55,7 +56,41 @@ export const mastra = new Mastra({
   }),
   server: {
     apiRoutes: [
-      chatRoute({ path: '/chat', agent: 'orchestrator', sendReasoning: true, defaultOptions: { savePerStep: true } }),
+      // Track per-call llm usage for the orchestrator. Mastra calls onFinish
+      // once per stream completion with the AI SDK event (usage, response,
+      // runId). We intentionally skip threadId/projectId here because the
+      // chatRoute helper doesn't surface request-body context inside onFinish
+      // — populating those would require replacing chatRoute with a custom
+      // handler. Aggregations by model/agent still work without them.
+      chatRoute({
+        path: '/chat',
+        agent: 'orchestrator',
+        sendReasoning: true,
+        defaultOptions: {
+          savePerStep: true,
+          onFinish: (async (event: Record<string, unknown>) => {
+            try {
+              const usage = (event.usage ?? {}) as Record<string, unknown>;
+              const response = (event.response ?? {}) as Record<string, unknown>;
+              // AI SDK v4 uses promptTokens/completionTokens; v5 uses
+              // inputTokens/outputTokens. Read both, prefer the v5 shape.
+              const inputTokens = Number((usage.inputTokens as number | undefined) ?? (usage.promptTokens as number | undefined) ?? 0);
+              const outputTokens = Number((usage.outputTokens as number | undefined) ?? (usage.completionTokens as number | undefined) ?? 0);
+              const model = (response.modelId as string | undefined)
+                ?? ((event.model as Record<string, unknown> | undefined)?.modelId as string | undefined)
+                ?? 'unknown';
+              await logUsage({
+                agentId: 'orchestrator',
+                model,
+                inputTokens,
+                outputTokens,
+              });
+            } catch (err) {
+              console.error('[chat/onFinish] usage logging failed:', err instanceof Error ? err.message : err);
+            }
+          }) as never,
+        },
+      }),
       registerApiRoute('/health', {
         method: 'GET',
         handler: async (c) => c.json({ status: 'ok', service: 'triage-runtime' }),

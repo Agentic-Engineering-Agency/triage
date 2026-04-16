@@ -59,7 +59,7 @@ interface WorkflowRun {
   issueId: string
   issueUrl: string
   status: string
-  createdAt: string
+  createdAt: string | number
 }
 
 interface AgentUsage {
@@ -85,24 +85,27 @@ interface PricingData {
 
 // ---------- Helpers ----------
 
-function formatCost(value: number): string {
-  return `$${value.toFixed(4)}`
+function formatCost(value: number | null | undefined): string {
+  return `$${(value ?? 0).toFixed(4)}`
 }
 
-function formatCostShort(value: number): string {
-  if (value >= 1) return `$${value.toFixed(2)}`
-  return `$${value.toFixed(4)}`
+function formatCostShort(value: number | null | undefined): string {
+  const v = value ?? 0
+  if (v >= 1) return `$${v.toFixed(2)}`
+  return `$${v.toFixed(4)}`
 }
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return n.toLocaleString()
+function formatTokens(n: number | null | undefined): string {
+  const val = n ?? 0
+  if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`
+  if (val >= 1_000) return `${(val / 1_000).toFixed(1)}K`
+  return val.toLocaleString()
 }
 
-function formatDuration(ms: number): string {
-  if (ms < 1_000) return `${Math.round(ms)}ms`
-  return `${(ms / 1_000).toFixed(1)}s`
+function formatDuration(ms: number | null | undefined): string {
+  const val = ms ?? 0
+  if (val < 1_000) return `${Math.round(val)}ms`
+  return `${(val / 1_000).toFixed(1)}s`
 }
 
 function formatTimeAgo(iso: string): string {

@@ -55,7 +55,13 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
  * @returns Cost in USD (0 for unknown/free models)
  */
 export function calculateCost(model: string, inputTokens: number, outputTokens: number): number {
-  const pricing = MODEL_PRICING[model];
+  // Try exact match first, then fall back to prefix match (handles version-pinned IDs
+  // like "inception/mercury-2-20260304" matching "inception/mercury-2").
+  let pricing = MODEL_PRICING[model];
+  if (!pricing) {
+    const prefixMatch = Object.keys(MODEL_PRICING).find((key) => model.startsWith(key));
+    pricing = prefixMatch ? MODEL_PRICING[prefixMatch] : undefined;
+  }
   if (!pricing) {
     // Unknown model — log a warning and return 0
     console.warn(`[provider-pricing] No pricing found for model: ${model}`);
@@ -86,5 +92,8 @@ export function getModelDisplayName(modelId: string): string {
     'openrouter/auto': 'OpenRouter Auto',
   };
 
-  return displayNames[modelId] ?? modelId;
+  if (displayNames[modelId]) return displayNames[modelId];
+  // Prefix match for version-pinned IDs (e.g. "inception/mercury-2-20260304")
+  const prefixKey = Object.keys(displayNames).find((key) => modelId.startsWith(key));
+  return prefixKey ? displayNames[prefixKey] : modelId;
 }

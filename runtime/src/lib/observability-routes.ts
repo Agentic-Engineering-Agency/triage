@@ -152,6 +152,8 @@ export const costsRoute = registerApiRoute('/observability/costs', {
       const byModel = await db.execute({
         sql: `SELECT model,
                      SUM(cost_usd) as total_cost,
+                     SUM(input_tokens) as total_input,
+                     SUM(output_tokens) as total_output,
                      COUNT(*) as call_count
               FROM llm_usage ${whereClause}
               GROUP BY model
@@ -191,7 +193,9 @@ export const costsRoute = registerApiRoute('/observability/costs', {
           byModel: byModel.rows.map((row) => ({
             model: row.model as string,
             displayName: getModelDisplayName(row.model as string),
-            totalCost: Number(row.total_cost),
+            totalCost: Number(row.total_cost ?? 0),
+            totalInput: Number(row.total_input ?? 0),
+            totalOutput: Number(row.total_output ?? 0),
             callCount: Number(row.call_count),
           })),
           byDay: byDay.rows.map((row) => ({
@@ -201,11 +205,11 @@ export const costsRoute = registerApiRoute('/observability/costs', {
             totalOutputTokens: Number(row.total_output_tokens),
             callCount: Number(row.call_count),
           })),
-          total: {
-            cost: Number(totalRow?.total_cost ?? 0),
-            inputTokens: Number(totalRow?.total_input_tokens ?? 0),
-            outputTokens: Number(totalRow?.total_output_tokens ?? 0),
-            callCount: Number(totalRow?.call_count ?? 0),
+          totals: {
+            totalCost: Number(totalRow?.total_cost ?? 0),
+            totalInput: Number(totalRow?.total_input_tokens ?? 0),
+            totalOutput: Number(totalRow?.total_output_tokens ?? 0),
+            totalCalls: Number(totalRow?.call_count ?? 0),
           },
           period,
           projectId: projectId ?? null,
@@ -231,7 +235,7 @@ export const pricingRoute = registerApiRoute('/observability/pricing', {
       isFree: prices.inputPer1M === 0 && prices.outputPer1M === 0,
     }));
 
-    return c.json({ success: true, data: { pricing } });
+    return c.json({ success: true, data: { models: pricing } });
   },
 });
 
