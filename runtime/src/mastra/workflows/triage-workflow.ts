@@ -921,15 +921,18 @@ const notifyResolutionStep = createStep({
     // sendResolutionNotification returns { success: false, error } on failure
     // instead of throwing — so check result.success explicitly. Otherwise a
     // silently-failed send would still log "Resolution email sent".
+    // Use callTool() (the same helper notifyStep uses for sendTicketNotification)
+    // so the args reach Mastra in BOTH shapes (top-level + context) and the
+    // runtimeContext second arg is provided. Calling .execute() directly with a
+    // single { context } arg silently fails inside Mastra v1.4 and returns
+    // { success: false, error: true } instead of actually invoking Resend.
     try {
-      const emailResult = await sendResolutionNotification.execute({
-        context: {
-          to: inputData.reporterEmail,
-          originalTitle: ticketTitle,
-          resolutionSummary,
-          linearUrl: inputData.issueUrl,
-          linearIssueId: inputData.issueId,
-        },
+      const emailResult = await callTool(sendResolutionNotification, {
+        to: inputData.reporterEmail,
+        originalTitle: ticketTitle,
+        resolutionSummary,
+        linearUrl: inputData.issueUrl,
+        linearIssueId: inputData.issueId,
       });
       if (emailResult && typeof emailResult === 'object' && 'success' in emailResult && (emailResult as { success: boolean }).success) {
         emailSent = true;
