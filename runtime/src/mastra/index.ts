@@ -23,6 +23,8 @@ import { findGitHubEvidenceForIssueTool } from './tools/github';
 import { sendTicketNotification, sendResolutionNotification } from './tools/resend';
 import { sendSlackTicketNotification, sendSlackResolutionNotification } from './tools/slack';
 import { logUsage } from '../lib/usage-logger';
+import { verifyLinearSignature } from '../lib/verify-linear-signature';
+import { getWebhookSecret, LINEAR_PROVIDER } from '../lib/webhook-secrets';
 
 // Paranoid anchored regex for parsing a repository URL. Bounded lengths,
 // single-pass, no catastrophic backtracking.
@@ -356,7 +358,15 @@ export const mastra = new Mastra({
               enabled: true,
             });
             const webhook = await result.webhook;
-            return c.json({ success: true, data: { id: webhook?.id, url: webhook?.url, enabled: webhook?.enabled } });
+            // Linear returns the signing secret only on creation — persist it
+            // immediately so /api/webhooks/linear can verify incoming payloads.
+            if (webhook?.secret) {
+              const { setWebhookSecret, LINEAR_PROVIDER } = await import('../lib/webhook-secrets');
+              await setWebhookSecret(LINEAR_PROVIDER, webhook.secret, webhook.id ?? null);
+            } else {
+              console.warn('[webhook/setup] Linear response missing secret — signature verification will reject all incoming webhooks');
+            }
+            return c.json({ success: true, data: { id: webhook?.id, url: webhook?.url, enabled: webhook?.enabled, secretStored: Boolean(webhook?.secret) } });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
@@ -372,8 +382,30 @@ export const mastra = new Mastra({
         createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
           return async (c: Context) => {
             try {
-              const payload = await c.req.json() as Record<string, unknown>;
-              console.log('[webhook/linear] Received:', JSON.stringify(payload).slice(0, 500));
+              // ── Signature verification ──────────────────────────────────
+              // Fail closed: reject unsigned or unverifiable webhooks before
+              // parsing JSON, so a forged POST can't trigger workflow resume.
+              const secret = await getWebhookSecret(LINEAR_PROVIDER);
+              if (!secret) {
+                console.warn('[webhook/linear] No secret configured — rejecting. Call POST /api/linear/webhook/setup first.');
+                return c.json(
+                  { success: false, error: { code: 'SECRET_NOT_CONFIGURED', message: 'Webhook signing secret not registered' } },
+                  503,
+                );
+              }
+              const rawBody = Buffer.from(await c.req.raw.arrayBuffer());
+              const signature = c.req.header('linear-signature') ?? null;
+              const timestampHeader = c.req.header('linear-timestamp') ?? null;
+              const verified = verifyLinearSignature<Record<string, unknown>>(secret, rawBody, signature, timestampHeader);
+              if (!verified.ok) {
+                console.warn('[webhook/linear] Signature verification failed:', verified.reason);
+                return c.json(
+                  { success: false, error: { code: 'INVALID_SIGNATURE', message: verified.reason } },
+                  401,
+                );
+              }
+              const payload = verified.payload;
+              console.log('[webhook/linear] Received (verified):', JSON.stringify(payload).slice(0, 500));
 
               const action = payload.action as string;
               const type = payload.type as string;

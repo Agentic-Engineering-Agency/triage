@@ -175,6 +175,13 @@ const tables = [
     thread_id TEXT,
     created_at INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS webhook_secrets (
+    provider TEXT PRIMARY KEY,
+    webhook_id TEXT,
+    secret TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
 ];
 
 for (const sql of tables) {
