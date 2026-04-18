@@ -404,7 +404,7 @@ function ObservabilityPage() {
                 <tbody>
                   {workflows.slice(0, 20).map((run) => (
                     <tr key={run.runId} className="border-b border-border/50">
-                      <td className="py-2 pr-4 text-muted-foreground">{formatTimeAgo(run.createdAt)}</td>
+                      <td className="py-2 pr-4 text-muted-foreground">{formatTimeAgo(String(run.createdAt))}</td>
                       <td className="py-2 pr-4">
                         <StatusBadge status={run.status} />
                       </td>

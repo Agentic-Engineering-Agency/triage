@@ -10,8 +10,6 @@ import {
   FolderGit2,
   LayoutGrid,
   Star,
-  MoreHorizontal,
-  Plus,
   Circle,
   RefreshCw,
 } from 'lucide-react';

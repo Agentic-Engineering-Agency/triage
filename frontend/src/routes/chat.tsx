@@ -361,12 +361,12 @@ function ChatPage() {
         if (existingIdx >= 0) {
           const next = arr.slice()
           next[existingIdx] = { ...arr[existingIdx], parts: [timelinePart] }
-          return next as unknown as Parameters<typeof setMessages>[0]
+          return next as any
         }
         return [
           ...arr,
           { id: timelineMessageId, role: 'assistant', parts: [timelinePart], createdAt: new Date() },
-        ] as unknown as Parameters<typeof setMessages>[0]
+        ] as any
       })
     }
 
@@ -385,7 +385,6 @@ function ChatPage() {
     addStep({ step: 'intake', status: 'running', message: 'Analyzing incident' })
 
     let linearUrl = ''
-    let issueId = ''
 
     try {
       const config = await getConfig()
@@ -428,7 +427,6 @@ function ChatPage() {
             const event = JSON.parse(line.slice(6)) as TStep & { step: string }
 
             // Track ticket metadata for persistence & link rendering
-            if (event.data?.issueId) issueId = event.data.issueId as string
             if (event.data?.issueUrl) linearUrl = event.data.issueUrl as string
 
             // Skip the "done" synthetic event — it just marks stream end

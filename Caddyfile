@@ -112,6 +112,6 @@
 
     # Frontend: static or dev mode
     handle {
-        import dev-frontend
+        import static-frontend
     }
 }
