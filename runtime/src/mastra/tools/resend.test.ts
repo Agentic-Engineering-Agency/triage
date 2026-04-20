@@ -269,19 +269,14 @@ describe('Resend Tools', () => {
       consoleSpy.mockRestore();
     });
 
-    it('S9: returns success with skip when RESEND_API_KEY is undefined (dynamic re-import)', async () => {
-      // Reset modules to get a fresh import with mocked config
+    it('S9: returns success with skip when no Resend key is configured (dynamic re-import)', async () => {
+      // Multi-tenant refactor: the tool now resolves via tenant-keys instead of
+      // reading config at module load. Stub both paths to return nothing.
       vi.resetModules();
 
-      // Use vi.doMock to mock the config module to return undefined for RESEND_API_KEY
-      vi.doMock('../../lib/config', () => ({
-        config: {
-          LINEAR_API_KEY: undefined,
-          RESEND_API_KEY: undefined,
-          RESEND_FROM_EMAIL: 'triage@agenticengineering.lat',
-        },
+      vi.doMock('../../lib/tenant-keys', () => ({
+        resolveKey: vi.fn().mockResolvedValue({ key: null, source: 'none' }),
       }));
-      // Mock resend so it doesn't create a real client
       vi.doMock('resend', () => ({
         Resend: vi.fn().mockImplementation(() => ({
           emails: { send: vi.fn() },
@@ -294,7 +289,6 @@ describe('Resend Tools', () => {
 
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-      // Dynamic import to pick up the mocked config (fresh module)
       const resendModule = await import('./resend');
 
       const result = await resendModule.sendTicketNotification.execute({
@@ -551,15 +545,17 @@ describe('Resend Tools', () => {
   });
 
   // =====================================================================
-  // Resend client singleton (REQ-6)
+  // Per-tenant client scoping (replaces the old REQ-6 singleton contract)
   // =====================================================================
-  describe('Resend client singleton', () => {
-    it('REQ-6: Resend constructor is called at most once at module load', async () => {
-      const { Resend } = await import('resend');
-
-      const callCount = (Resend as any).mock.calls.length;
-
-      // Execute multiple tool calls
+  describe('Resend per-tenant scoping', () => {
+    it('reaches the send path on every call (client resolved per-execute)', async () => {
+      // Multi-tenant refactor: the client is no longer a module-level
+      // singleton — each tool.execute resolves via tenant-keys and
+      // instantiates its own Resend. We verify behaviour end-to-end by
+      // asserting that two tool invocations reach `emails.send` twice.
+      // (Counting the Resend constructor directly is brittle here because
+      // an earlier dynamic-reimport test runs `vi.resetModules()`, which
+      // rebinds the mock that `await import('resend')` resolves to.)
       mockEmailsSend.mockResolvedValue({ data: { id: 'e1' }, error: null });
 
       await executeTool(sendTicketNotification, {
@@ -581,8 +577,8 @@ describe('Resend Tools', () => {
         linearIssueId: 'id2',
       });
 
-      // Resend constructor should NOT have been called again
-      expect((Resend as any).mock.calls.length).toBe(callCount);
+      // Both tools resolved a client (didn't hit the skip path) and called send.
+      expect(mockEmailsSend).toHaveBeenCalledTimes(2);
     });
   });
 });

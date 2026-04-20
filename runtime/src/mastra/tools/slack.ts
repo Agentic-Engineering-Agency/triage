@@ -1,6 +1,7 @@
 import { createTool } from '@mastra/core/tools';
 import { WebClient } from '@slack/web-api';
 import { config } from '../../lib/config';
+import { resolveKey } from '../../lib/tenant-keys';
 import {
   slackTicketNotificationSchema,
   slackResolutionNotificationSchema,
@@ -10,21 +11,33 @@ import {
 // ============================================================
 // Slack integration tools (INTEG-03)
 //
-// Pattern mirrors resend.ts:
-//   - Module-level singleton, guarded by API key presence
-//   - Graceful degradation: if no token, log and return {success: true}
-//   - Each tool: createTool({ id, description, inputSchema, execute })
-//   - Exports both canonical names AND aliases for agent registration
+// Multi-tenant refactor: the WebClient is no longer a module-level
+// singleton. Each tool.execute resolves the token via tenant-keys
+// (project_integrations row → env fallback) so tenants can bring their
+// own Slack workspaces. Graceful degradation is unchanged: missing key
+// → log + return { success: true } so the workflow doesn't stall.
 // ============================================================
 
-// Module-level singleton — only instantiate if bot token is configured
-const slackClient = config.SLACK_BOT_TOKEN
-  ? new WebClient(config.SLACK_BOT_TOKEN)
-  : null;
+type ToolCtx = { requestContext?: { get: (key: string) => unknown } } | undefined;
 
-/** Resolve channel: explicit param > env default */
-function resolveChannel(channel?: string): string | undefined {
-  return channel || config.SLACK_CHANNEL_ID || undefined;
+// Resolve a per-tenant Slack client. Channel resolution still honours the
+// explicit param > integration-meta.channelId > env SLACK_CHANNEL_ID chain.
+async function resolveSlack(
+  toolCtx: ToolCtx,
+): Promise<{ client: WebClient | null; metaChannel?: string }> {
+  const projectId = toolCtx?.requestContext?.get('projectId') as string | undefined;
+  const res = await resolveKey('slack', projectId);
+  if (!res.key) return { client: null };
+  // Fetch meta (channel id) from the tenant row if available — `resolveKey`
+  // itself only returns the secret, but we can pull the meta alongside via a
+  // single lookup. For now we skip meta and let the caller fall back to env;
+  // #5 (UI) will expose the channel as an integration meta field.
+  return { client: new WebClient(res.key) };
+}
+
+/** Resolve channel: explicit param > integration meta > env default */
+function resolveChannel(channel?: string, metaChannel?: string): string | undefined {
+  return channel || metaChannel || config.SLACK_CHANNEL_ID || undefined;
 }
 
 // Severity → emoji mapping for visual triage distinction
@@ -48,10 +61,14 @@ export const sendSlackTicketNotification = createTool({
   description:
     'Post a triage ticket notification to a Slack channel with severity, summary, and Linear link.',
   inputSchema: slackTicketNotificationSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input?.context ?? input) as Record<string, unknown>;
+    const { client: slackClient, metaChannel } = await resolveSlack(toolCtx);
 
-    const channel = resolveChannel(ctx.channel as string | undefined);
+    const channel = resolveChannel(ctx.channel as string | undefined, metaChannel);
 
     if (!slackClient) {
       console.log(
@@ -143,10 +160,14 @@ export const sendSlackResolutionNotification = createTool({
   description:
     'Post a resolution notification to a Slack channel with verdict, summary, and Linear/PR links.',
   inputSchema: slackResolutionNotificationSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input?.context ?? input) as Record<string, unknown>;
+    const { client: slackClient, metaChannel } = await resolveSlack(toolCtx);
 
-    const channel = resolveChannel(ctx.channel as string | undefined);
+    const channel = resolveChannel(ctx.channel as string | undefined, metaChannel);
 
     if (!slackClient) {
       console.log(
@@ -247,10 +268,14 @@ export const sendSlackMessage = createTool({
   description:
     'Send a generic text message to a Slack channel. Supports mrkdwn formatting and threading.',
   inputSchema: slackMessageSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input?.context ?? input) as Record<string, unknown>;
+    const { client: slackClient, metaChannel } = await resolveSlack(toolCtx);
 
-    const channel = resolveChannel(ctx.channel as string | undefined);
+    const channel = resolveChannel(ctx.channel as string | undefined, metaChannel);
 
     if (!slackClient) {
       console.log(`[Slack] Skipping message send (SLACK_BOT_TOKEN not configured)`);

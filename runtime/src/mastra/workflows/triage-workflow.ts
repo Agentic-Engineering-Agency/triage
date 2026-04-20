@@ -18,16 +18,33 @@ import {
   commentOnGitHubPRTool,
 } from '../tools/index';
 import { sendSlackTicketNotification, sendSlackResolutionNotification } from '../tools/slack';
-import { LINEAR_CONSTANTS, config } from '../../lib/config';
+import { LINEAR_CONSTANTS } from '../../lib/config';
 import { resolveStateId, resolveLabelId } from '../tools/linear-state-resolver';
+import { resolveKey } from '../../lib/tenant-keys';
 
-// Helper to call tool.execute safely
+// Helper to call tool.execute safely.
+// Tools inside the normal agent path receive `toolCtx.requestContext` with the
+// active projectId (populated by the x-project-id middleware). Workflow steps
+// bypass the HTTP middleware, so we forge a minimal requestContext here so
+// tenant-aware tools (tenant-keys resolver) can still scope to the project.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function callTool(tool: { execute?: (...args: any[]) => Promise<any> }, input: Record<string, unknown>): Promise<any> {
+async function callTool(
+  tool: { execute?: (...args: any[]) => Promise<any> },
+  input: Record<string, unknown>,
+  ctx?: { projectId?: string },
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
   if (!tool.execute) return null;
+  const runtimeContext = ctx?.projectId
+    ? {
+        requestContext: {
+          get: (key: string) => (key === 'projectId' ? ctx.projectId : undefined),
+        },
+      }
+    : {};
   // Mastra v1.4+ passes tool args at top level, not wrapped in { context }.
   // Pass both shapes for compatibility — tools read from whichever is present.
-  return tool.execute({ ...input, context: input }, {});
+  return tool.execute({ ...input, context: input }, runtimeContext);
 }
 
 // ---------------------------------------------------------------------------
@@ -398,6 +415,7 @@ const ticketStep = createStep({
     reporterEmail: z.string(),
     assigneeEmail: z.string().optional().describe('Email of the Linear assignee, if assigned'),
     assigneeName: z.string().optional().describe('Display name of the Linear assignee'),
+    projectId: z.string().optional().describe('Carries the tenant project id through the rest of the pipeline for per-tenant key resolution'),
   }),
   execute: async ({ inputData }) => {
     // If duplicate, return existing issue info and persist a local_tickets row
@@ -447,6 +465,7 @@ const ticketStep = createStep({
         reporterEmail: inputData.reporterEmail,
         assigneeEmail: inputData.assigneeEmail,
         assigneeName: inputData.assigneeName,
+        projectId: inputData.projectId,
       };
     }
 
@@ -458,13 +477,17 @@ const ticketStep = createStep({
     const title = `[${inputData.severity}] ${inputData.enrichedDescription.slice(0, 100)}`;
 
     try {
+      // Resolve the Linear key for this tenant up front — used by state/label
+      // resolvers below. Fallback to env when the project has no tenant key.
+      const { key: linearApiKey } = await resolveKey('linear', inputData.projectId);
+
       // Resolve state + label IDs dynamically from the current team.
       // IMPORTANT: Linear defaults new issues to the "Triage" state when
       // stateId is not specified, which hides them from the main board. We
       // must explicitly target "Todo" (or "Backlog" as fallback) so issues
       // show up on the board immediately for the assignee.
-      const todoStateId = (await resolveStateId('TODO', config.LINEAR_API_KEY))
-        || (await resolveStateId('BACKLOG', config.LINEAR_API_KEY));
+      const todoStateId = (await resolveStateId('TODO', linearApiKey ?? undefined))
+        || (await resolveStateId('BACKLOG', linearApiKey ?? undefined));
 
       // Cycle resolution: prefer the cycleId the orchestrator chose (based on
       // the user-provided deadline). Fall back to the currently-active cycle
@@ -473,7 +496,7 @@ const ticketStep = createStep({
       let activeCycleId: string | undefined = inputData.cycleId;
       if (!activeCycleId) {
         try {
-          const cyclesResult = await callTool(listLinearCycles, {});
+          const cyclesResult = await callTool(listLinearCycles, {}, { projectId: inputData.projectId });
           const cyclesData = (cyclesResult as { data?: { cycles?: Array<{ id: string }> } } | undefined)?.data;
           if (cyclesData?.cycles && cyclesData.cycles.length > 0) {
             activeCycleId = cyclesData.cycles[0].id;
@@ -490,8 +513,8 @@ const ticketStep = createStep({
         P3: 'LOW',
         P4: 'LOW',
       };
-      const severityLabelId = await resolveLabelId(severityToLabelName[inputData.severity], config.LINEAR_API_KEY);
-      const bugLabelId = await resolveLabelId('BUG', config.LINEAR_API_KEY);
+      const severityLabelId = await resolveLabelId(severityToLabelName[inputData.severity], linearApiKey ?? undefined);
+      const bugLabelId = await resolveLabelId('BUG', linearApiKey ?? undefined);
       const labelIds = [severityLabelId, bugLabelId].filter(Boolean);
 
       const createArgs: Record<string, unknown> = {
@@ -505,7 +528,7 @@ const ticketStep = createStep({
       if (todoStateId) createArgs.stateId = todoStateId;
       if (activeCycleId) createArgs.cycleId = activeCycleId;
 
-      const result = await callTool(createLinearIssue, createArgs);
+      const result = await callTool(createLinearIssue, createArgs, { projectId: inputData.projectId });
 
       const created = result && typeof result === 'object' && 'data' in result
         ? (result as Record<string, unknown>).data as { id?: string; identifier?: string; url?: string } | undefined
@@ -549,7 +572,7 @@ const ticketStep = createStep({
         let assigneeEmail: string | undefined = inputData.assigneeEmail;
         let assigneeName: string | undefined = inputData.assigneeName;
         if (!assigneeEmail || !assigneeName) {
-          const issueDetails = await callTool(getLinearIssue, { issueId: created.id }).catch(() => null);
+          const issueDetails = await callTool(getLinearIssue, { issueId: created.id }, { projectId: inputData.projectId }).catch(() => null);
           const details = (issueDetails as Record<string, unknown>)?.data as { assignee?: { email: string; name: string } | null } | undefined;
           if (details?.assignee) {
             assigneeEmail = assigneeEmail ?? details.assignee.email;
@@ -567,6 +590,7 @@ const ticketStep = createStep({
           reporterEmail: inputData.reporterEmail,
           assigneeEmail,
           assigneeName,
+          projectId: inputData.projectId,
         };
       }
 
@@ -608,6 +632,7 @@ const notifyStep = createStep({
     assigneeName: z.string().optional(),
     cycleId: z.string().optional(),
     dueDate: z.string().optional(),
+    projectId: z.string().optional(),
   }),
   outputSchema: z.object({
     notificationSent: z.boolean(),
@@ -617,6 +642,7 @@ const notifyStep = createStep({
     rootCause: z.string(),
     reporterEmail: z.string(),
     notifiedEmail: z.string().optional().describe('Actual email recipient (assignee or reporter fallback)'),
+    projectId: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     // Map P0-P4 to notification severity labels
@@ -648,7 +674,7 @@ const notifyStep = createStep({
         linearUrl: inputData.issueUrl,
         assigneeName: notifyName,
         linearIssueId: inputData.issueId,
-      });
+      }, { projectId: inputData.projectId });
       // Validate the tool reported success — Resend may have rejected the
       // subject or rate-limited, in which case we must not claim "sent".
       if (emailResult && typeof emailResult === 'object' && 'success' in emailResult && (emailResult as { success: boolean }).success) {
@@ -689,6 +715,7 @@ const notifyStep = createStep({
       rootCause: inputData.rootCause,
       reporterEmail: inputData.reporterEmail,
       notifiedEmail: emailSent ? notifyEmail : undefined,
+      projectId: inputData.projectId,
     };
   },
 });
@@ -718,6 +745,7 @@ const suspendStep = createStep({
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     rootCause: z.string(),
     reporterEmail: z.string(),
+    projectId: z.string().optional(),
   }),
   outputSchema: z.object({
     issueId: z.string(),
@@ -725,6 +753,7 @@ const suspendStep = createStep({
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     rootCause: z.string(),
     reporterEmail: z.string(),
+    projectId: z.string().optional(),
     webhookPayload: z.object({
       newStatus: z.string(),
       updatedAt: z.string(),
@@ -759,6 +788,7 @@ const suspendStep = createStep({
       severity: inputData.severity,
       rootCause: inputData.rootCause,
       reporterEmail: inputData.reporterEmail,
+      projectId: inputData.projectId,
       webhookPayload: {
         newStatus: resumeData.newStatus,
         updatedAt: resumeData.updatedAt,
@@ -788,6 +818,7 @@ const verifyStep = createStep({
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     rootCause: z.string(),
     reporterEmail: z.string(),
+    projectId: z.string().optional(),
     webhookPayload: z.object({
       newStatus: z.string(),
       updatedAt: z.string(),
@@ -801,6 +832,7 @@ const verifyStep = createStep({
     issueUrl: z.string(),
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     reporterEmail: z.string(),
+    projectId: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     const { webhookPayload } = inputData;
@@ -812,7 +844,7 @@ const verifyStep = createStep({
 
     try {
       // 1. Fetch issue details for context
-      const issueResult = await callTool(getLinearIssue, { issueId: inputData.issueId });
+      const issueResult = await callTool(getLinearIssue, { issueId: inputData.issueId }, { projectId: inputData.projectId });
       const issueData = issueResult && typeof issueResult === 'object' && 'data' in issueResult
         ? (issueResult as Record<string, unknown>).data as Record<string, unknown> | undefined
         : undefined;
@@ -837,6 +869,7 @@ const verifyStep = createStep({
           issueUrl: inputData.issueUrl,
           severity: inputData.severity,
           reporterEmail: inputData.reporterEmail,
+          projectId: inputData.projectId,
         };
       }
 
@@ -859,13 +892,14 @@ const verifyStep = createStep({
         await callTool(commentOnGitHubPRTool, {
           prUrl,
           body: `## Automated Code Review\n\n${codeReviewResult.text}\n\n---\n*Review by Triage SRE Agent*`,
-        });
-        const inReviewStateId = await resolveStateId('IN_REVIEW', config.LINEAR_API_KEY);
+        }, { projectId: inputData.projectId });
+        const { key: linearApiKey } = await resolveKey('linear', inputData.projectId);
+        const inReviewStateId = await resolveStateId('IN_REVIEW', linearApiKey ?? undefined);
         if (inReviewStateId) {
           await callTool(updateLinearIssue, {
             issueId: inputData.issueId,
             stateId: inReviewStateId,
-          });
+          }, { projectId: inputData.projectId });
         }
         return {
           verdict: 'partially_resolved' as const,
@@ -874,6 +908,7 @@ const verifyStep = createStep({
           issueUrl: inputData.issueUrl,
           severity: inputData.severity,
           reporterEmail: inputData.reporterEmail,
+          projectId: inputData.projectId,
         };
       }
 
@@ -903,6 +938,7 @@ const verifyStep = createStep({
       issueUrl: inputData.issueUrl,
       severity: inputData.severity,
       reporterEmail: inputData.reporterEmail,
+      projectId: inputData.projectId,
     };
   },
 });
@@ -927,6 +963,7 @@ const notifyResolutionStep = createStep({
     issueUrl: z.string(),
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     reporterEmail: z.string(),
+    projectId: z.string().optional(),
   }),
   outputSchema: z.object({
     notificationSent: z.boolean(),
@@ -957,7 +994,7 @@ const notifyResolutionStep = createStep({
         resolutionSummary,
         linearUrl: inputData.issueUrl,
         linearIssueId: inputData.issueId,
-      });
+      }, { projectId: inputData.projectId });
       if (emailResult && typeof emailResult === 'object' && 'success' in emailResult && (emailResult as { success: boolean }).success) {
         emailSent = true;
         console.log(`[notify-resolution] Resolution email sent to ${inputData.reporterEmail}`);

@@ -1,16 +1,20 @@
 # Handoff — Multi-tenant hardening & UX redesign
 
 **Branch:** `fix/ui-cleanup-cycle-panel`
-**Last commit:** `6dcc311 feat(wiki): project-aware orchestrator + pipeline fixes` (2026-04-17); #3 work staged uncommitted on same branch (2026-04-20)
-**Date:** 2026-04-17 (original), 2026-04-20 (#3 update)
+**Last commit:** `4ec307a chore(types): fix pre-existing tsc drift (schema + pricing)` (2026-04-20); **#4a work staged uncommitted** on same branch (2026-04-20)
+**Date:** 2026-04-17 (original), 2026-04-20 (#3 committed + #4a staged)
 
 ---
 
 ## Objetivo de la próxima sesión
 
-El sistema de triage funciona end-to-end (chat → ticket Linear → email → Slack → webhook → resolución). Toca pasar de "funciona local con llaves en `.env`" a **multi-tenant con BYO-keys configurables desde la UI**.
+**Siguiente natural: #4b — Agents' `model:` dynamic para OpenRouter key per-tenant.**
 
-Esto implica varios sub-objetivos, no todos son para una sola sesión. Ver la sección **"Priorización"** más abajo para escoger uno.
+Estado del branch: 5 commits pusheables + #4a staged (sin commitear). TSC 0 errores. Test baseline estable (106 fallos pre-existing, 516 passing sobre 669). `project-routes.test.ts` tiene 15 fallos pre-existing en el bloque CRUD (auth 401 en el mock) — son ruido previo.
+
+El sistema corre end-to-end (smoke test #4a: TRI-49 creado con `source=env` en los 3 tools refactorizados). #1-#3 + #4a cerrados. Falta #4b (agents) + #5 (UI BYO-keys) para cerrar el arco.
+
+Ver la sección **"Priorización"** más abajo para el detalle.
 
 ---
 
@@ -116,8 +120,8 @@ Fixes que aterrizaron en esta pasada:
 - Duplicated wiki-status state: `projects.wiki_status` (usada por `scoped-routes.ts`) y `projects.status` (usada por `wiki-rag.ts` + `project-routes.ts` + UI) son dos fuentes de verdad. Consolidar en un solo path cuando se refactoree para multi-tenant (#3-5).
 - `local_tickets.project_id NOT NULL` constraint: el workflow no pasa `projectId` al crear la row, por eso está vacía. No bloqueante (webhook handler usa `workflow_runs` para el resume). Relacionado con multi-tenant.
 
-### 3. Schema de per-tenant keys + encryption ✅ DONE (2026-04-20)
-Infra lista y probada — sin tools/agents/UI wired todavía. Archivos:
+### 3. Schema de per-tenant keys + encryption ✅ DONE (2026-04-20) — committed
+Infra lista y probada — sin tools/agents/UI wired todavía. Commits: `74e05f2 feat(integrations)` + `4ec307a chore(types)` (fix de TS drift en zod-schemas.ts + provider-pricing.ts). TSC limpio (0 errores). Archivos:
 - `runtime/src/lib/crypto-envelope.ts` — AES-256-GCM con DEK per-row wrappeado bajo `APP_MASTER_KEY`. Versión byte bindeada como AAD → downgrade falla auth. Tagged unions para loadMasterKey/decrypt (no `any`). 19 unit tests.
 - `runtime/src/lib/integration-keys.ts` — `setIntegrationKey`, `getIntegrationKey`, `listIntegrations`, `deleteIntegrationKey`, `markTested`. Cache LRU in-memory con TTL 60s, invalidada en set/delete/markTested. List nunca expone plaintext ni ciphertext. 17 unit tests cubren round-trip, tamper, wrong master key, missing key, cache hit/expiry, aislamiento entre proyectos.
 - `runtime/src/lib/schemas/integrations.ts` — `integrationProviderSchema` (enum cerrado `linear|resend|slack|github|openrouter`), `integrationStatusSchema` (`active|disabled|invalid`), `integrationMetaSchema` (`z.record(z.string(), z.string())` — cada provider parsea contra su schema rico en el boundary si necesita).
@@ -130,12 +134,58 @@ Infra lista y probada — sin tools/agents/UI wired todavía. Archivos:
 
 **Gotcha de type-level zod v3 vs v4**: si agregas otro createSelectSchema/Insert con `.extend()`, usa `zod/v4` para el overlay. Para zod solo a nivel de parse/validate, el root `zod` (v3) está bien.
 
-### 4. Refactor de tools para leer keys del tenant context
-El grande. Los tools actualmente hacen `process.env.OPENROUTER_API_KEY` en instanciación:
-- `runtime/src/mastra/agents/orchestrator.ts:25` — createOpenRouter
-- `runtime/src/mastra/tools/linear.ts` — LinearClient con API_KEY de env
-- `runtime/src/mastra/tools/resend.ts` — Resend con env key
-- `runtime/src/mastra/tools/slack.ts` — Slack webhook url de env
+### 4a. Refactor de tools (Linear/Resend/Slack/GitHub) ✅ DONE (2026-04-20)
+Partido en 4a (tools) + 4b (agents' `model:`) para reducir blast radius. 4a cerrado con los tools downstream de proveedores; los agentes LLM siguen leyendo `OPENROUTER_API_KEY` de env (esos son 4b).
+
+**Helper nuevo — `runtime/src/lib/tenant-keys.ts`**:
+- `resolveKey(provider, projectId?, opts?)` devuelve `{ key: string | null, source: 'tenant' | 'env' | 'none' }`
+- Flujo: si hay `projectId` → `getIntegrationKey` → si `ok` devuelve tenant; si `not_found` | `master_key_missing` | sin projectId → fallback a `process.env.<VAR>`. `decrypt_failed` **no** cae a env (es tampering real, mejor fallar que usar una key equivocada).
+- Mapping: `linear→LINEAR_API_KEY`, `resend→RESEND_API_KEY`, `slack→SLACK_BOT_TOKEN`, `github→GITHUB_TOKEN`, `openrouter→OPENROUTER_API_KEY`
+- Log one-liner `[tenant-keys] project=<id> provider=<p> source=<s>` solo en cambio de fuente por pair (no spam)
+- Flag `envFallback:false` para strict-mode futuro
+- 13 unit tests en `tenant-keys.test.ts`
+
+**Workflow pattern — `callTool` sintético**:
+`runtime/src/mastra/workflows/triage-workflow.ts:callTool(tool, input, ctx?)` acepta `{ projectId }` opcional y arma un `runtimeContext = { requestContext: { get: k => k==='projectId' ? ctx.projectId : undefined } }` que se pasa como segundo arg a `tool.execute`. Esto replica lo que el middleware HTTP (`x-project-id`) hace para el agent path, pero desde dentro del workflow que no pasa por el middleware. **Sin esto, los tools invocados desde el workflow nunca verían el projectId**, aunque el agent path sí.
+
+**`projectId` propagado por el chain de steps**: `ticketStep → notifyStep → suspendStep → verifyStep → notifyResolutionStep` — agregado como `z.string().optional()` en cada schema. Crítico que esté en `suspendStep.inputSchema` porque Mastra preserva ese snapshot durante el suspend/resume del webhook, así los tools post-webhook también resuelven per-tenant.
+
+**Tools refactorizados** (singleton module-level removido, cliente nuevo per-call):
+- `linear.ts` — 7 tools, construye `LinearClient` per-call via `resolveLinearClient(toolCtx)`
+- `resend.ts` — 2 tools, `resolveResend(toolCtx)` → `{ client, from }`. FROM email: env `RESEND_FROM_EMAIL` → fallback literal. (Hook para `meta.fromEmail` cuando UI de #5 lo guarde.)
+- `slack.ts` — 3 tools, `resolveSlack(toolCtx)`. Channel: `ctx.channel` → `metaChannel` (futuro) → `config.SLACK_CHANNEL_ID` → skip
+- `github.ts` — 2 tools, swap directo de `process.env.GITHUB_TOKEN` por `resolveKey('github', projectId)`. `scrubToken(msg, token?)` ahora recibe el token explícitamente
+
+**Workflow consumers** que antes pasaban `config.LINEAR_API_KEY` a helpers — migrados a `resolveKey('linear', inputData.projectId)` upfront por step:
+- `resolveStateId('TODO'|'BACKLOG'|'IN_REVIEW', linearApiKey)` (3 call-sites en ticketStep + verifyStep)
+- `resolveLabelId('CRITICAL'|'HIGH'|...|'BUG', linearApiKey)` (2 call-sites en ticketStep)
+
+**Out-of-scope explícitamente** (requieren commits separados):
+- `mastra/index.ts:42` — `LinearClient` global para `linear-sync` cron (system-level, no per-request)
+- `mastra/index.ts:471,479` — `process.env.GITHUB_TOKEN` para repo lookup en una route admin
+- `webhook_secrets` table — aún global, refactor a `(project_id, provider)` cuando haya UI
+- Agents LLM (`createOpenRouter` en los 5 agentes + `attachments.ts` + `wiki-rag.ts`) → **#4b**
+
+**Tests**:
+- `linear.test.ts`: 2 tests actualizados al nuevo contrato (S11 singleton → "constructs fresh client per call"; S2 dynamic-import → `vi.doMock('./../../lib/tenant-keys')` en vez de `config`)
+- `resend.test.ts`: mismo patrón (el singleton test verifica via `mockEmailsSend` para evitar rebinding con `vi.resetModules()`)
+- `slack.test.ts`: sin flip — ya usaba `execute!({...})` directo, no chequeaba singleton
+- `vitest.config.ts`: agregado `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`, `GITHUB_TOKEN` al env (antes venían por `vi.mock('config')`)
+
+**Smoke test validado (runId `5bfd1fe0-...` → TRI-49 real)**: con `.env` actual y SIN `project_integrations` seedeado, los 3 tools loggean `source=env` y el workflow corre hasta notify+suspend. Linear + Slack OK. Resend devolvió "Unable to fetch data" pero eso es un issue de network/key pre-existing ajeno al refactor.
+
+**Para #4b (agents)**:
+Usar `model: async ({ requestContext }) => createOpenRouter({ apiKey: await resolveKeyValue('openrouter', requestContext.get('projectId')) })(...)` — patrón canónico Mastra de dynamic model. Blast radius alto porque toca cada stream de chat; probar con un solo agent primero (recomiendo `slack-notification-agent` que se invoca desde el workflow con un proyecto activo en context).
+
+### 4b. Refactor de agentes (`model:` dynamic para OpenRouter key)
+Pendiente. 5 agentes a migrar:
+- `agents/orchestrator.ts:25`
+- `agents/triage-agent.ts:7`
+- `agents/resolution-reviewer.ts:7`
+- `agents/code-review-agent.ts:7`
+- `agents/slack-notification-agent.ts:7`
+- `mastra/tools/attachments.ts:7,55` (usa createOpenRouter para vision)
+- `lib/wiki-rag.ts:223,331` (embeddings — estos corren en background, `projectId` viene en la llamada `generateWiki(id, ...)`, no via requestContext)
 
 Hay que inyectar el `projectId` en el `requestContext` y resolver la key per-tenant al momento de la llamada.
 
@@ -167,6 +217,8 @@ Cada card: toggle "enabled", estado de conexión (verde/rojo/amarillo), botón "
 - **Mastra v1.4 tool invocation**: llamar `tool.execute({context:{...}})` directo retorna `{success:false}` silencioso. Usar el helper `callTool(tool, args)` del workflow que pasa ambas shapes + runtimeContext `{}`.
 - **OpenRouter version-pinned IDs**: retorna modelos como `inception/mercury-2-20260304`. `MODEL_PRICING` usa prefix match en `provider-pricing.ts`. Si agregas modelo nuevo, solo necesitas la key base.
 - **Rules of Hooks**: `frontend/src/routes/chat.tsx` tiene early returns por `authLoading` y `currentProjectId` — **deben ir después** de todos los hooks. Un refactor descuidado reintroduce el bug de hooks.
+- **Workflow tools y `requestContext`**: los tools invocados desde el workflow via `callTool()` NO pasan por el middleware HTTP que pone `projectId` en `requestContext`. El workflow tiene que construir un runtimeContext sintético manualmente: `callTool(tool, input, { projectId: inputData.projectId })`. Sin eso, los tools siempre ven `projectId=undefined` y caen a env-fallback. Esto significa que `projectId` **debe** propagarse por las schemas del workflow chain (ticketStep→notifyStep→suspendStep→verifyStep→notifyResolutionStep) como `z.string().optional()`. Crítico que esté en `suspendStep.inputSchema` para sobrevivir el suspend/resume snapshot.
+- **`vi.doMock` + `vi.resetModules` leak**: si un test hace `vi.doMock('../../lib/tenant-keys')` y después `vi.resetModules()`, el mock queda activo para tests subsiguientes en el mismo file. Tests que checquean `(Resend as any).mock.calls.length` después de `await import('resend')` van a ver un mock rebindeado en vez del original. Preferir verificar via `mockEmailsSend.toHaveBeenCalledTimes(n)` (la call chain del mock original) en vez de contar constructor calls.
 - **Memory storage per-agent**: `orchestrator.ts` usa su propio `LibSQLStore` (`memory-store`). Mastra top-level storage es separado (`triage-main`). Para leer mensajes del thread usar `agent.getMemory()?.recall()` — el endpoint `/memory/threads/:threadId/messages` ya lo hace.
 - **`include_reasoning: true` en OpenRouter** reserva el full output budget → 402 spurious aunque haya saldo. Está removido, no lo re-agregues sin verificar.
 
@@ -213,15 +265,17 @@ docker exec triage-runtime-1 node -e "
 - **Infra handoff:** `HANDOFF.md` en root — diagrama de contenedores + puertos.
 - **Arquitectura general:** `ARCHITECTURE.md` en root.
 - **Docs de Mastra:** usar MCP `mastra` tools (`searchMastraDocs`, `readMastraDocs`) para verificar API signatures; están cambiando rápido (v1.4).
-- **Git log reciente:**
+- **Git log reciente (branch, sin pushear):**
+  - `4ec307a` — chore(types): fix pre-existing tsc drift (schema + pricing) — TSC limpio
+  - `74e05f2` — feat(integrations): envelope-encrypted per-tenant keys schema (#3)
+  - `6dcc311` — feat(wiki): project-aware orchestrator + pipeline fixes (#2)
+  - `63b13e6` — feat(webhooks): verify Linear signatures con HMAC-SHA256 + secret persistence (#1)
+  - `fd73700` — fix(frontend): restore static Caddy mode + clear TS build errors
   - `132454d` — observability crash fix + pricing prefix match + webhook scripts
-  - `62fb05f` — callTool helper para sendResolutionNotification (email de resolución)
-  - `2d1cfa9` — verify resolution email result + OpenRouter reserve fix
-  - `c3e5b84` — route issues al ciclo correcto según dueDate
-  - `9b58f46` — fix Rules of Hooks en ChatPage
+  - `62fb05f` — callTool helper para sendResolutionNotification
 
 ---
 
 ## Qué decirle al próximo agente al arrancar
 
-> "Estamos en `fix/ui-cleanup-cycle-panel`. El sistema funciona end-to-end local. Lee `docs/HANDOFF-MULTI-TENANT-HARDENING-2026-04-17.md` antes de empezar. Quiero trabajar en [#1 webhook signature / #2 wiki / #3 schema de keys / etc — escoger uno]. No toques `.env` ni hagas commits sin que te lo pida."
+> "Estamos en `fix/ui-cleanup-cycle-panel` (5 commits sin pushear + #4a staged). El sistema funciona end-to-end (smoke test reciente creó TRI-49). Lee `docs/HANDOFF-MULTI-TENANT-HARDENING-2026-04-17.md` antes de empezar. #1-#3 + #4a del arco multi-tenant están cerrados; el siguiente es #4b — hacer dynamic el `model:` de los 5 agentes para que OpenRouter use la key per-tenant (ver sección 4b del handoff). TSC está limpio. No toques `.env` ni hagas commits sin que te lo pida."

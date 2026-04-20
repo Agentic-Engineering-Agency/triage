@@ -523,18 +523,17 @@ describe('Linear Tools', () => {
   });
 
   // =====================================================================
-  // S11: LinearClient is singleton (same instance across tool calls)
+  // Per-tenant client scoping (replaces the old S11 singleton contract)
   // =====================================================================
-  describe('LinearClient singleton', () => {
-    it('S11: all tools use the same LinearClient instance', async () => {
-      // The LinearClient constructor should be called exactly once at module load.
-      // Multiple tool calls should not create new clients.
+  describe('LinearClient per-tenant scoping', () => {
+    it('constructs a fresh LinearClient on every tool execution', async () => {
+      // Multi-tenant refactor: the client is NOT a module-level singleton
+      // anymore. Each tool.execute resolves the key via tenant-keys and
+      // instantiates a new LinearClient, so projects with different keys
+      // don't share a cached client instance.
       const { LinearClient } = await import('@linear/sdk');
+      const before = (LinearClient as any).mock.calls.length;
 
-      // Clear the call count from module initialization
-      const initialCallCount = (LinearClient as any).mock.calls.length;
-
-      // Execute multiple different tools
       mockCreateIssue.mockResolvedValue({
         success: true,
         issue: Promise.resolve({ id: '1', identifier: 'TRI-1', url: 'u', title: 't' }),
@@ -546,19 +545,11 @@ describe('Linear Tools', () => {
         labels: vi.fn().mockResolvedValue({ nodes: [] }),
       });
 
-      await executeTool(createLinearIssue, {
-        title: 'Test',
-        description: 'Test',
-        teamId: TEAM_ID,
-        priority: 3,
-      });
+      await executeTool(createLinearIssue, { title: 'T', description: 'T', teamId: TEAM_ID, priority: 3 });
+      await executeTool(getLinearIssue, { issueId: 'TRI-1' });
 
-      await executeTool(getLinearIssue, {
-        issueId: 'TRI-1',
-      });
-
-      // LinearClient constructor should not have been called again
-      expect((LinearClient as any).mock.calls.length).toBe(initialCallCount);
+      // Two tool calls → two constructor invocations.
+      expect((LinearClient as any).mock.calls.length).toBe(before + 2);
     });
   });
 
@@ -632,24 +623,19 @@ describe('Linear Tools', () => {
       expect(expectedError).toBe('LINEAR_API_KEY not configured');
     });
 
-    it('S2: returns graceful error when LINEAR_API_KEY is undefined (dynamic re-import)', async () => {
-      // Reset module registry so dynamic import creates a fresh module
+    it('S2: returns graceful error when no Linear key is configured anywhere', async () => {
+      // Multi-tenant refactor: the tool now resolves its key via tenant-keys
+      // (DB → env fallback) on every call instead of reading config at module
+      // load. Reproduce the "no key" case by stubbing both paths to return
+      // nothing and running the already-imported tool.
       vi.resetModules();
-
-      // Use vi.doMock to mock the config module to return undefined for LINEAR_API_KEY
-      vi.doMock('../../lib/config', () => ({
-        config: {
-          LINEAR_API_KEY: undefined,
-          RESEND_API_KEY: undefined,
-          RESEND_FROM_EMAIL: 'triage@agenticengineering.lat',
-        },
+      vi.doMock('../../lib/tenant-keys', () => ({
+        resolveKey: vi.fn().mockResolvedValue({ key: null, source: 'none' }),
       }));
-      // Mock @linear/sdk so LinearClient constructor is available but client won't be created
       vi.doMock('@linear/sdk', () => ({
         LinearClient: vi.fn().mockImplementation(() => ({})),
       }));
 
-      // Dynamic import to pick up the mocked config (fresh module)
       const linearModule = await import('./linear');
 
       const result = await linearModule.createLinearIssue.execute({

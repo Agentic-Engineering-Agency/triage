@@ -1,7 +1,8 @@
 import { createTool } from '@mastra/core/tools';
 import { LinearClient } from '@linear/sdk';
 import { z } from 'zod';
-import { config, LINEAR_CONSTANTS } from '../../lib/config';
+import { LINEAR_CONSTANTS } from '../../lib/config';
+import { resolveKey } from '../../lib/tenant-keys';
 import {
   ticketCreateSchema,
   ticketUpdateSchema,
@@ -10,10 +11,22 @@ import {
   teamIdInputSchema,
 } from '../../lib/schemas/ticket';
 
-// Module-level singleton (REQ-5)
-const linearClient: InstanceType<typeof LinearClient> | null = config.LINEAR_API_KEY
-  ? new LinearClient({ apiKey: config.LINEAR_API_KEY })
-  : null;
+type ToolCtx = { requestContext?: { get: (key: string) => unknown } } | undefined;
+
+// Resolve a per-tenant LinearClient. Reads projectId from the tool's
+// requestContext (populated by the x-project-id middleware for agent calls,
+// or by the synthetic runtimeContext in the workflow's callTool helper).
+// Falls back to `process.env.LINEAR_API_KEY` when no tenant row exists,
+// preserving the legacy single-tenant setup until every project has keys in
+// `project_integrations`.
+async function resolveLinearClient(
+  toolCtx: ToolCtx,
+): Promise<{ client: InstanceType<typeof LinearClient> | null; apiKey: string | null }> {
+  const projectId = toolCtx?.requestContext?.get('projectId') as string | undefined;
+  const { key } = await resolveKey('linear', projectId);
+  if (!key) return { client: null, apiKey: null };
+  return { client: new LinearClient({ apiKey: key }), apiKey: key };
+}
 
 // Field allowlist for update operations (M1)
 const ALLOWED_UPDATE_FIELDS = ['title', 'description', 'priority', 'assigneeId', 'stateId', 'labelIds'];
@@ -23,8 +36,12 @@ const _createLinearIssue = createTool({
   id: 'create-linear-issue',
   description: 'Create a new Linear issue. Team ID is auto-configured — do NOT ask the user for it. Provide: title, description, priority (0-4), optional assigneeId, labelIds, stateId.',
   inputSchema: ticketCreateSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input as Record<string, unknown>)?.context ?? input;
+    const { client: linearClient } = await resolveLinearClient(toolCtx);
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
@@ -69,8 +86,12 @@ export const updateLinearIssue = createTool({
   id: 'update-linear-issue',
   description: 'Update fields on an existing Linear issue (status, assignee, priority, labels).',
   inputSchema: ticketUpdateSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input as Record<string, unknown>)?.context ?? input;
+    const { client: linearClient } = await resolveLinearClient(toolCtx);
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
@@ -105,8 +126,12 @@ export const getLinearIssue = createTool({
   id: 'get-linear-issue',
   description: 'Get a Linear issue by ID or shorthand identifier (e.g. TRI-123).',
   inputSchema: issueIdInputSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input as Record<string, unknown>)?.context ?? input;
+    const { client: linearClient } = await resolveLinearClient(toolCtx);
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
@@ -148,8 +173,12 @@ export const searchLinearIssues = createTool({
   id: 'search-linear-issues',
   description: 'Search Linear issues by title, status, assignee, or labels. Team is auto-configured. Use for duplicate detection.',
   inputSchema: issueSearchSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input as Record<string, unknown>)?.context ?? input;
+    const { client: linearClient } = await resolveLinearClient(toolCtx);
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
@@ -199,8 +228,12 @@ export const getLinearTeamMembers = createTool({
   id: 'get-linear-team-members',
   description: 'Get all members of the Linear team. Team ID is auto-configured — do NOT ask for it.',
   inputSchema: teamIdInputSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input as Record<string, unknown>)?.context ?? input;
+    const { client: linearClient } = await resolveLinearClient(toolCtx);
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
@@ -241,8 +274,12 @@ export const listLinearCycles = createTool({
   inputSchema: z.object({
     includeCompleted: z.boolean().optional().describe('Include completed cycles (default: false)'),
   }),
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input as Record<string, unknown>)?.context ?? input;
+    const { client: linearClient } = await resolveLinearClient(toolCtx);
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
@@ -277,8 +314,12 @@ export const getLinearIssueComments = createTool({
   id: 'get-linear-issue-comments',
   description: 'Fetch all comments on a Linear issue. Used by the In Review evidence check to determine whether a ticket has human-provided evidence of completion.',
   inputSchema: issueIdInputSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input as Record<string, unknown>)?.context ?? input;
+    const { client: linearClient } = await resolveLinearClient(toolCtx);
     if (!linearClient) {
       return { success: false, error: 'LINEAR_API_KEY not configured' };
     }
