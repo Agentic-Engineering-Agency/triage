@@ -148,12 +148,36 @@ const triageStep = createStep({
     // when one is provided. Without the projectId filter, once more than one
     // project is indexed the search can ground triage on the wrong codebase
     // and produce misattributed root causes.
+    //
+    // Skip the query entirely when the project's wiki isn't ready yet —
+    // running it anyway bills an embedding call for a guaranteed-empty
+    // result set and clutters logs with "Wiki RAG returned 0 results".
     let wikiResults: Awaited<ReturnType<typeof queryWiki>> | null = null;
-    try {
-      wikiResults = await queryWiki(inputData.enrichedDescription, inputData.projectId ?? undefined);
-      console.log(`[triage] Wiki RAG returned ${wikiResults.totalResults} results${inputData.projectId ? ` (scoped to project ${inputData.projectId})` : ' (global)'}`);
-    } catch (err) {
-      console.error('[triage] Wiki RAG query failed, continuing with heuristic triage:', err instanceof Error ? err.message : err);
+    let wikiReady = !inputData.projectId;
+    if (inputData.projectId) {
+      try {
+        const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+        const r = await db.execute({
+          sql: 'SELECT status, chunks_count FROM projects WHERE id = ? LIMIT 1',
+          args: [inputData.projectId],
+        });
+        const row = r.rows[0];
+        wikiReady = row ? row.status === 'ready' && Number(row.chunks_count ?? 0) > 0 : false;
+        if (!wikiReady) {
+          console.log(`[triage] Skipping Wiki RAG — project ${inputData.projectId} wiki_status="${row?.status ?? 'missing'}" chunks=${row?.chunks_count ?? 0}`);
+        }
+      } catch (err) {
+        console.warn('[triage] Could not check project wiki status, will attempt query anyway:', err instanceof Error ? err.message : err);
+        wikiReady = true;
+      }
+    }
+    if (wikiReady) {
+      try {
+        wikiResults = await queryWiki(inputData.enrichedDescription, inputData.projectId ?? undefined);
+        console.log(`[triage] Wiki RAG returned ${wikiResults.totalResults} results${inputData.projectId ? ` (scoped to project ${inputData.projectId})` : ' (global)'}`);
+      } catch (err) {
+        console.error('[triage] Wiki RAG query failed, continuing with heuristic triage:', err instanceof Error ? err.message : err);
+      }
     }
 
     // 2. Determine severity from description keywords (heuristic)

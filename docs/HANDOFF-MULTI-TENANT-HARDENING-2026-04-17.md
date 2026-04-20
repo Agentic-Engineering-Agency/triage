@@ -95,11 +95,26 @@ Orden recomendado. Cada uno puede ser una sesión propia:
 - `scripts/simulate-webhook.sh` firma payloads (HMAC vía openssl) leyendo el secret de la DB, o de `WEBHOOK_SECRET` si se exporta
 - **Para multi-tenant (#3-5)**: el secret actualmente es global (un row); cuando vivamos per-project, la tabla crece a `(project_id, provider)` como composite PK y el handler lee el secret del project al que pertenece el webhook.
 
-### 2. Verificar flujo de wiki end-to-end
-- Ir a `/projects`, crear uno, pegar un repo de GitHub público
-- Ver que `wiki_documents` y `wiki_chunks` se llenan
-- Probar `queryWikiTool` desde el chat
-- Si está roto, revisar `runtime/src/lib/wiki-rag.ts` y los embeddings
+### 2. Verificar flujo de wiki end-to-end ✅ DONE (2026-04-17)
+Pipeline validado con `sindresorhus/slugify` (8 files / 29 chunks / ready). El orchestrator llama `queryWikiTool` correctamente y aterriza las respuestas en el código real cuando el usuario pregunta por el proyecto.
+
+Fixes que aterrizaron en esta pasada:
+- **Symlinks rotos mataban el scan**: `scanFiles` en `wiki-rag.ts` usaba `statSync` que tira ENOENT cuando el repo contiene symlinks cuyos targets no existen tras el `git clone --depth 1` (ej. `skills/mastra` en este mismo repo apunta a `../.agents/...`). Switched a `lstatSync` + try/catch — los symlinks se saltan silenciosamente.
+- **Columna `projects.error` faltaba en DBs upgradeadas**: el `CREATE TABLE IF NOT EXISTS` tenía la columna pero no había `ALTER TABLE ADD COLUMN` para upgrade. Agregado a `init-db.mjs`. Sin esto, cualquier fallo del pipeline era swallowed por el `.catch(()=>{})` del error handler.
+- **`queryWiki` idempotente**: short-circuits a `{ results: [], totalResults: 0 }` si el índice `wiki_vectors` no existe, en lugar de hacer embedding y tirar "no such table". El índice lo crea `LibSQLVector.createIndex` dentro de `generateWiki` on-demand.
+- **Triage workflow skip cuando no hay wiki**: `triage-workflow.ts:147` ahora hace un `SELECT status, chunks_count FROM projects` antes de llamar `queryWiki`; si no está ready o tiene 0 chunks, lo brinca y deja el heurístico solo.
+
+**Project-aware orchestrator** (patrón canónico de Mastra — RequestContext + dynamic instructions, ver `runtime/node_modules/@mastra/core/dist/docs/references/docs-server-request-context.md`):
+1. Middleware server (`mastra/index.ts`) lee `x-project-id` header y lo pone en `requestContext`
+2. Frontend manda el header via `DefaultChatTransport.headers()`
+3. Orchestrator usa `instructions: async ({ requestContext })` que consulta `projects` y arma un prompt con "Active Project: name=... id=... status=..." + guía de cuándo llamar `queryWikiTool`
+4. `queryWikiTool` lee `ctx.requestContext.get('projectId')` como fallback si el LLM no lo pasa explícito
+
+**Mejora UX frontend**: `projects.lazy.tsx` ahora hace `queryClient.setQueryData` optimista con el response del POST, así el card aparece inmediato en vez de esperar al refetch del invalidateQueries.
+
+**Followup que salió de este arco** (no bloqueante):
+- Duplicated wiki-status state: `projects.wiki_status` (usada por `scoped-routes.ts`) y `projects.status` (usada por `wiki-rag.ts` + `project-routes.ts` + UI) son dos fuentes de verdad. Consolidar en un solo path cuando se refactoree para multi-tenant (#3-5).
+- `local_tickets.project_id NOT NULL` constraint: el workflow no pasa `projectId` al crear la row, por eso está vacía. No bloqueante (webhook handler usa `workflow_runs` para el resume). Relacionado con multi-tenant.
 
 ### 3. Schema de per-tenant keys + encryption (sin UI todavía)
 - Nueva tabla `project_integrations` con columnas: `project_id, provider, encrypted_key, meta JSON, status, last_tested_at`

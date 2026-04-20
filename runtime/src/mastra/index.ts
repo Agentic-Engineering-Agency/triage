@@ -57,6 +57,22 @@ export const mastra = new Mastra({
     url: process.env.LIBSQL_URL || 'http://libsql:8080',
   }),
   server: {
+    middleware: [
+      // Hoist the active projectId from the incoming request into requestContext
+      // so agents, tools, and workflows can read it via
+      // `requestContext.get('projectId')` without threading it through every
+      // call site. The frontend sends it as the `x-project-id` header on
+      // DefaultChatTransport; we also accept `x-project-id` from any other
+      // client (scripts, tests) that wants to scope a request.
+      async (c, next) => {
+        const projectId = c.req.header('x-project-id');
+        if (projectId) {
+          const requestContext = c.get('requestContext');
+          requestContext?.set('projectId', projectId);
+        }
+        await next();
+      },
+    ],
     apiRoutes: [
       // Track per-call llm usage for the orchestrator. Mastra calls onFinish
       // once per stream completion with the AI SDK event (usage, response,

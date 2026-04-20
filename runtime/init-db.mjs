@@ -228,6 +228,10 @@ const alters = [
   // projects table columns added on the upgrade path
   { table: 'projects', col: 'status', sql: `ALTER TABLE projects ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'` },
   { table: 'projects', col: 'wiki_error', sql: `ALTER TABLE projects ADD COLUMN wiki_error TEXT` },
+  // wiki-rag.ts writes to projects.error when generateWiki fails; without
+  // this ALTER the error-handler itself throws and the failure is swallowed
+  // by the outer .catch(() => {}), leaving the project stuck in 'pending'.
+  { table: 'projects', col: 'error', sql: `ALTER TABLE projects ADD COLUMN error TEXT` },
   { table: 'projects', col: 'documents_count', sql: `ALTER TABLE projects ADD COLUMN documents_count INTEGER DEFAULT 0` },
   { table: 'projects', col: 'chunks_count', sql: `ALTER TABLE projects ADD COLUMN chunks_count INTEGER DEFAULT 0` },
   { table: 'projects', col: 'repo_url', sql: `ALTER TABLE projects ADD COLUMN repo_url TEXT` },

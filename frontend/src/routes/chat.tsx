@@ -53,6 +53,15 @@ function ChatPage() {
   const transport = useMemo(() => new DefaultChatTransport({
     api: "/chat",
     credentials: "include",
+    // Server middleware reads `x-project-id` and sets it on Mastra's
+    // requestContext so the orchestrator's dynamic instructions + tools
+    // can scope to the active project. Keep it in the body too for
+    // backward compat with any code path that still inspects request JSON.
+    headers: () => {
+      const h: Record<string, string> = {}
+      if (projectIdRef.current) h["x-project-id"] = projectIdRef.current
+      return h
+    },
     body: () => ({
       projectId: projectIdRef.current,
       memory: {

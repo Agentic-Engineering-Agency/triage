@@ -11,7 +11,7 @@ import { MDocument } from '@mastra/rag';
 import { embed, embedMany } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { execFileSync } from 'child_process';
-import { readFileSync, readdirSync, statSync, existsSync, rmSync } from 'fs';
+import { readFileSync, readdirSync, lstatSync, existsSync, rmSync } from 'fs';
 import { join, extname, relative } from 'path';
 import crypto from 'crypto';
 
@@ -66,10 +66,25 @@ function scanFiles(dir: string, base: string): { path: string; relativePath: str
   const results: { path: string; relativePath: string }[] = [];
 
   function walk(current: string) {
-    const entries = readdirSync(current);
+    let entries: string[];
+    try {
+      entries = readdirSync(current);
+    } catch (err) {
+      console.warn(`[wiki-rag] Skipping unreadable dir ${current}: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
     for (const entry of entries) {
       const full = join(current, entry);
-      const stat = statSync(full);
+      let stat;
+      try {
+        // lstat (not stat) so broken symlinks don't throw ENOENT and symlinks
+        // that could escape the clone aren't followed into arbitrary targets.
+        stat = lstatSync(full);
+      } catch {
+        continue;
+      }
+
+      if (stat.isSymbolicLink()) continue;
 
       if (stat.isDirectory()) {
         if (!SKIP_DIRS.has(entry)) walk(full);
@@ -302,6 +317,17 @@ export async function queryWiki(
   topK = 10,
 ): Promise<WikiQueryResult> {
   const vectorStore = getVectorStore();
+
+  // Short-circuit before embedding if no index exists yet. The index is
+  // created lazily by generateWiki on the write path; running a query before
+  // any project has been indexed would otherwise hit "no such table:
+  // wiki_vectors" and bill an embedding call for nothing.
+  const indexes = await vectorStore.listIndexes();
+  if (!indexes.includes(VECTOR_INDEX)) {
+    console.log(`[wiki-rag] queryWiki: index "${VECTOR_INDEX}" not yet created — returning empty results`);
+    return { results: [], query, totalResults: 0 };
+  }
+
   const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
 
   // Generate query embedding

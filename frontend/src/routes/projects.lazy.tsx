@@ -81,9 +81,20 @@ function ProjectsPage() {
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body,
       })
-      return res.json()
+      return (await res.json()) as { success: boolean; data?: Project }
     },
-    onSuccess: () => {
+    onSuccess: (response) => {
+      // Inject the server-returned project into the cache so it shows up
+      // immediately — otherwise the UI waits on the invalidation refetch
+      // and the list looks empty for a beat after create.
+      if (response?.success && response.data) {
+        const incoming = response.data
+        queryClient.setQueryData<Project[]>(["projects"], (old) => {
+          if (!old) return [incoming]
+          if (editingId) return old.map((p) => (p.id === editingId ? incoming : p))
+          return [incoming, ...old]
+        })
+      }
       queryClient.invalidateQueries({ queryKey: ["projects"] })
       resetForm()
     },
