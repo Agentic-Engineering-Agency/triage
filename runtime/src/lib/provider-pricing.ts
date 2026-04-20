@@ -57,7 +57,7 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
 export function calculateCost(model: string, inputTokens: number, outputTokens: number): number {
   // Try exact match first, then fall back to prefix match (handles version-pinned IDs
   // like "inception/mercury-2-20260304" matching "inception/mercury-2").
-  let pricing = MODEL_PRICING[model];
+  let pricing: ModelPricing | undefined = MODEL_PRICING[model];
   if (!pricing) {
     const prefixMatch = Object.keys(MODEL_PRICING).find((key) => model.startsWith(key));
     pricing = prefixMatch ? MODEL_PRICING[prefixMatch] : undefined;

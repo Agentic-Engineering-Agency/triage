@@ -167,7 +167,6 @@ export const wikiChunks = sqliteTable('wiki_chunks', {
 
 export const localTickets = sqliteTable('local_tickets', {
   id: text('id').primaryKey(),
-  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
   linearIssueId: text('linear_issue_id'),
   title: text('title').notNull(),
   description: text('description').notNull(),
@@ -175,15 +174,16 @@ export const localTickets = sqliteTable('local_tickets', {
   priority: integer('priority').notNull(),
   status: text('status').notNull().default('triage'),
   assigneeId: text('assignee_id').references(() => authUser.id),
-  // project_id is managed at the raw-SQL layer in init-db.mjs because the
-  // `projects` table itself is not a Drizzle entity (raw SQL in the same
-  // file). We still declare the column here so:
-  //   1. `drizzle-kit push` does not drop it as "unknown" on schema sync
+  // project_id is managed at the raw-SQL layer in init-db.mjs (nullable
+  // there to keep the upgrade path from breaking on existing rows). We
+  // declare the column here without `.notNull()` or `.references()` so:
+  //   1. drizzle-kit push does not drop it as "unknown" on schema sync
   //   2. Drizzle queries expose it as a typed field
   //   3. The schema test's column allowlist passes for triage-workflow's
   //      raw-SQL INSERTs that write project_id
-  // No .references() — the FK is enforced at the raw SQL layer, same
-  // treatment as wikiDocuments.projectId above.
+  // The FK to projects.id is enforced by init-db.mjs, not Drizzle. The
+  // Drizzle `relations` helper below handles the join without needing
+  // `.references()` on the column.
   projectId: text('project_id'),
   reporterEmail: text('reporter_email'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
