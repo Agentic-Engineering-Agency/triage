@@ -1,8 +1,8 @@
 # Handoff — Multi-tenant hardening & UX redesign
 
 **Branch:** `fix/ui-cleanup-cycle-panel`
-**Last commit:** `132454d fix(observability): crash + cost tracking + webhook test scripts`
-**Date:** 2026-04-17
+**Last commit:** `6dcc311 feat(wiki): project-aware orchestrator + pipeline fixes` (2026-04-17); #3 work staged uncommitted on same branch (2026-04-20)
+**Date:** 2026-04-17 (original), 2026-04-20 (#3 update)
 
 ---
 
@@ -116,11 +116,19 @@ Fixes que aterrizaron en esta pasada:
 - Duplicated wiki-status state: `projects.wiki_status` (usada por `scoped-routes.ts`) y `projects.status` (usada por `wiki-rag.ts` + `project-routes.ts` + UI) son dos fuentes de verdad. Consolidar en un solo path cuando se refactoree para multi-tenant (#3-5).
 - `local_tickets.project_id NOT NULL` constraint: el workflow no pasa `projectId` al crear la row, por eso está vacía. No bloqueante (webhook handler usa `workflow_runs` para el resume). Relacionado con multi-tenant.
 
-### 3. Schema de per-tenant keys + encryption (sin UI todavía)
-- Nueva tabla `project_integrations` con columnas: `project_id, provider, encrypted_key, meta JSON, status, last_tested_at`
-- Master key en `.env` (`APP_MASTER_KEY`) usada para envelope encryption con `node:crypto`
-- Resolver: `getIntegrationKey(projectId, provider)` → desencripta on-demand
-- No afecta nada todavía — solo infra
+### 3. Schema de per-tenant keys + encryption ✅ DONE (2026-04-20)
+Infra lista y probada — sin tools/agents/UI wired todavía. Archivos:
+- `runtime/src/lib/crypto-envelope.ts` — AES-256-GCM con DEK per-row wrappeado bajo `APP_MASTER_KEY`. Versión byte bindeada como AAD → downgrade falla auth. Tagged unions para loadMasterKey/decrypt (no `any`). 19 unit tests.
+- `runtime/src/lib/integration-keys.ts` — `setIntegrationKey`, `getIntegrationKey`, `listIntegrations`, `deleteIntegrationKey`, `markTested`. Cache LRU in-memory con TTL 60s, invalidada en set/delete/markTested. List nunca expone plaintext ni ciphertext. 17 unit tests cubren round-trip, tamper, wrong master key, missing key, cache hit/expiry, aislamiento entre proyectos.
+- `runtime/src/lib/schemas/integrations.ts` — `integrationProviderSchema` (enum cerrado `linear|resend|slack|github|openrouter`), `integrationStatusSchema` (`active|disabled|invalid`), `integrationMetaSchema` (`z.record(z.string(), z.string())` — cada provider parsea contra su schema rico en el boundary si necesita).
+- `runtime/src/db/schema.ts` — tabla `projectIntegrations` con composite PK `(project_id, provider)`, BLOB `encrypted_key`, JSON `meta`. Relation `projectIntegrationsRelations` + `projects.integrations: many()`.
+- `runtime/src/db/zod-schemas.ts` — `projectIntegrationsSelect/InsertSchema` via drizzle-zod + `.extend()`. Nota: drizzle-zod 0.8 compone su output contra tipos de `zod/v4`, así que el overlay importa `zod/v4` aunque el resto del codebase use el root `zod` (v3.25, con subpath v4). Compatible en runtime, distinto a nivel de tipo.
+- `runtime/init-db.mjs` — `CREATE TABLE IF NOT EXISTS project_integrations` + `idx_project_integrations_project_id`.
+- `.env.example` — `APP_MASTER_KEY` con nota de generación (`openssl rand -base64 32`). **No se tocó `.env`** — cuando se necesite ejercer integration-keys hay que generar la key y setearla.
+
+**Para multi-tenant (#4-5)**: el secret de Linear webhook (tabla `webhook_secrets`) todavía es global (un row); cuando los tools lean del tenant context, esa tabla también se refactorea a `(project_id, provider)` como composite PK.
+
+**Gotcha de type-level zod v3 vs v4**: si agregas otro createSelectSchema/Insert con `.extend()`, usa `zod/v4` para el overlay. Para zod solo a nivel de parse/validate, el root `zod` (v3) está bien.
 
 ### 4. Refactor de tools para leer keys del tenant context
 El grande. Los tools actualmente hacen `process.env.OPENROUTER_API_KEY` en instanciación:

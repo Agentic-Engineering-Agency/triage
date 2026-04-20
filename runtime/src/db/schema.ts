@@ -1,6 +1,7 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, blob, primaryKey } from 'drizzle-orm/sqlite-core';
 import { relations } from 'drizzle-orm';
 import { float32Array } from './custom-types';
+import type { IntegrationMeta, IntegrationProvider, IntegrationStatus } from '../lib/schemas/integrations';
 
 /**
  * Better Auth + Drizzle/LibSQL Authentication Schema
@@ -190,6 +191,32 @@ export const localTickets = sqliteTable('local_tickets', {
   syncedAt: integer('synced_at', { mode: 'timestamp' }),
 });
 
+// ─── Project Integrations (BYO per-tenant keys, envelope-encrypted) ───
+
+export const projectIntegrations = sqliteTable(
+  'project_integrations',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    provider: text('provider').$type<IntegrationProvider>().notNull(),
+    encryptedKey: blob('encrypted_key', { mode: 'buffer' }).$type<Buffer>().notNull(),
+    meta: text('meta', { mode: 'json' })
+      .$type<IntegrationMeta>()
+      .notNull()
+      .$defaultFn(() => ({})),
+    status: text('status').$type<IntegrationStatus>().notNull().default('active'),
+    lastTestedAt: integer('last_tested_at', { mode: 'timestamp' }),
+    createdAt: integer('created_at', { mode: 'timestamp' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer('updated_at', { mode: 'timestamp' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.provider] })],
+);
+
 // ─── Relations ──────────────────────────────────────────────────
 
 export const authUserRelations = relations(authUser, ({ many }) => ({
@@ -223,6 +250,14 @@ export const projectRelations = relations(projects, ({ one, many }) => ({
   linearIssues: many(linearIssues),
   wikiDocuments: many(wikiDocuments),
   localTickets: many(localTickets),
+  integrations: many(projectIntegrations),
+}));
+
+export const projectIntegrationsRelations = relations(projectIntegrations, ({ one }) => ({
+  project: one(projects, {
+    fields: [projectIntegrations.projectId],
+    references: [projects.id],
+  }),
 }));
 
 export const conversationRelations = relations(conversations, ({ one, many }) => ({

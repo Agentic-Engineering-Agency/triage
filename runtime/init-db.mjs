@@ -182,6 +182,17 @@ const tables = [
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS project_integrations (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    encrypted_key BLOB NOT NULL,
+    meta TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'active',
+    last_tested_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (project_id, provider)
+  )`,
 ];
 
 for (const sql of tables) {
@@ -205,6 +216,7 @@ const indexes = [
   `CREATE INDEX IF NOT EXISTS idx_workflow_runs_issue_id ON workflow_runs(issue_id)`,
   `CREATE INDEX IF NOT EXISTS idx_llm_usage_project_id ON llm_usage(project_id)`,
   `CREATE INDEX IF NOT EXISTS idx_llm_usage_created_at ON llm_usage(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_project_integrations_project_id ON project_integrations(project_id)`,
 ];
 
 for (const sql of indexes) {
