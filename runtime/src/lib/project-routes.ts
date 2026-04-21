@@ -13,26 +13,10 @@ import { registerApiRoute } from '@mastra/core/server';
 import { createClient } from '@libsql/client';
 import crypto from 'crypto';
 import { generateWiki } from './wiki-rag';
+import { extractSessionToken } from './auth-helpers';
 
 function getDb() {
   return createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
-}
-
-// Extract session token from Better Auth cookie.
-// Cookie format: "better-auth.session_token=<token>.<signature>" (URL-encoded)
-function extractSessionToken(cookieHeader: string | undefined): string | null {
-  if (!cookieHeader) return null;
-  const match = cookieHeader.match(/better-auth\.session_token=([^;]+)/);
-  if (!match) return null;
-  const raw = decodeURIComponent(match[1]);
-  // Strip the .signature suffix — we only need the token itself
-  const dotIndex = raw.indexOf('.');
-  return dotIndex >= 0 ? raw.slice(0, dotIndex) : raw;
-}
-
-// Helper to get userId from session cookie
-function getUserIdFromCookies(cookieHeader: string | undefined): string | null {
-  return extractSessionToken(cookieHeader);
 }
 
 // ---------- POST /projects/init-default ----------

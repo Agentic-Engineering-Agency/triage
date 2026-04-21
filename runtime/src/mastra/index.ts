@@ -26,6 +26,7 @@ import { sendSlackTicketNotification, sendSlackResolutionNotification } from './
 import { logUsage } from '../lib/usage-logger';
 import { verifyLinearSignature } from '../lib/verify-linear-signature';
 import { getWebhookSecret, LINEAR_PROVIDER } from '../lib/webhook-secrets';
+import { getUserIdFromRequest } from '../lib/auth-helpers';
 
 // Paranoid anchored regex for parsing a repository URL. Bounded lengths,
 // single-pass, no catastrophic backtracking.
@@ -1015,17 +1016,9 @@ export const mastra = new Mastra({
 
               const contextMessage = getMemoryInitializationContext();
 
-              // Extract resourceId (userId) from session cookie for Mastra memory requirement
-              const cookie = c.req.header('cookie') || '';
-              const tokenMatch = cookie.match(/better-auth\.session_token=([^;]+)/);
-              const rawToken = tokenMatch ? decodeURIComponent(tokenMatch[1]) : '';
-              const sessionToken = rawToken.includes('.') ? rawToken.slice(0, rawToken.indexOf('.')) : rawToken;
-              let resourceId = 'anonymous';
-              if (sessionToken) {
-                const db = (await import('@libsql/client')).createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
-                const r = await db.execute({ sql: 'SELECT user_id FROM auth_session WHERE token = ? LIMIT 1', args: [sessionToken] });
-                if (r.rows[0]?.user_id) resourceId = r.rows[0].user_id as string;
-              }
+              // Mastra memory requires a resourceId — fall back to 'anonymous'
+              // when there's no authenticated session (scripts, tests).
+              const resourceId = (await getUserIdFromRequest(c)) ?? 'anonymous';
 
               await storage.stores!.memory!.saveMessages({
                 messages: [{
@@ -1121,17 +1114,7 @@ export const mastra = new Mastra({
                 return c.json({ success: false, error: { code: 'NO_STORAGE', message: 'Memory storage not available' } }, 500);
               }
 
-              // Extract resourceId (userId) from session cookie for Mastra memory requirement
-              const cookie = c.req.header('cookie') || '';
-              const tokenMatch = cookie.match(/better-auth\.session_token=([^;]+)/);
-              const rawToken = tokenMatch ? decodeURIComponent(tokenMatch[1]) : '';
-              const sessionToken = rawToken.includes('.') ? rawToken.slice(0, rawToken.indexOf('.')) : rawToken;
-              let resourceId = 'anonymous';
-              if (sessionToken) {
-                const db = (await import('@libsql/client')).createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
-                const r = await db.execute({ sql: 'SELECT user_id FROM auth_session WHERE token = ? LIMIT 1', args: [sessionToken] });
-                if (r.rows[0]?.user_id) resourceId = r.rows[0].user_id as string;
-              }
+              const resourceId = (await getUserIdFromRequest(c)) ?? 'anonymous';
 
               // Caller can pass either `content` (plain text) or `parts` (rich:
               // tool-invocation, reasoning, file, etc.). Always store in the
