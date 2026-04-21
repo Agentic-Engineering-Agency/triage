@@ -1,18 +1,18 @@
 # Handoff — Multi-tenant hardening & UX redesign
 
 **Branch:** `fix/ui-cleanup-cycle-panel`
-**Last commit:** `4ec307a chore(types): fix pre-existing tsc drift (schema + pricing)` (2026-04-20); **#4a work staged uncommitted** on same branch (2026-04-20)
-**Date:** 2026-04-17 (original), 2026-04-20 (#3 committed + #4a staged)
+**Last commit:** `124f29a feat(integrations): resolve OpenRouter keys per-tenant for agents/tools (#4b)` (2026-04-21)
+**Date:** 2026-04-17 (original), 2026-04-20 (#3 + #4a), 2026-04-21 (#4b)
 
 ---
 
 ## Objetivo de la próxima sesión
 
-**Siguiente natural: #4b — Agents' `model:` dynamic para OpenRouter key per-tenant.**
+**Siguiente natural: #5 — UI de configuración BYO keys por dominio.**
 
-Estado del branch: 5 commits pusheables + #4a staged (sin commitear). TSC 0 errores. Test baseline estable (106 fallos pre-existing, 516 passing sobre 669). `project-routes.test.ts` tiene 15 fallos pre-existing en el bloque CRUD (auth 401 en el mock) — son ruido previo.
+Estado del branch: 6 commits pusheables. TSC 47 errores pre-existing (baseline inchanged). Test baseline estable (106 fails pre-existing, 522 passing — +6 nuevos de tenant-openrouter). `project-routes.test.ts` tiene 15 fallos pre-existing en el bloque CRUD (auth 401 en el mock) — son ruido previo.
 
-El sistema corre end-to-end (smoke test #4a: TRI-49 creado con `source=env` en los 3 tools refactorizados). #1-#3 + #4a cerrados. Falta #4b (agents) + #5 (UI BYO-keys) para cerrar el arco.
+El sistema corre end-to-end: chat stream + /api/test/slack-agent loggean `[tenant-keys] project=<id> provider=openrouter source=env` confirmando que el `model:` dynamic de los agentes resuelve per-tenant y cae a env cuando no hay fila en `project_integrations`. #1-#4 del arco multi-tenant cerrados; falta #5 (UI BYO) + #6 (test connection + wizard).
 
 Ver la sección **"Priorización"** más abajo para el detalle.
 
@@ -177,17 +177,55 @@ Partido en 4a (tools) + 4b (agents' `model:`) para reducir blast radius. 4a cerr
 **Para #4b (agents)**:
 Usar `model: async ({ requestContext }) => createOpenRouter({ apiKey: await resolveKeyValue('openrouter', requestContext.get('projectId')) })(...)` — patrón canónico Mastra de dynamic model. Blast radius alto porque toca cada stream de chat; probar con un solo agent primero (recomiendo `slack-notification-agent` que se invoca desde el workflow con un proyecto activo en context).
 
-### 4b. Refactor de agentes (`model:` dynamic para OpenRouter key)
-Pendiente. 5 agentes a migrar:
-- `agents/orchestrator.ts:25`
-- `agents/triage-agent.ts:7`
-- `agents/resolution-reviewer.ts:7`
-- `agents/code-review-agent.ts:7`
-- `agents/slack-notification-agent.ts:7`
-- `mastra/tools/attachments.ts:7,55` (usa createOpenRouter para vision)
-- `lib/wiki-rag.ts:223,331` (embeddings — estos corren en background, `projectId` viene en la llamada `generateWiki(id, ...)`, no via requestContext)
+### 4b. Refactor de agentes (`model:` dynamic para OpenRouter key) ✅ DONE (2026-04-21) — `124f29a`
 
-Hay que inyectar el `projectId` en el `requestContext` y resolver la key per-tenant al momento de la llamada.
+Todos los OpenRouter clients construidos module-level fueron reemplazados por resolución per-call. Helper nuevo + 5 agentes + 1 tool + 1 lib + 5 workflow call sites migrados.
+
+**Helper — `runtime/src/lib/tenant-openrouter.ts`**:
+- `resolveOpenRouterFromContext({ requestContext })` para agentes (lee `projectId` del contexto)
+- `resolveOpenRouterFromProjectId(projectId)` para wiki-rag/attachments donde `projectId` ya viene como arg
+- Ambos devuelven la factory `createOpenRouter(...)` (cliente fresco por call, ningún estado compartido)
+- Si nada resuelve, `apiKey: undefined` → OpenRouter tira 401 limpio en vez de silenciar
+- 6 unit tests en `tenant-openrouter.test.ts`
+
+**Agentes** — todos con `model: async ({ requestContext }) => ...`:
+- `agents/orchestrator.ts` — preserva extraBody con fallback chain + max_tokens 4000
+- `agents/triage-agent.ts` — mercury plain
+- `agents/resolution-reviewer.ts` — mercury plain
+- `agents/code-review-agent.ts` — mercury plain
+- `agents/slack-notification-agent.ts` — preserva extraBody con fallback chain + max_tokens 800
+
+**Tool — `mastra/tools/attachments.ts`**:
+- Ambos paths resuelven per-tenant: AI SDK vision (imagen) + raw fetch a `openrouter.ai/api/v1/chat/completions` (PDF)
+- Lee `projectId` desde `toolCtx.requestContext.get('projectId')`
+- Input shape cambió de `(input)` directo a `(input, toolCtx?)` con manejo dual `{ context } | direct` (mismo patrón que resend.ts)
+
+**Lib — `lib/wiki-rag.ts`**:
+- `generateWiki(projectId, ...)` y `queryWiki(query, projectId?, ...)` resuelven via helper
+- Query-side con projectId undefined → cae al env (preserva comportamiento pre-tenant)
+
+**Workflow — `mastra/workflows/triage-workflow.ts`**:
+Los 5 call sites de `.generate()` necesitan `requestContext` sintético porque no pasan por el middleware HTTP. Agregado helper `tenantContext(projectId)` que construye `new RequestContext([['projectId', ...]])`:
+- `notifyStep:701` — `slackNotificationAgent.generate(msg, { requestContext })`
+- `verifyStep:858` — `resolutionReviewer.generate(msg, { requestContext })` (ramo sin PR)
+- `verifyStep:879` — `resolutionReviewer.generate(msg, { requestContext })` (ramo con PR, Promise.all)
+- `verifyStep:882` — `codeReviewAgent.generate(msg, { requestContext })`
+- `notifyResolutionStep:1022` — `slackNotificationAgent.generate(msg, { requestContext })`
+
+**Admin route `/api/test/slack-agent`** (`mastra/index.ts`):
+Ahora acepta `projectId` opcional en el body y lo propaga vía `new RequestContext` al agent. Útil para smoke manual sin correr el workflow completo.
+
+**Smoke validado (2026-04-21)**:
+- `POST /api/test/slack-agent` con `projectId=11111111-...` → logs `[tenant-keys] project=<id> provider=openrouter source=env` + `provider=slack source=env`. Mensaje en Slack OK.
+- `POST /chat` con header `x-project-id=b6892f6b-...` (slugify-test) → logs `[tenant-keys] project=<id> provider=openrouter source=env`. Stream respondió "OK".
+
+**Gotchas**:
+- `DynamicArgument<T>` de Mastra acepta `T | (({ requestContext, mastra }) => T | Promise<T>)` — la signatura exacta del agent `model:` está en `@mastra/core/dist/types/dynamic-argument.d.ts`.
+- Workflow agents bypasseaan el middleware HTTP. Sin `new RequestContext([['projectId', ...]])` como segundo arg de `.generate()`, el agent ve un contexto vacío y cae al env aunque el projectId exista en `inputData`.
+- `attachments.ts`: si agregas un proveedor que use OpenRouter con un endpoint raw (como el file-parser plugin), resolver la key vía `resolveKey('openrouter', projectId)` en vez de `process.env` directo — si no, el branch raw tendría comportamiento diferente al AI SDK.
+
+**Para #5 (UI BYO keys)**:
+Backend de integrations ya listo: tabla `project_integrations` + `crypto-envelope` + `integration-routes.ts`. Falta solo UI — rediseño de `/integrations` con cards por dominio (ver siguiente sección).
 
 ### 5. UI de configuración por dominio (BYO keys)
 Rediseño de `/integrations` en frontend. Por dominio:
@@ -266,16 +304,15 @@ docker exec triage-runtime-1 node -e "
 - **Arquitectura general:** `ARCHITECTURE.md` en root.
 - **Docs de Mastra:** usar MCP `mastra` tools (`searchMastraDocs`, `readMastraDocs`) para verificar API signatures; están cambiando rápido (v1.4).
 - **Git log reciente (branch, sin pushear):**
-  - `4ec307a` — chore(types): fix pre-existing tsc drift (schema + pricing) — TSC limpio
+  - `124f29a` — feat(integrations): resolve OpenRouter keys per-tenant for agents/tools (#4b)
+  - `54de998` — feat(integrations): resolve API keys per-tenant in tools (#4a)
+  - `4ec307a` — chore(types): fix pre-existing tsc drift (schema + pricing)
   - `74e05f2` — feat(integrations): envelope-encrypted per-tenant keys schema (#3)
   - `6dcc311` — feat(wiki): project-aware orchestrator + pipeline fixes (#2)
   - `63b13e6` — feat(webhooks): verify Linear signatures con HMAC-SHA256 + secret persistence (#1)
-  - `fd73700` — fix(frontend): restore static Caddy mode + clear TS build errors
-  - `132454d` — observability crash fix + pricing prefix match + webhook scripts
-  - `62fb05f` — callTool helper para sendResolutionNotification
 
 ---
 
 ## Qué decirle al próximo agente al arrancar
 
-> "Estamos en `fix/ui-cleanup-cycle-panel` (5 commits sin pushear + #4a staged). El sistema funciona end-to-end (smoke test reciente creó TRI-49). Lee `docs/HANDOFF-MULTI-TENANT-HARDENING-2026-04-17.md` antes de empezar. #1-#3 + #4a del arco multi-tenant están cerrados; el siguiente es #4b — hacer dynamic el `model:` de los 5 agentes para que OpenRouter use la key per-tenant (ver sección 4b del handoff). TSC está limpio. No toques `.env` ni hagas commits sin que te lo pida."
+> "Estamos en `fix/ui-cleanup-cycle-panel` (6 commits sin pushear). El sistema funciona end-to-end (smoke reciente: chat stream + admin route loggean `[tenant-keys] source=env` confirmando que el model dynamic resuelve per-tenant). Lee `docs/HANDOFF-MULTI-TENANT-HARDENING-2026-04-17.md` antes de empezar. #1-#4 del arco multi-tenant están cerrados; el siguiente es #5 — UI BYO keys en `/integrations` (cards por dominio, test-connection, save). El backend ya existe (tabla `project_integrations` + crypto-envelope + `integration-routes.ts`), solo falta el frontend. No toques `.env` ni hagas commits sin que te lo pida."
