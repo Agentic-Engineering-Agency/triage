@@ -227,14 +227,61 @@ Ahora acepta `projectId` opcional en el body y lo propaga vía `new RequestConte
 **Para #5 (UI BYO keys)**:
 Backend de integrations ya listo: tabla `project_integrations` + `crypto-envelope` + `integration-routes.ts`. Falta solo UI — rediseño de `/integrations` con cards por dominio (ver siguiente sección).
 
-### 5. UI de configuración por dominio (BYO keys)
-Rediseño de `/integrations` en frontend. Por dominio:
-- **Ticketing** (Linear) — paste key → auto-fetch org + teams → seleccionar team
-- **Communication** (Resend + Slack) — paste key → test connection → seleccionar canal/sender
-- **Code** (GitHub) — OAuth preferido, pero PAT como fallback
-- **LLM** (OpenRouter o directo Anthropic/OpenAI) — paste key → test con `/v1/models` → seleccionar modelos
+### 5a. UI BYO keys — OpenRouter slice ✅ CODE COMPLETE (2026-04-21)
 
-Cada card: toggle "enabled", estado de conexión (verde/rojo/amarillo), botón "Test", botón "Save".
+Primer slice de la UI de integrations, solo OpenRouter activa. Cierra el round-trip encrypt → decrypt → agent stream con un tenant key seedeado desde la UI.
+
+**Archivos**:
+- `runtime/src/lib/auth-helpers.ts` (nuevo) — `extractSessionToken` + `getUserIdFromRequest`. 10 unit tests. Reemplaza las 3 copias inline en `project-routes.ts` y `mastra/index.ts`.
+- `runtime/src/lib/integration-routes.ts` (rewrite completo) — 4 routes contra `project_integrations` encriptado: `GET`, `PUT`, `DELETE`, `POST /test`. Ownership check vía `projects.user_id = userId`. Drop del path plaintext viejo que escribía a `projects.linear_token / github_token / slack_*`.
+- `runtime/src/lib/integration-routes.test.ts` (nuevo) — 15 tests: auth/ownership, PUT/DELETE, OpenRouter test mock (200/401/network), round-trip `resolveKey` devuelve `source=tenant` + aislamiento entre projects.
+- `frontend/src/routes/integrations.lazy.tsx` (nuevo) — Página `/integrations` con 4 cards por dominio. Solo OpenRouter activa (input password + "Test & Save" + badge status + delete con confirm); las otras 3 son stubs "Coming soon".
+- `frontend/src/routes/__root.tsx` — agregado nav entry `Integrations` con ícono `KeyRound` entre Projects y Settings.
+- `frontend/src/routeTree.gen.ts` — incluye `/integrations` (regenera en build).
+- `runtime/src/lib/project-routes.test.ts` — removido el `describe('integration-routes', ...)` viejo (215 líneas) y la única data-isolation test que tocaba `testLinearTokenRoute`. Helper `loadIntegrationRoutes` limpiado.
+
+**API shape**:
+```
+GET    /projects/:projectId/integrations                        → IntegrationSummary[]
+PUT    /projects/:projectId/integrations/:provider              → { apiKey, meta? } → IntegrationSummary
+DELETE /projects/:projectId/integrations/:provider              → { deleted: true }
+POST   /projects/:projectId/integrations/:provider/test         → { apiKey, meta? } | (sin body) → { valid, reason?, integration? }
+```
+
+`test` endpoint sólo persiste + `markTested(true)` cuando la key valida. Bogus/network errors NO persisten. Si no se pasa body, reusa la stored key (útil para "retest sin re-pegar").
+
+**Gotcha del endpoint OpenRouter**: el handoff inicial decía usar `/v1/models` para validar. ❌ Ese endpoint es público y devuelve 200 incluso sin token. Cambiado a **`/api/v1/auth/key`** que 401s para bogus y 200s con metadata para real.
+
+**Gotcha del router plugin**: `@tanstack/router-plugin` no regeneró `routeTree.gen.ts` al correr `vite build` standalone — el `.tanstack/tmp` estaba root-owned y el plugin no pudo escribir. Workaround: editar el file manualmente siguiendo el pattern (el build del Docker image lo regenera correctamente porque el container user sí tiene permisos).
+
+**APP_MASTER_KEY setup** (prerequisito de smoke):
+El `.env` actual **no contiene** `APP_MASTER_KEY` (el handoff anterior afirmaba que sí, pero `grep '^APP_MASTER_KEY' .env` retorna vacío). Antes de smokear:
+```bash
+echo "APP_MASTER_KEY=$(openssl rand -base64 32)" >> .env
+docker compose up -d --force-recreate runtime  # restart NO re-lee env_file
+```
+
+**Status del smoke** (parcial — faltan los pasos UI):
+- ✅ `GET /projects/:id/integrations` sin cookie → 401
+- ✅ `GET /projects/:id/integrations` con cookie válida → 200, data `[]`
+- ✅ `GET /projects/ghost/integrations` con cookie → 404 (no existence leak)
+- ⏳ `POST .../openrouter/test` con bogus key → pendiente (bloqueado por APP_MASTER_KEY)
+- ⏳ `POST .../openrouter/test` con real key → persist + `resolveKey` source=tenant
+- ⏳ DELETE → `resolveKey` vuelve a env
+- ⏳ UI walkthrough: abrir `/integrations`, pegar key, ver green "Saved", ver nav-switch a otro project → card independiente
+
+**Baselines**: TSC runtime 14 errores (baja 12 vs 26 baseline porque el rewrite eliminó el código viejo que los tenía). TSC frontend limpio. Tests: +25 nuevos passing (10 auth-helpers + 15 integration-routes), 106 failing estable (sin regresiones).
+
+**Followups para #5b**:
+- Cards activas para **Linear** (paste key → `/api/v1/viewer` test → auto-fetch teams → guardar `teamId` en meta), **Resend** (paste key → send probe email → guardar `fromEmail` en meta), **Slack** (paste bot token → `auth.test` → guardar `channelId` en meta), **GitHub** (paste PAT → `/user` test → guardar `owner/repo` en meta).
+- **`scoped-routes.ts` flip al encriptado**: los 3 endpoints `/projects/:id/linear/{issues,cycle,members}` hoy leen `project.linear_token` directo. Cuando la card de Linear aterrice en #5b, flipiar a `resolveKey('linear', projectId)` para que la UI pueda verificar que la key seedeada funciona end-to-end.
+- **`webhook_secrets` table refactor**: todavía global (un row, PK=provider). Cuando la card de Linear registre webhooks per-tenant, mover a `(project_id, provider)` composite PK.
+- **Ownership check en `scoped-routes.ts`**: hoy cualquier cookie-authed user puede leer los Linear issues de cualquier project. Replicar el pattern de `assertProjectOwnership` al hacer el flip.
+- **Drop de columnas plaintext**: `projects.linear_token / linear_team_id / linear_webhook_id / linear_webhook_url / github_token / github_repo_owner / github_repo_name / slack_enabled / slack_channel_id / slack_webhook_url / resend_api_key`. Dejarlas nullable hasta que todos los readers hayan migrado; dropearlas en migration posterior.
+- **Out of scope permanente**: `mastra/index.ts:43` LinearClient singleton (linear-sync cron es system-level, no per-tenant).
+
+### 5b. UI BYO keys — Linear/Resend/Slack/GitHub (próximo)
+Mismo pattern que OpenRouter, una card por provider. Cada `testX` en el dispatch (`runProviderTest`) para reemplazar el `not_implemented` actual.
 
 ### 6. Test-connection buttons + onboarding wizard
 - Endpoint `POST /integrations/:provider/test` con la key provisional, sin persistir
