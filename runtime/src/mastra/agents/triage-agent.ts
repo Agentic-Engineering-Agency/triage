@@ -1,11 +1,7 @@
 import { Agent } from '@mastra/core/agent';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { MODELS } from '../../lib/config';
+import { resolveOpenRouterFromContext } from '../../lib/tenant-openrouter';
 import { queryWikiTool } from '../tools/index';
-
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
 
 /**
  * Triage Agent — specialized in incident analysis and classification.
@@ -56,7 +52,10 @@ Always produce structured output matching the triage schema:
 - If confidence is below 0.5, explicitly state what additional information would help
 - Always include at least one suggested action, even if it's "gather more logs"
 - Chain of thought must show the actual reasoning, not just repeat the conclusion`,
-  model: openrouter(MODELS.mercury),
+  model: async ({ requestContext }) => {
+    const openrouter = await resolveOpenRouterFromContext({ requestContext });
+    return openrouter(MODELS.mercury);
+  },
   tools: {
     queryWikiTool,
   },

@@ -1,4 +1,5 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows';
+import { RequestContext } from '@mastra/core/request-context';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { createClient } from '@libsql/client';
@@ -45,6 +46,16 @@ async function callTool(
   // Mastra v1.4+ passes tool args at top level, not wrapped in { context }.
   // Pass both shapes for compatibility — tools read from whichever is present.
   return tool.execute({ ...input, context: input }, runtimeContext);
+}
+
+// Build a RequestContext carrying the active projectId so agents invoked from
+// workflow steps (slackNotificationAgent, resolutionReviewer, codeReviewAgent)
+// can resolve per-tenant keys via their dynamic `model:` function. Without
+// this, Mastra constructs an empty context and the agents fall back to env.
+function tenantContext(projectId: string | undefined): RequestContext {
+  const rc = new RequestContext();
+  if (projectId) rc.set('projectId', projectId);
+  return rc;
 }
 
 // ---------------------------------------------------------------------------
@@ -699,7 +710,8 @@ const notifyStep = createStep({
         linearIssueId: inputData.issueId,
       };
       await slackNotificationAgent.generate(
-        `Format and send this ticket notification to Slack: ${JSON.stringify(ticketData)}`
+        `Format and send this ticket notification to Slack: ${JSON.stringify(ticketData)}`,
+        { requestContext: tenantContext(inputData.projectId) },
       );
       slackSent = true;
       console.log('[notify] Slack notification sent via agent');
@@ -859,7 +871,8 @@ const verifyStep = createStep({
           `The Linear issue was moved to "${inputData.webhookPayload.newStatus}".\n` +
           `Original root cause: ${inputData.rootCause}\n` +
           `Issue description:\n${description.slice(0, 2000)}\n\n` +
-          `Based on the status change, provide a resolution summary.`
+          `Based on the status change, provide a resolution summary.`,
+          { requestContext: tenantContext(inputData.projectId) },
         );
 
         return {
@@ -875,12 +888,15 @@ const verifyStep = createStep({
 
       // 3. Run resolution-reviewer and code-review-agent in parallel
       const prUrl = prUrlMatch[0];
+      const rc = tenantContext(inputData.projectId);
       const [resolutionResult, codeReviewResult] = await Promise.all([
         resolutionReviewer.generate(
-          `Verify if this fix resolves the incident.\nOriginal root cause: ${inputData.rootCause}\nPR: ${prUrl}\nIssue: ${inputData.issueUrl}`
+          `Verify if this fix resolves the incident.\nOriginal root cause: ${inputData.rootCause}\nPR: ${prUrl}\nIssue: ${inputData.issueUrl}`,
+          { requestContext: rc },
         ),
         codeReviewAgent.generate(
-          `Review the code changes in this PR for quality and correctness.\nPR: ${prUrl}\nContext: This PR should fix: ${inputData.rootCause}`
+          `Review the code changes in this PR for quality and correctness.\nPR: ${prUrl}\nContext: This PR should fix: ${inputData.rootCause}`,
+          { requestContext: rc },
         ),
       ]);
 
@@ -1020,7 +1036,8 @@ const notifyResolutionStep = createStep({
         linearIssueId: inputData.issueId,
       };
       await slackNotificationAgent.generate(
-        `Format and send this resolution notification to Slack: ${JSON.stringify(resolutionData)}`
+        `Format and send this resolution notification to Slack: ${JSON.stringify(resolutionData)}`,
+        { requestContext: tenantContext(inputData.projectId) },
       );
       slackSent = true;
       console.log('[notify-resolution] Slack notification sent via agent');

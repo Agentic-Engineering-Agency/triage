@@ -1,11 +1,7 @@
 import { Agent } from '@mastra/core/agent';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { MODELS } from '../../lib/config';
+import { resolveOpenRouterFromContext } from '../../lib/tenant-openrouter';
 import { sendSlackMessage } from '../tools/slack';
-
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
 
 /**
  * Slack Notification Agent
@@ -29,13 +25,16 @@ When given ticket data (title, severity, summary, Linear link, assignee, issue I
 
 Keep messages professional and scannable. Use bold for important info.
 Do NOT ask for confirmation, do NOT add commentary, just send the message.`,
-  model: openrouter(MODELS.mercury, {
-    extraBody: {
-      models: [MODELS.mercury, MODELS.orchestratorFallback1],
-      route: 'fallback',
-      max_tokens: 800,
-    },
-  }),
+  model: async ({ requestContext }) => {
+    const openrouter = await resolveOpenRouterFromContext({ requestContext });
+    return openrouter(MODELS.mercury, {
+      extraBody: {
+        models: [MODELS.mercury, MODELS.orchestratorFallback1],
+        route: 'fallback',
+        max_tokens: 800,
+      },
+    });
+  },
   tools: {
     sendSlackMessage,
   },

@@ -2,8 +2,8 @@ import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { LibSQLStore } from '@mastra/libsql';
 import { createClient } from '@libsql/client';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { MODELS } from '../../lib/config';
+import { resolveOpenRouterFromContext } from '../../lib/tenant-openrouter';
 
 // Explicit storage for memory — ensures persistence to the shared LibSQL container
 const memoryStorage = new LibSQLStore({
@@ -21,10 +21,6 @@ import {
   displayTriageTool,
   displayDuplicateTool,
 } from '../tools/index';
-
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
 
 // ─── Base prompt (project-agnostic) ──────────────────────────────
 // Kept as a constant so the dynamic `instructions` can reuse it and
@@ -148,13 +144,16 @@ ${wikiGuidance}`;
   // which triggered spurious 402s on keys with lower balances. Dropped it —
   // mercury-2 is a text-only model, reasoning tokens don't help classification.
   // max_tokens bumped to 4000 to leave room for tool-call JSON payloads.
-  model: openrouter(MODELS.mercury, {
-    extraBody: {
-      models: [MODELS.mercury, MODELS.orchestratorFallback1],
-      route: 'fallback',
-      max_tokens: 4000,
-    },
-  }),
+  model: async ({ requestContext }) => {
+    const openrouter = await resolveOpenRouterFromContext({ requestContext });
+    return openrouter(MODELS.mercury, {
+      extraBody: {
+        models: [MODELS.mercury, MODELS.orchestratorFallback1],
+        route: 'fallback',
+        max_tokens: 4000,
+      },
+    });
+  },
   tools: {
     getLinearIssueTool,
     listLinearIssuesTool,

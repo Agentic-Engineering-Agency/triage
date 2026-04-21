@@ -1,11 +1,7 @@
 import { Agent } from '@mastra/core/agent';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { MODELS } from '../../lib/config';
+import { resolveOpenRouterFromContext } from '../../lib/tenant-openrouter';
 import { queryWikiTool } from '../tools/index';
-
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
 
 /**
  * Code Review Agent — specialized subagent for detailed code analysis.
@@ -127,7 +123,10 @@ Always produce structured output matching the codeReviewOutputSchema:
 - All API responses use \`{ success: true, data } | { success: false, error: { code, message } }\`
 - Database naming: snake_case tables/columns, camelCase in TypeScript
 - Error paths should always log for observability`,
-  model: openrouter(MODELS.mercury),
+  model: async ({ requestContext }) => {
+    const openrouter = await resolveOpenRouterFromContext({ requestContext });
+    return openrouter(MODELS.mercury);
+  },
   tools: {
     queryWikiTool,
   },

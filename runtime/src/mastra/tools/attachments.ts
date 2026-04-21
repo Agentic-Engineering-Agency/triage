@@ -1,22 +1,35 @@
 import { createTool } from '@mastra/core/tools';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateText } from 'ai';
 import { MODELS } from '../../lib/config';
+import { resolveKey } from '../../lib/tenant-keys';
+import { resolveOpenRouterFromProjectId } from '../../lib/tenant-openrouter';
 import { processAttachmentsInputSchema, processAttachmentsOutputSchema } from '../../lib/schemas';
 
-const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
+type ToolCtx = { requestContext?: { get: (key: string) => unknown } } | undefined;
 
 export const processAttachmentsTool = createTool({
   id: 'process-attachments',
   description: 'Processes incident attachments (images, PDFs, text files) and returns an enriched description combining the original text with extracted attachment content.',
   inputSchema: processAttachmentsInputSchema,
   outputSchema: processAttachmentsOutputSchema,
-  execute: async (input) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     try {
-      const { description, attachments } = input;
+      const ctx = ((input as { context?: Record<string, unknown> })?.context ?? input) as {
+        description: string;
+        attachments?: Array<{ type: 'image' | 'pdf' | 'text' | 'log'; filename: string; content: string }>;
+      };
+      const { description, attachments } = ctx;
       if (!attachments || attachments.length === 0) {
         return { enrichedDescription: description };
       }
+
+      // Resolve per-tenant OpenRouter once for this invocation — both branches
+      // (image via AI SDK, PDF via raw fetch) share the same key.
+      const projectId = toolCtx?.requestContext?.get('projectId') as string | undefined;
+      const openrouter = await resolveOpenRouterFromProjectId(projectId);
 
       const attachmentDescriptions: string[] = [];
 
@@ -48,11 +61,17 @@ export const processAttachmentsTool = createTool({
           }
 
           case 'pdf': {
-            // Use OpenRouter file-parser plugin with Cloudflare AI engine
+            // Raw fetch uses file-parser plugin + Cloudflare AI engine. The
+            // AI SDK wrapper doesn't expose that plugin path, so we hit the
+            // chat/completions endpoint directly. Resolve the Bearer token
+            // per-tenant to mirror the AI SDK path above — otherwise the PDF
+            // branch would always charge the env key even when the image
+            // branch (in the same call) uses a tenant key.
+            const { key: apiKey } = await resolveKey('openrouter', projectId);
             const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
               method: 'POST',
               headers: {
-                'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                'Authorization': `Bearer ${apiKey ?? ''}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
@@ -102,7 +121,8 @@ export const processAttachmentsTool = createTool({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[process-attachments] Error: ${message}`);
-      return { enrichedDescription: input.description };
+      const ctx = ((input as { context?: Record<string, unknown> })?.context ?? input) as { description: string };
+      return { enrichedDescription: ctx.description };
     }
   },
 });

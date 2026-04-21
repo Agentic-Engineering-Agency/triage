@@ -9,7 +9,7 @@ import { createClient } from '@libsql/client';
 import { LibSQLVector } from '@mastra/libsql';
 import { MDocument } from '@mastra/rag';
 import { embed, embedMany } from 'ai';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { resolveOpenRouterFromProjectId } from './tenant-openrouter';
 import { execFileSync } from 'child_process';
 import { readFileSync, readdirSync, lstatSync, existsSync, rmSync } from 'fs';
 import { join, extname, relative } from 'path';
@@ -219,8 +219,10 @@ export async function generateWiki(
       }
     }
 
-    // Batch embed and store chunks
-    const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
+    // Batch embed and store chunks. OpenRouter client resolves per-tenant
+    // via the project_integrations table (fallback to env when not
+    // configured for this project).
+    const openrouter = await resolveOpenRouterFromProjectId(projectId);
 
     for (let i = 0; i < allChunks.length; i += BATCH_SIZE) {
       const batch = allChunks.slice(i, i + BATCH_SIZE);
@@ -328,7 +330,10 @@ export async function queryWiki(
     return { results: [], query, totalResults: 0 };
   }
 
-  const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
+  // Query-side embedding uses the same per-tenant resolver; when projectId is
+  // undefined (global search path, currently unused) resolveKey falls back to
+  // env so this matches pre-tenant behaviour for callers that pass no scope.
+  const openrouter = await resolveOpenRouterFromProjectId(projectId ?? null);
 
   // Generate query embedding
   const { embedding: queryVector } = await embed({

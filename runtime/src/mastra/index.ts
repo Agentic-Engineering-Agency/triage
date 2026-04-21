@@ -1,4 +1,5 @@
 import { Mastra } from '@mastra/core';
+import { RequestContext } from '@mastra/core/request-context';
 import { registerApiRoute } from '@mastra/core/server';
 import { LibSQLStore } from '@mastra/libsql';
 import { chatRoute } from '@mastra/ai-sdk';
@@ -1325,9 +1326,17 @@ export const mastra = new Mastra({
               linearIssueId: 'TEST-001',
             };
 
+            // Thread projectId through requestContext so the agent's dynamic
+            // model resolver can pick up per-tenant keys. Falls back to env
+            // when no projectId is provided — matches the workflow behaviour.
+            const projectId = typeof body?.projectId === 'string' ? body.projectId : undefined;
+            const requestContext = new RequestContext();
+            if (projectId) requestContext.set('projectId', projectId);
+
             // Run the agent with ticket data
             const result = await slackNotificationAgent.generate(
-              `Format and send this ticket notification to Slack: ${JSON.stringify(ticketData)}`
+              `Format and send this ticket notification to Slack: ${JSON.stringify(ticketData)}`,
+              { requestContext },
             );
 
             return c.json({
