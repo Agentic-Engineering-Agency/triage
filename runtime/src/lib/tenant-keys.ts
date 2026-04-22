@@ -1,6 +1,7 @@
 import { getIntegrationKey } from './integration-keys';
 import {
   integrationProviderSchema,
+  type IntegrationMeta,
   type IntegrationProvider,
 } from './schemas/integrations';
 
@@ -34,6 +35,13 @@ export type KeySource = 'tenant' | 'env' | 'none';
 
 export interface ResolveKeyResult {
   key: string | null;
+  /**
+   * Non-secret per-provider metadata from the tenant row (e.g. Linear teamId,
+   * Slack channelId, Resend fromEmail). Empty object when the key resolved
+   * via env fallback or not at all — callers should layer their own env-level
+   * defaults on top.
+   */
+  meta: IntegrationMeta;
   source: KeySource;
 }
 
@@ -75,7 +83,7 @@ export async function resolveKey(
     const res = await getIntegrationKey(projectId, parsedProvider);
     if (res.ok) {
       logSourceOnce(projectId, parsedProvider, 'tenant');
-      return { key: res.plaintext, source: 'tenant' };
+      return { key: res.plaintext, meta: res.meta, source: 'tenant' };
     }
     // `decrypt_failed` is a real failure (tampered row, wrong master key for
     // this ciphertext) — do NOT silently fall back, surface it as 'none' so
@@ -83,7 +91,7 @@ export async function resolveKey(
     // project that explicitly has a configured (but broken) integration.
     if (res.reason === 'decrypt_failed') {
       logSourceOnce(projectId, parsedProvider, 'none');
-      return { key: null, source: 'none' };
+      return { key: null, meta: {}, source: 'none' };
     }
     // not_found | master_key_missing → try env fallback.
   }
@@ -93,10 +101,10 @@ export async function resolveKey(
     const envKey = process.env[envVar];
     if (envKey && envKey.length > 0) {
       logSourceOnce(projectId, parsedProvider, 'env');
-      return { key: envKey, source: 'env' };
+      return { key: envKey, meta: {}, source: 'env' };
     }
   }
 
   logSourceOnce(projectId, parsedProvider, 'none');
-  return { key: null, source: 'none' };
+  return { key: null, meta: {}, source: 'none' };
 }

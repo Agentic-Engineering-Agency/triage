@@ -45,7 +45,11 @@ describe('tenant-keys / resolveKey', () => {
 
     const res = await resolveKey('linear', 'proj_a');
 
-    expect(res).toEqual({ key: 'sk-tenant-linear', source: 'tenant' });
+    expect(res).toEqual({
+      key: 'sk-tenant-linear',
+      meta: { teamId: 'TEAM-1' },
+      source: 'tenant',
+    });
     expect(mockedGet).toHaveBeenCalledWith('proj_a', 'linear');
   });
 
@@ -55,7 +59,7 @@ describe('tenant-keys / resolveKey', () => {
 
     const res = await resolveKey('resend', 'proj_a');
 
-    expect(res).toEqual({ key: 're-env', source: 'env' });
+    expect(res).toEqual({ key: 're-env', meta: {}, source: 'env' });
   });
 
   it('falls back to env when master key is missing', async () => {
@@ -64,7 +68,7 @@ describe('tenant-keys / resolveKey', () => {
 
     const res = await resolveKey('slack', 'proj_a');
 
-    expect(res).toEqual({ key: 'xoxb-env', source: 'env' });
+    expect(res).toEqual({ key: 'xoxb-env', meta: {}, source: 'env' });
   });
 
   it('does NOT fall back on decrypt_failed — returns none', async () => {
@@ -73,7 +77,7 @@ describe('tenant-keys / resolveKey', () => {
 
     const res = await resolveKey('linear', 'proj_a');
 
-    expect(res).toEqual({ key: null, source: 'none' });
+    expect(res).toEqual({ key: null, meta: {}, source: 'none' });
   });
 
   it('uses env directly when no projectId is provided', async () => {
@@ -81,7 +85,7 @@ describe('tenant-keys / resolveKey', () => {
 
     const res = await resolveKey('github');
 
-    expect(res).toEqual({ key: 'ghp-env', source: 'env' });
+    expect(res).toEqual({ key: 'ghp-env', meta: {}, source: 'env' });
     expect(mockedGet).not.toHaveBeenCalled();
   });
 
@@ -90,7 +94,7 @@ describe('tenant-keys / resolveKey', () => {
 
     const res = await resolveKey('openrouter', null);
 
-    expect(res).toEqual({ key: 'sk-or-env', source: 'env' });
+    expect(res).toEqual({ key: 'sk-or-env', meta: {}, source: 'env' });
     expect(mockedGet).not.toHaveBeenCalled();
   });
 
@@ -99,13 +103,13 @@ describe('tenant-keys / resolveKey', () => {
 
     const res = await resolveKey('linear', 'proj_a');
 
-    expect(res).toEqual({ key: null, source: 'none' });
+    expect(res).toEqual({ key: null, meta: {}, source: 'none' });
   });
 
   it('returns none when no projectId and no env var set', async () => {
     const res = await resolveKey('resend');
 
-    expect(res).toEqual({ key: null, source: 'none' });
+    expect(res).toEqual({ key: null, meta: {}, source: 'none' });
   });
 
   it('treats empty env var as missing', async () => {
@@ -114,7 +118,7 @@ describe('tenant-keys / resolveKey', () => {
 
     const res = await resolveKey('linear', 'proj_a');
 
-    expect(res).toEqual({ key: null, source: 'none' });
+    expect(res).toEqual({ key: null, meta: {}, source: 'none' });
   });
 
   it('envFallback:false skips env lookup entirely (strict mode)', async () => {
@@ -123,7 +127,7 @@ describe('tenant-keys / resolveKey', () => {
 
     const res = await resolveKey('linear', 'proj_a', { envFallback: false });
 
-    expect(res).toEqual({ key: null, source: 'none' });
+    expect(res).toEqual({ key: null, meta: {}, source: 'none' });
   });
 
   it('envFallback:false still returns tenant key when present', async () => {
@@ -137,7 +141,25 @@ describe('tenant-keys / resolveKey', () => {
 
     const res = await resolveKey('linear', 'proj_a', { envFallback: false });
 
-    expect(res).toEqual({ key: 'sk-tenant', source: 'tenant' });
+    expect(res).toEqual({ key: 'sk-tenant', meta: {}, source: 'tenant' });
+  });
+
+  it('propagates meta from the tenant row (e.g. Linear teamId, Resend fromEmail)', async () => {
+    mockedGet.mockResolvedValueOnce({
+      ok: true,
+      plaintext: 're-tenant',
+      meta: { fromEmail: 'noreply@acme.io' },
+      status: 'active',
+      lastTestedAt: null,
+    });
+
+    const res = await resolveKey('resend', 'proj_a');
+
+    expect(res).toEqual({
+      key: 're-tenant',
+      meta: { fromEmail: 'noreply@acme.io' },
+      source: 'tenant',
+    });
   });
 
   it('logs source changes once per (project, provider) pair', async () => {

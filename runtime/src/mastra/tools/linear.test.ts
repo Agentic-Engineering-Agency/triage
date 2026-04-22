@@ -630,7 +630,7 @@ describe('Linear Tools', () => {
       // nothing and running the already-imported tool.
       vi.resetModules();
       vi.doMock('../../lib/tenant-keys', () => ({
-        resolveKey: vi.fn().mockResolvedValue({ key: null, source: 'none' }),
+        resolveKey: vi.fn().mockResolvedValue({ key: null, meta: {}, source: 'none' }),
       }));
       vi.doMock('@linear/sdk', () => ({
         LinearClient: vi.fn().mockImplementation(() => ({})),

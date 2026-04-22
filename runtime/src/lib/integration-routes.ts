@@ -179,9 +179,11 @@ export const deleteIntegrationRoute = registerApiRoute(
 // the final save: Linear teams, Slack channels, GitHub repos. When present,
 // the POST /test handler validates the key but does NOT persist — the client
 // must follow up with PUT once the user has picked their meta. When absent
-// (OpenRouter), the test endpoint persists on success as a shortcut.
+// (OpenRouter, Resend), the test endpoint persists on success as a shortcut.
 type TestPreview = {
   teams?: Array<{ id: string; name: string; key: string }>;
+  channels?: Array<{ id: string; name: string; isPrivate: boolean }>;
+  repos?: Array<{ id: number; owner: string; name: string; fullName: string; private: boolean }>;
 };
 
 type TestResult =
@@ -257,14 +259,143 @@ async function testLinearKey(apiKey: string): Promise<TestResult> {
   }
 }
 
+async function testSlackKey(apiKey: string): Promise<TestResult> {
+  // Slack Web API returns 200 with `{ok: false, error: '...'}` for auth
+  // failures, not HTTP 401 — so the status check is secondary to the `ok`
+  // flag. `auth.test` is the canonical bot-token validation endpoint.
+  try {
+    const authRes = await fetch('https://slack.com/api/auth.test', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (authRes.status !== 200) {
+      return { valid: false, reason: 'network', message: `HTTP ${authRes.status}` };
+    }
+    const authJson = (await authRes.json()) as {
+      ok: boolean;
+      error?: string;
+      team?: string;
+      user?: string;
+    };
+    if (!authJson.ok) {
+      const reason = authJson.error === 'invalid_auth' || authJson.error === 'not_authed'
+        ? 'invalid_key'
+        : 'network';
+      return { valid: false, reason, message: authJson.error };
+    }
+    // Fetch both public and private channels the bot is a member of. Slack
+    // caps `limit` at 1000; for our UX 200 is plenty — users pick from the
+    // top of the list, deep scans belong behind a search box.
+    const listRes = await fetch(
+      'https://slack.com/api/conversations.list?types=public_channel,private_channel&exclude_archived=true&limit=200',
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    );
+    const listJson = (await listRes.json()) as {
+      ok: boolean;
+      error?: string;
+      channels?: Array<{ id: string; name: string; is_private?: boolean }>;
+    };
+    // `conversations.list` needs `channels:read` + `groups:read`. A token with
+    // only `chat:write` (common for minimal bots) lands here with missing_scope
+    // even though it can still post messages. Treat this as "token valid, just
+    // can't enumerate" — the UI falls back to a manual channelId input.
+    if (!listJson.ok) {
+      return { valid: true, preview: { channels: [] } };
+    }
+    const channels = (listJson.channels ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      isPrivate: Boolean(c.is_private),
+    }));
+    return { valid: true, preview: { channels } };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { valid: false, reason: 'network', message };
+  }
+}
+
+async function testResendKey(apiKey: string): Promise<TestResult> {
+  // `GET /domains` is the cheapest authenticated Resend endpoint — it 401s
+  // for bad keys and 200s with the tenant's verified domains for good ones.
+  // We don't surface domains as a picker (users paste a specific fromEmail)
+  // but the 200/401 distinction is enough to validate the key.
+  try {
+    const res = await fetch('https://api.resend.com/domains', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (res.status === 200) return { valid: true };
+    if (res.status === 401 || res.status === 403) return { valid: false, reason: 'invalid_key' };
+    return { valid: false, reason: 'network', message: `HTTP ${res.status}` };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { valid: false, reason: 'network', message };
+  }
+}
+
+async function testGithubKey(apiKey: string): Promise<TestResult> {
+  // `GET /user` validates the token and `GET /user/repos?per_page=100` gives
+  // the picker data in one round-trip. GitHub also 401s on bad tokens, so
+  // the short-circuit on the first call is cheap.
+  try {
+    const userRes = await fetch('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (userRes.status === 401 || userRes.status === 403) {
+      return { valid: false, reason: 'invalid_key' };
+    }
+    if (userRes.status !== 200) {
+      return { valid: false, reason: 'network', message: `HTTP ${userRes.status}` };
+    }
+    const reposRes = await fetch(
+      'https://api.github.com/user/repos?per_page=100&sort=updated',
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      },
+    );
+    if (reposRes.status !== 200) {
+      return { valid: false, reason: 'network', message: `HTTP ${reposRes.status}` };
+    }
+    const reposJson = (await reposRes.json()) as Array<{
+      id: number;
+      name: string;
+      full_name: string;
+      private: boolean;
+      owner: { login: string };
+    }>;
+    const repos = reposJson.map((r) => ({
+      id: r.id,
+      owner: r.owner.login,
+      name: r.name,
+      fullName: r.full_name,
+      private: r.private,
+    }));
+    return { valid: true, preview: { repos } };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { valid: false, reason: 'network', message };
+  }
+}
+
 async function runProviderTest(provider: IntegrationProvider, apiKey: string): Promise<TestResult> {
   switch (provider) {
     case 'openrouter':
       return testOpenRouterKey(apiKey);
     case 'linear':
       return testLinearKey(apiKey);
-    default:
-      return { valid: false, reason: 'not_implemented' };
+    case 'slack':
+      return testSlackKey(apiKey);
+    case 'resend':
+      return testResendKey(apiKey);
+    case 'github':
+      return testGithubKey(apiKey);
   }
 }
 

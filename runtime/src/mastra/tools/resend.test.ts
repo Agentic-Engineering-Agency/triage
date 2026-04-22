@@ -275,7 +275,7 @@ describe('Resend Tools', () => {
       vi.resetModules();
 
       vi.doMock('../../lib/tenant-keys', () => ({
-        resolveKey: vi.fn().mockResolvedValue({ key: null, source: 'none' }),
+        resolveKey: vi.fn().mockResolvedValue({ key: null, meta: {}, source: 'none' }),
       }));
       vi.doMock('resend', () => ({
         Resend: vi.fn().mockImplementation(() => ({
@@ -315,6 +315,54 @@ describe('Resend Tools', () => {
           emails: {
             send: mockEmailsSend,
           },
+        })),
+      }));
+    });
+
+    it('tenant meta.fromEmail overrides env RESEND_FROM_EMAIL and hard-coded default', async () => {
+      // #5c: resolveResend now reads meta.fromEmail as the highest-precedence
+      // source. Prove an explicit meta.fromEmail lands in resend.emails.send
+      // even when env would otherwise win.
+      vi.resetModules();
+      const sendSpy = vi.fn().mockResolvedValue({ data: { id: 'meta-fromEmail' }, error: null });
+
+      vi.doMock('../../lib/tenant-keys', () => ({
+        resolveKey: vi.fn().mockResolvedValue({
+          key: 're_tenant',
+          meta: { fromEmail: 'alerts@acme.io' },
+          source: 'tenant',
+        }),
+      }));
+      vi.doMock('resend', () => ({
+        Resend: vi.fn().mockImplementation(() => ({
+          emails: { send: sendSpy },
+        })),
+      }));
+      vi.doMock('@mastra/core/tools', async () => {
+        return await vi.importActual('@mastra/core/tools');
+      });
+
+      const resendModule = await import('./resend');
+      await resendModule.sendTicketNotification.execute({
+        to: 'eng@example.com',
+        ticketTitle: 'Any',
+        severity: 'High',
+        priority: 2,
+        summary: 'x',
+        linearUrl: 'https://linear.app/agentic/issue/TRI-9',
+        assigneeName: 'Koki',
+        linearIssueId: 'tenant-meta-1',
+      });
+
+      expect(sendSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ from: 'Triage <alerts@acme.io>' }),
+      );
+
+      // Restore so later tests get the shared mockEmailsSend back.
+      vi.resetModules();
+      vi.doMock('resend', () => ({
+        Resend: vi.fn().mockImplementation(() => ({
+          emails: { send: mockEmailsSend },
         })),
       }));
     });

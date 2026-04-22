@@ -26,13 +26,9 @@ async function resolveSlack(
   toolCtx: ToolCtx,
 ): Promise<{ client: WebClient | null; metaChannel?: string }> {
   const projectId = toolCtx?.requestContext?.get('projectId') as string | undefined;
-  const res = await resolveKey('slack', projectId);
-  if (!res.key) return { client: null };
-  // Fetch meta (channel id) from the tenant row if available — `resolveKey`
-  // itself only returns the secret, but we can pull the meta alongside via a
-  // single lookup. For now we skip meta and let the caller fall back to env;
-  // #5 (UI) will expose the channel as an integration meta field.
-  return { client: new WebClient(res.key) };
+  const { key, meta } = await resolveKey('slack', projectId);
+  if (!key) return { client: null, metaChannel: meta.channelId };
+  return { client: new WebClient(key), metaChannel: meta.channelId };
 }
 
 /** Resolve channel: explicit param > integration meta > env default */

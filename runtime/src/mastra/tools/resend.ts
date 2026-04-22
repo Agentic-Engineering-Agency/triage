@@ -27,15 +27,15 @@ type ToolCtx = { requestContext?: { get: (key: string) => unknown } } | undefine
 const FALLBACK_FROM_EMAIL = 'triage@agenticengineering.lat';
 
 // Resolve a per-tenant Resend client. Reads projectId from requestContext,
-// then asks tenant-keys for the key (DB → env fallback). The FROM address
-// comes from the integration meta row if the tenant configured one, else
-// from `RESEND_FROM_EMAIL` env, else a hard-coded default.
+// then asks tenant-keys for the key + meta (DB → env fallback). The FROM
+// address precedence is: tenant meta.fromEmail > RESEND_FROM_EMAIL env >
+// hard-coded default.
 async function resolveResend(
   toolCtx: ToolCtx,
 ): Promise<{ client: Resend | null; from: string }> {
   const projectId = toolCtx?.requestContext?.get('projectId') as string | undefined;
-  const { key } = await resolveKey('resend', projectId);
-  const from = process.env.RESEND_FROM_EMAIL || FALLBACK_FROM_EMAIL;
+  const { key, meta } = await resolveKey('resend', projectId);
+  const from = meta.fromEmail || process.env.RESEND_FROM_EMAIL || FALLBACK_FROM_EMAIL;
   if (!key) return { client: null, from };
   return { client: new Resend(key), from };
 }

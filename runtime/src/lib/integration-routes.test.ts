@@ -275,18 +275,6 @@ describe('integration-routes', () => {
       expect((listRes.body as { data: unknown[] }).data).toEqual([]);
     });
 
-    it('returns not_implemented for providers without a test impl', async () => {
-      // resend/slack/github not yet wired — linear and openrouter are.
-      const res = (await testIntegrationRoute.handler(
-        makeCtx({
-          params: { projectId: 'proj-owned', provider: 'resend' },
-          body: { apiKey: 're_xxx' },
-        }),
-      )) as unknown as JsonRes;
-      const body = res.body as { data: { valid: boolean; reason?: string } };
-      expect(body.data.valid).toBe(false);
-      expect(body.data.reason).toBe('not_implemented');
-    });
   });
 
   describe('POST /projects/:id/integrations/linear/test', () => {
@@ -368,7 +356,11 @@ describe('integration-routes', () => {
       });
 
       const resolved = await resolveKey('linear', 'proj-owned');
-      expect(resolved).toEqual({ key: 'lin_api_valid', source: 'tenant' });
+      expect(resolved).toEqual({
+        key: 'lin_api_valid',
+        meta: { teamId: 'team-eng', teamName: 'Engineering', teamKey: 'ENG' },
+        source: 'tenant',
+      });
     });
 
     it('returns invalid_key on HTTP 401 and does not persist', async () => {
@@ -450,6 +442,292 @@ describe('integration-routes', () => {
     });
   });
 
+  describe('POST /projects/:id/integrations/slack/test', () => {
+    let fetchMock: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    const slackAuthOk = () => ({
+      status: 200,
+      json: async () => ({ ok: true, team: 'Acme', user: 'triagebot' }),
+    });
+    const slackChannelsOk = () => ({
+      status: 200,
+      json: async () => ({
+        ok: true,
+        channels: [
+          { id: 'C1', name: 'general', is_private: false },
+          { id: 'C2', name: 'eng-private', is_private: true },
+        ],
+      }),
+    });
+
+    it('returns channels preview and does NOT persist on valid token', async () => {
+      fetchMock.mockResolvedValueOnce(slackAuthOk()).mockResolvedValueOnce(slackChannelsOk());
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'slack' },
+          body: { apiKey: 'xoxb-valid' },
+        }),
+      )) as unknown as JsonRes;
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        data: {
+          valid: boolean;
+          preview?: { channels: Array<{ id: string; name: string; isPrivate: boolean }> };
+        };
+      };
+      expect(body.data.valid).toBe(true);
+      expect(body.data.preview?.channels).toEqual([
+        { id: 'C1', name: 'general', isPrivate: false },
+        { id: 'C2', name: 'eng-private', isPrivate: true },
+      ]);
+
+      const listRes = (await listIntegrationsRoute.handler(
+        makeCtx({ params: { projectId: 'proj-owned' } }),
+      )) as unknown as JsonRes;
+      expect((listRes.body as { data: unknown[] }).data).toEqual([]);
+    });
+
+    it('returns invalid_key when auth.test responds ok:false invalid_auth', async () => {
+      fetchMock.mockResolvedValueOnce({
+        status: 200,
+        json: async () => ({ ok: false, error: 'invalid_auth' }),
+      });
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'slack' },
+          body: { apiKey: 'xoxb-bad' },
+        }),
+      )) as unknown as JsonRes;
+      const body = res.body as { data: { valid: boolean; reason?: string } };
+      expect(body.data.valid).toBe(false);
+      expect(body.data.reason).toBe('invalid_key');
+    });
+
+    it('returns network on fetch throw', async () => {
+      fetchMock.mockRejectedValueOnce(new Error('ENOTFOUND'));
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'slack' },
+          body: { apiKey: 'xoxb-any' },
+        }),
+      )) as unknown as JsonRes;
+      const body = res.body as { data: { valid: boolean; reason?: string } };
+      expect(body.data.valid).toBe(false);
+      expect(body.data.reason).toBe('network');
+    });
+
+    it('returns valid=true with empty channels when token lacks channels:read (missing_scope)', async () => {
+      // Common case: bot has chat:write only. auth.test succeeds; listing
+      // channels fails with missing_scope. UI must still proceed so the user
+      // can save with a manually typed channelId.
+      fetchMock
+        .mockResolvedValueOnce(slackAuthOk())
+        .mockResolvedValueOnce({
+          status: 200,
+          json: async () => ({ ok: false, error: 'missing_scope' }),
+        });
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'slack' },
+          body: { apiKey: 'xoxb-minimal' },
+        }),
+      )) as unknown as JsonRes;
+      const body = res.body as {
+        data: { valid: boolean; preview?: { channels: unknown[] } };
+      };
+      expect(body.data.valid).toBe(true);
+      expect(body.data.preview?.channels).toEqual([]);
+    });
+
+    it('PUT after preview persists with chosen channelId in meta', async () => {
+      fetchMock.mockResolvedValueOnce(slackAuthOk()).mockResolvedValueOnce(slackChannelsOk());
+      await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'slack' },
+          body: { apiKey: 'xoxb-valid' },
+        }),
+      );
+      const putRes = (await putIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'slack' },
+          body: {
+            apiKey: 'xoxb-valid',
+            meta: { channelId: 'C1', channelName: 'general', teamName: 'Acme' },
+          },
+        }),
+      )) as unknown as JsonRes;
+      expect(putRes.status).toBe(200);
+      const resolved = await resolveKey('slack', 'proj-owned');
+      expect(resolved).toEqual({
+        key: 'xoxb-valid',
+        meta: { channelId: 'C1', channelName: 'general', teamName: 'Acme' },
+        source: 'tenant',
+      });
+    });
+  });
+
+  describe('POST /projects/:id/integrations/resend/test', () => {
+    let fetchMock: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('persists key + meta.fromEmail on 200 from /domains (no preview)', async () => {
+      fetchMock.mockResolvedValueOnce({ status: 200, json: async () => ({ data: [] }) });
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'resend' },
+          body: { apiKey: 're_valid', meta: { fromEmail: 'noreply@acme.io' } },
+        }),
+      )) as unknown as JsonRes;
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        data: { valid: boolean; integration?: { status: string; meta: Record<string, string> } };
+      };
+      expect(body.data.valid).toBe(true);
+      expect(body.data.integration?.status).toBe('active');
+      expect(body.data.integration?.meta).toEqual({ fromEmail: 'noreply@acme.io' });
+
+      const resolved = await resolveKey('resend', 'proj-owned');
+      expect(resolved).toEqual({
+        key: 're_valid',
+        meta: { fromEmail: 'noreply@acme.io' },
+        source: 'tenant',
+      });
+    });
+
+    it('returns invalid_key on 401 and does not persist', async () => {
+      fetchMock.mockResolvedValueOnce({ status: 401 });
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'resend' },
+          body: { apiKey: 're_bad' },
+        }),
+      )) as unknown as JsonRes;
+      const body = res.body as { data: { valid: boolean; reason?: string } };
+      expect(body.data.valid).toBe(false);
+      expect(body.data.reason).toBe('invalid_key');
+
+      const listRes = (await listIntegrationsRoute.handler(
+        makeCtx({ params: { projectId: 'proj-owned' } }),
+      )) as unknown as JsonRes;
+      expect((listRes.body as { data: unknown[] }).data).toEqual([]);
+    });
+  });
+
+  describe('POST /projects/:id/integrations/github/test', () => {
+    let fetchMock: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    const githubUserOk = () => ({
+      status: 200,
+      json: async () => ({ id: 42, login: 'octocat' }),
+    });
+    const githubReposOk = () => ({
+      status: 200,
+      json: async () => [
+        {
+          id: 1,
+          name: 'hello-world',
+          full_name: 'octocat/hello-world',
+          private: false,
+          owner: { login: 'octocat' },
+        },
+        {
+          id: 2,
+          name: 'internal',
+          full_name: 'octocat/internal',
+          private: true,
+          owner: { login: 'octocat' },
+        },
+      ],
+    });
+
+    it('returns repos preview and does NOT persist on valid token', async () => {
+      fetchMock.mockResolvedValueOnce(githubUserOk()).mockResolvedValueOnce(githubReposOk());
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'github' },
+          body: { apiKey: 'ghp_valid' },
+        }),
+      )) as unknown as JsonRes;
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        data: {
+          valid: boolean;
+          preview?: {
+            repos: Array<{ id: number; owner: string; name: string; fullName: string; private: boolean }>;
+          };
+        };
+      };
+      expect(body.data.valid).toBe(true);
+      expect(body.data.preview?.repos).toEqual([
+        { id: 1, owner: 'octocat', name: 'hello-world', fullName: 'octocat/hello-world', private: false },
+        { id: 2, owner: 'octocat', name: 'internal', fullName: 'octocat/internal', private: true },
+      ]);
+
+      const listRes = (await listIntegrationsRoute.handler(
+        makeCtx({ params: { projectId: 'proj-owned' } }),
+      )) as unknown as JsonRes;
+      expect((listRes.body as { data: unknown[] }).data).toEqual([]);
+    });
+
+    it('returns invalid_key on 401 from /user', async () => {
+      fetchMock.mockResolvedValueOnce({ status: 401 });
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'github' },
+          body: { apiKey: 'ghp_bad' },
+        }),
+      )) as unknown as JsonRes;
+      const body = res.body as { data: { valid: boolean; reason?: string } };
+      expect(body.data.valid).toBe(false);
+      expect(body.data.reason).toBe('invalid_key');
+    });
+
+    it('sends Bearer token + GitHub API version header', async () => {
+      fetchMock.mockResolvedValueOnce(githubUserOk()).mockResolvedValueOnce(githubReposOk());
+      await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'github' },
+          body: { apiKey: 'ghp_raw' },
+        }),
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/user',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer ghp_raw',
+            'X-GitHub-Api-Version': '2022-11-28',
+          }),
+        }),
+      );
+    });
+  });
+
   describe('round-trip encrypt → resolveKey', () => {
     it('after PUT openrouter, resolveKey returns source=tenant with the plaintext', async () => {
       await putIntegrationRoute.handler(
@@ -460,7 +738,7 @@ describe('integration-routes', () => {
       );
 
       const resolved = await resolveKey('openrouter', 'proj-owned');
-      expect(resolved).toEqual({ key: 'sk-tenant-real', source: 'tenant' });
+      expect(resolved).toEqual({ key: 'sk-tenant-real', meta: {}, source: 'tenant' });
     });
 
     it('after DELETE, resolveKey falls back to env', async () => {
@@ -476,7 +754,7 @@ describe('integration-routes', () => {
 
       process.env.OPENROUTER_API_KEY = 'sk-env-fallback';
       const resolved = await resolveKey('openrouter', 'proj-owned');
-      expect(resolved).toEqual({ key: 'sk-env-fallback', source: 'env' });
+      expect(resolved).toEqual({ key: 'sk-env-fallback', meta: {}, source: 'env' });
     });
 
     it('isolates keys between projects', async () => {
