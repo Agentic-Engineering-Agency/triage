@@ -11,6 +11,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createClient, type Client } from '@libsql/client';
 import { randomBytes } from 'node:crypto';
 import type { Context } from 'hono';
+
+// #5d: PUT /integrations/github auto-triggers generateWiki when the project
+// was needs_auth/error. Mock the whole module so we can assert calls without
+// firing the real pipeline. vi.hoisted() is required because vi.mock is
+// hoisted above every `const` — the factory would otherwise close over an
+// uninitialised variable.
+const { generateWikiMock } = vi.hoisted(() => ({
+  generateWikiMock: vi.fn(async () => ({
+    projectId: '',
+    documentsProcessed: 0,
+    chunksCreated: 0,
+    success: true,
+  })),
+}));
+vi.mock('./wiki-rag', () => ({ generateWiki: generateWikiMock }));
+
 import {
   __setClientForTests as setRoutesClient,
   listIntegrationsRoute,
@@ -62,6 +78,9 @@ async function seedDb(): Promise<Client> {
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
     repo_url TEXT,
+    repo_default_branch TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    wiki_error TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
@@ -642,32 +661,15 @@ describe('integration-routes', () => {
       vi.unstubAllGlobals();
     });
 
-    const githubUserOk = () => ({
-      status: 200,
-      json: async () => ({ id: 42, login: 'octocat' }),
-    });
-    const githubReposOk = () => ({
-      status: 200,
-      json: async () => [
-        {
-          id: 1,
-          name: 'hello-world',
-          full_name: 'octocat/hello-world',
-          private: false,
-          owner: { login: 'octocat' },
-        },
-        {
-          id: 2,
-          name: 'internal',
-          full_name: 'octocat/internal',
-          private: true,
-          owner: { login: 'octocat' },
-        },
-      ],
-    });
-
-    it('returns repos preview and does NOT persist on valid token', async () => {
-      fetchMock.mockResolvedValueOnce(githubUserOk()).mockResolvedValueOnce(githubReposOk());
+    it('validates PAT via /user only (no repos preview)', async () => {
+      // #5d simplified the dispatcher: PUT /github owns repo-access
+      // validation, so /test only answers "is this token real?". The
+      // endpoint auto-persists (shortcut path) with empty meta, which
+      // PUT will later overwrite with the real owner/repo.
+      fetchMock.mockResolvedValueOnce({
+        status: 200,
+        json: async () => ({ id: 42, login: 'octocat' }),
+      });
       const res = (await testIntegrationRoute.handler(
         makeCtx({
           params: { projectId: 'proj-owned', provider: 'github' },
@@ -675,24 +677,20 @@ describe('integration-routes', () => {
         }),
       )) as unknown as JsonRes;
       expect(res.status).toBe(200);
-      const body = res.body as {
-        data: {
-          valid: boolean;
-          preview?: {
-            repos: Array<{ id: number; owner: string; name: string; fullName: string; private: boolean }>;
-          };
-        };
-      };
+      const body = res.body as { data: { valid: boolean; preview?: unknown } };
       expect(body.data.valid).toBe(true);
-      expect(body.data.preview?.repos).toEqual([
-        { id: 1, owner: 'octocat', name: 'hello-world', fullName: 'octocat/hello-world', private: false },
-        { id: 2, owner: 'octocat', name: 'internal', fullName: 'octocat/internal', private: true },
-      ]);
-
-      const listRes = (await listIntegrationsRoute.handler(
-        makeCtx({ params: { projectId: 'proj-owned' } }),
-      )) as unknown as JsonRes;
-      expect((listRes.body as { data: unknown[] }).data).toEqual([]);
+      expect(body.data.preview).toBeUndefined();
+      // Only one fetch — the /user/repos call is gone.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/user',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer ghp_valid',
+            'X-GitHub-Api-Version': '2022-11-28',
+          }),
+        }),
+      );
     });
 
     it('returns invalid_key on 401 from /user', async () => {
@@ -707,24 +705,156 @@ describe('integration-routes', () => {
       expect(body.data.valid).toBe(false);
       expect(body.data.reason).toBe('invalid_key');
     });
+  });
 
-    it('sends Bearer token + GitHub API version header', async () => {
-      fetchMock.mockResolvedValueOnce(githubUserOk()).mockResolvedValueOnce(githubReposOk());
-      await testIntegrationRoute.handler(
+  describe('PUT /projects/:id/integrations/github — repo-access validation', () => {
+    let fetchMock: ReturnType<typeof vi.fn>;
+
+    beforeEach(async () => {
+      fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      generateWikiMock.mockClear();
+      // Seed a GitHub-shaped repo_url on the owned project for these tests;
+      // the top-level seedDb leaves repo_url empty for the broader suite.
+      await client.execute({
+        sql: `UPDATE projects SET repo_url = ?, repo_default_branch = ?, status = ?
+              WHERE id = ?`,
+        args: ['https://github.com/octocat/hello', 'main', 'pending', 'proj-owned'],
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('on 200 probe: auto-sets meta from repo_url, persists, marks tested', async () => {
+      fetchMock.mockResolvedValueOnce({ status: 200, json: async () => ({}) });
+      const res = (await putIntegrationRoute.handler(
         makeCtx({
           params: { projectId: 'proj-owned', provider: 'github' },
-          body: { apiKey: 'ghp_raw' },
+          body: { apiKey: 'ghp_valid' },
         }),
-      );
+      )) as unknown as JsonRes;
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        data: { provider: string; status: string; meta: Record<string, string> };
+      };
+      expect(body.data.provider).toBe('github');
+      expect(body.data.meta).toEqual({
+        owner: 'octocat',
+        repo: 'hello',
+        repoFullName: 'octocat/hello',
+      });
+
+      const resolved = await resolveKey('github', 'proj-owned');
+      expect(resolved.key).toBe('ghp_valid');
+      expect(resolved.source).toBe('tenant');
+      expect(resolved.meta).toEqual({
+        owner: 'octocat',
+        repo: 'hello',
+        repoFullName: 'octocat/hello',
+      });
+
+      // Probe hit the correct URL with Bearer auth.
       expect(fetchMock).toHaveBeenCalledWith(
-        'https://api.github.com/user',
+        'https://api.github.com/repos/octocat/hello',
         expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: 'Bearer ghp_raw',
-            'X-GitHub-Api-Version': '2022-11-28',
-          }),
+          headers: expect.objectContaining({ Authorization: 'Bearer ghp_valid' }),
         }),
       );
+    });
+
+    it('on 401 probe: REPO_ACCESS_DENIED and does NOT persist', async () => {
+      fetchMock.mockResolvedValueOnce({ status: 401, json: async () => ({}) });
+      const res = (await putIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'github' },
+          body: { apiKey: 'ghp_no_scope' },
+        }),
+      )) as unknown as JsonRes;
+      expect(res.status).toBe(400);
+      const body = res.body as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('REPO_ACCESS_DENIED');
+      expect(body.error.message).toMatch(/octocat\/hello/);
+
+      const listRes = (await listIntegrationsRoute.handler(
+        makeCtx({ params: { projectId: 'proj-owned' } }),
+      )) as unknown as JsonRes;
+      expect((listRes.body as { data: unknown[] }).data).toEqual([]);
+    });
+
+    it('on 404 probe: REPO_NOT_FOUND_WITH_TOKEN and does NOT persist', async () => {
+      fetchMock.mockResolvedValueOnce({ status: 404, json: async () => ({}) });
+      const res = (await putIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'github' },
+          body: { apiKey: 'ghp_wrong_account' },
+        }),
+      )) as unknown as JsonRes;
+      expect(res.status).toBe(400);
+      expect((res.body as { error: { code: string } }).error.code).toBe(
+        'REPO_NOT_FOUND_WITH_TOKEN',
+      );
+    });
+
+    it('rejects when project repo is not on GitHub', async () => {
+      await client.execute({
+        sql: `UPDATE projects SET repo_url = ? WHERE id = ?`,
+        args: ['https://gitlab.com/foo/bar', 'proj-owned'],
+      });
+      const res = (await putIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'github' },
+          body: { apiKey: 'ghp_irrelevant' },
+        }),
+      )) as unknown as JsonRes;
+      expect(res.status).toBe(400);
+      expect((res.body as { error: { code: string } }).error.code).toBe(
+        'PROJECT_REPO_NOT_GITHUB',
+      );
+      // Probe must NOT have been called when the repo fails local parse.
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("flips status from needs_auth → pending and triggers generateWiki", async () => {
+      await client.execute({
+        sql: `UPDATE projects SET status = 'needs_auth', wiki_error = ? WHERE id = ?`,
+        args: ['Private repo — connect GitHub', 'proj-owned'],
+      });
+      fetchMock.mockResolvedValueOnce({ status: 200, json: async () => ({}) });
+      const res = (await putIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'github' },
+          body: { apiKey: 'ghp_real' },
+        }),
+      )) as unknown as JsonRes;
+      expect(res.status).toBe(200);
+
+      const row = (
+        await client.execute('SELECT status, wiki_error FROM projects WHERE id = ?', [
+          'proj-owned',
+        ])
+      ).rows[0];
+      expect(row.status).toBe('pending');
+      expect(row.wiki_error).toBeNull();
+
+      expect(generateWikiMock).toHaveBeenCalledTimes(1);
+      expect(generateWikiMock).toHaveBeenCalledWith(
+        'proj-owned',
+        'https://github.com/octocat/hello',
+        'main',
+      );
+    });
+
+    it('does NOT trigger generateWiki when status was already pending/ready', async () => {
+      fetchMock.mockResolvedValueOnce({ status: 200, json: async () => ({}) });
+      await putIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'github' },
+          body: { apiKey: 'ghp_valid' },
+        }),
+      );
+      expect(generateWikiMock).not.toHaveBeenCalled();
     });
   });
 

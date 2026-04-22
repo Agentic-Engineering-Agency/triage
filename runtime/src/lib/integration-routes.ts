@@ -13,6 +13,7 @@
  *   POST   /projects/:projectId/integrations/:provider/test
  */
 import { registerApiRoute } from '@mastra/core/server';
+import { createClient, type Client } from '@libsql/client';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { assertProjectOwnership, authErrorResponse } from './auth-helpers';
@@ -30,13 +31,23 @@ import {
   type IntegrationMeta,
   type IntegrationProvider,
 } from './schemas/integrations';
+import { parseGithubRepoUrl } from './github-repo';
+import { generateWiki } from './wiki-rag';
 
-// `__setClientForTests` historically lived here so tests could wire a shared
-// :memory: client across integration-routes + integration-keys + auth-helpers.
-// Kept as a no-op passthrough now that ownership is in auth-helpers — the DB
-// client for ownership lives there. Remove once test setup drops this call.
-export function __setClientForTests(_client: unknown): void {
-  /* no-op: ownership DB is now owned by auth-helpers */
+// Shared DB client for project lookups that need to happen alongside
+// integration writes (e.g. PUT /github reads repo_url + status to decide
+// whether to trigger a wiki retry). Ownership checks still live in
+// auth-helpers with their own client; this one is only for the project row
+// reads/updates that used to be implicit.
+let cachedClient: Client | null = null;
+function getDb(): Client {
+  if (cachedClient) return cachedClient;
+  cachedClient = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+  return cachedClient;
+}
+
+export function __setClientForTests(client: Client | null): void {
+  cachedClient = client;
 }
 
 // `c.req.param` returns `string | undefined` — but when the route path
@@ -129,6 +140,15 @@ export const putIntegrationRoute = registerApiRoute(
         );
       }
 
+      // GitHub PUT has a richer contract: validate that the PAT can actually
+      // reach the project's repo, then write meta ourselves (the project's
+      // repo_url is the source of truth; body.meta is ignored). On success,
+      // if the project was stuck in needs_auth or error, flip it back to
+      // pending and fire a wiki retry.
+      if (provider === 'github') {
+        return handleGithubPut(c, projectId, body.apiKey);
+      }
+
       const setRes = await setIntegrationKey(projectId, provider, body.apiKey, body.meta ?? {});
       if (!setRes.ok) {
         return c.json(
@@ -146,6 +166,126 @@ export const putIntegrationRoute = registerApiRoute(
     },
   },
 );
+
+async function handleGithubPut(c: Context, projectId: string, apiKey: string) {
+  const projectRow = await getDb().execute({
+    sql: 'SELECT repo_url, status, repo_default_branch FROM projects WHERE id = ?',
+    args: [projectId],
+  });
+  const project = projectRow.rows[0];
+  if (!project) {
+    return c.json(
+      { success: false, error: { code: 'NOT_FOUND', message: 'Project not found' } },
+      404,
+    );
+  }
+  const repoUrl = typeof project.repo_url === 'string' ? project.repo_url : '';
+  const parsed = parseGithubRepoUrl(repoUrl);
+  if (!parsed) {
+    return c.json(
+      {
+        success: false,
+        error: {
+          code: 'PROJECT_REPO_NOT_GITHUB',
+          message:
+            "This project's repository is not on GitHub. A GitHub token isn't needed here.",
+        },
+      },
+      400,
+    );
+  }
+
+  // Probe the repo WITH the PAT. 200 confirms access; 401/403 means the token
+  // is valid on GitHub but lacks scope / collaboration on this repo; 404
+  // usually means the same (private repo the token can't see).
+  let probeRes: Response;
+  try {
+    probeRes = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'triage',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json(
+      { success: false, error: { code: 'NETWORK', message } },
+      500,
+    );
+  }
+  if (probeRes.status === 401 || probeRes.status === 403) {
+    return c.json(
+      {
+        success: false,
+        error: {
+          code: 'REPO_ACCESS_DENIED',
+          message: `PAT lacks access to ${parsed.owner}/${parsed.repo}. Ensure the \`repo\` scope is granted.`,
+        },
+      },
+      400,
+    );
+  }
+  if (probeRes.status === 404) {
+    return c.json(
+      {
+        success: false,
+        error: {
+          code: 'REPO_NOT_FOUND_WITH_TOKEN',
+          message: `Repository ${parsed.owner}/${parsed.repo} isn't visible to this PAT.`,
+        },
+      },
+      400,
+    );
+  }
+  if (probeRes.status !== 200) {
+    return c.json(
+      {
+        success: false,
+        error: { code: 'NETWORK', message: `HTTP ${probeRes.status}` },
+      },
+      500,
+    );
+  }
+
+  const meta: IntegrationMeta = {
+    owner: parsed.owner,
+    repo: parsed.repo,
+    repoFullName: `${parsed.owner}/${parsed.repo}`,
+  };
+  const setRes = await setIntegrationKey(projectId, 'github', apiKey, meta);
+  if (!setRes.ok) {
+    return c.json(
+      {
+        success: false,
+        error: { code: 'MASTER_KEY_MISSING', message: 'APP_MASTER_KEY not configured' },
+      },
+      500,
+    );
+  }
+  await markTested(projectId, 'github', true);
+
+  const currentStatus = typeof project.status === 'string' ? project.status : '';
+  if (currentStatus === 'needs_auth' || currentStatus === 'error') {
+    await getDb().execute({
+      sql: `UPDATE projects SET status = 'pending', wiki_error = NULL, updated_at = ? WHERE id = ?`,
+      args: [Date.now(), projectId],
+    });
+    const branch =
+      typeof project.repo_default_branch === 'string' && project.repo_default_branch.length > 0
+        ? project.repo_default_branch
+        : 'main';
+    generateWiki(projectId, repoUrl, branch).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[integrations/github] Background wiki retry failed for ${projectId}:`, message);
+    });
+  }
+
+  const rows = await listIntegrations(projectId);
+  const entry = rows.find((r) => r.provider === 'github');
+  return c.json({ success: true, data: entry ? serializeSummary(entry) : null });
+}
 
 // ---------- DELETE /projects/:projectId/integrations/:provider ----------
 export const deleteIntegrationRoute = registerApiRoute(
@@ -183,7 +323,6 @@ export const deleteIntegrationRoute = registerApiRoute(
 type TestPreview = {
   teams?: Array<{ id: string; name: string; key: string }>;
   channels?: Array<{ id: string; name: string; isPrivate: boolean }>;
-  repos?: Array<{ id: number; owner: string; name: string; fullName: string; private: boolean }>;
 };
 
 type TestResult =
@@ -333,9 +472,9 @@ async function testResendKey(apiKey: string): Promise<TestResult> {
 }
 
 async function testGithubKey(apiKey: string): Promise<TestResult> {
-  // `GET /user` validates the token and `GET /user/repos?per_page=100` gives
-  // the picker data in one round-trip. GitHub also 401s on bad tokens, so
-  // the short-circuit on the first call is cheap.
+  // Since #5d the picker is gone — PUT /integrations/github owns the
+  // repo-access validation step. This endpoint only answers "is this PAT
+  // real?" by hitting GET /user, which 401s on bad tokens.
   try {
     const userRes = await fetch('https://api.github.com/user', {
       headers: {
@@ -350,34 +489,7 @@ async function testGithubKey(apiKey: string): Promise<TestResult> {
     if (userRes.status !== 200) {
       return { valid: false, reason: 'network', message: `HTTP ${userRes.status}` };
     }
-    const reposRes = await fetch(
-      'https://api.github.com/user/repos?per_page=100&sort=updated',
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
-      },
-    );
-    if (reposRes.status !== 200) {
-      return { valid: false, reason: 'network', message: `HTTP ${reposRes.status}` };
-    }
-    const reposJson = (await reposRes.json()) as Array<{
-      id: number;
-      name: string;
-      full_name: string;
-      private: boolean;
-      owner: { login: string };
-    }>;
-    const repos = reposJson.map((r) => ({
-      id: r.id,
-      owner: r.owner.login,
-      name: r.name,
-      fullName: r.full_name,
-      private: r.private,
-    }));
-    return { valid: true, preview: { repos } };
+    return { valid: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { valid: false, reason: 'network', message };

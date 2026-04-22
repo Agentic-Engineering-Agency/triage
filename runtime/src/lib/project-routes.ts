@@ -10,13 +10,59 @@
  *   POST /projects/init-default — create default project for first-login
  */
 import { registerApiRoute } from '@mastra/core/server';
-import { createClient } from '@libsql/client';
+import { createClient, type Client } from '@libsql/client';
 import crypto from 'crypto';
 import { generateWiki } from './wiki-rag';
 import { extractSessionToken } from './auth-helpers';
+import { parseGithubRepoUrl } from './github-repo';
 
-function getDb() {
-  return createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+let cachedClient: Client | null = null;
+function getDb(): Client {
+  if (cachedClient) return cachedClient;
+  cachedClient = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+  return cachedClient;
+}
+
+export function __setClientForTests(client: Client | null): void {
+  cachedClient = client;
+}
+
+// Probe the public GitHub API to detect whether a repo is reachable without
+// auth. Short timeout because this is in the critical path of project
+// creation — a slow GitHub must not block the user. Network/timeout errors
+// fall back to "treat as public" so one-off flakiness can't put projects in
+// needs_auth limbo.
+type RepoProbeOutcome = 'public' | 'needs_auth' | 'fallback_public';
+
+async function probeGithubRepoVisibility(
+  owner: string,
+  repo: string,
+  timeoutMs = 2000,
+): Promise<RepoProbeOutcome> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'triage-probe',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      signal: controller.signal,
+    });
+    if (res.status === 200) return 'public';
+    if (res.status === 404 || res.status === 403) return 'needs_auth';
+    return 'fallback_public';
+  } catch (err) {
+    console.warn(
+      `[projects] GitHub probe failed for ${owner}/${repo}, treating as public: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return 'fallback_public';
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ---------- POST /projects/init-default ----------
@@ -199,23 +245,47 @@ export const createProjectRoute = registerApiRoute('/projects', {
         args: [id, userId, name, repositoryUrl, branch || 'main', now, now],
       });
 
+      // Pattern C: probe GitHub public API to detect private repos up front.
+      // Non-GitHub URLs (GitLab, Bitbucket, self-hosted) skip the probe and
+      // keep today's "just try cloning" behaviour — the probe is a GitHub
+      // optimisation, not a gate.
+      let finalStatus: 'pending' | 'needs_auth' = 'pending';
+      let wikiError: string | null = null;
+      let shouldGenerateWiki = true;
+      const parsed = parseGithubRepoUrl(repositoryUrl);
+      if (parsed) {
+        const outcome = await probeGithubRepoVisibility(parsed.owner, parsed.repo);
+        if (outcome === 'needs_auth') {
+          finalStatus = 'needs_auth';
+          wikiError =
+            'Private repo or not found. Connect GitHub in /integrations to enable wiki.';
+          shouldGenerateWiki = false;
+          await db.execute({
+            sql: `UPDATE projects SET status = ?, wiki_error = ?, updated_at = ? WHERE id = ?`,
+            args: [finalStatus, wikiError, Date.now(), id],
+          });
+        }
+        // 'public' and 'fallback_public' both proceed with the default path.
+      }
+
       const project = {
         id,
         name,
         repositoryUrl,
         branch: branch || 'main',
-        status: 'pending',
+        status: finalStatus,
         documentsCount: 0,
         chunksCount: 0,
-        error: null,
+        error: wikiError,
         createdAt: now,
         updatedAt: now,
       };
 
-      // Trigger wiki generation in the background (non-blocking)
-      generateWiki(id, repositoryUrl, branch).catch((err) => {
-        console.error(`[projects] Background wiki generation failed for ${id}:`, err);
-      });
+      if (shouldGenerateWiki) {
+        generateWiki(id, repositoryUrl, branch).catch((err) => {
+          console.error(`[projects] Background wiki generation failed for ${id}:`, err);
+        });
+      }
 
       return c.json({ success: true, data: project }, 201);
     } catch (error) {
