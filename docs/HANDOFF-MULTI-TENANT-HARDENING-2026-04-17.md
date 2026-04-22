@@ -1,17 +1,17 @@
 # Handoff — Multi-tenant hardening & UX redesign
 
-**Branch:** `fix/ui-cleanup-cycle-panel` — 14 commits pusheados al origin.
-**Last commit:** `4a350be feat(ui): Slack/Resend/GitHub cards + account-email reporter (#5c)` (2026-04-22)
-**Uncommitted at time of write:** ninguno — working tree limpio.
-**Date:** 2026-04-17 (original), 2026-04-20 (#3 + #4a), 2026-04-21 (#4b + #5a), 2026-04-22 (#5b Linear + #5c Slack/Resend/GitHub)
+**Branch:** `fix/ui-cleanup-cycle-panel` — 14 commits pusheados al origin + #5d landed local (pendiente commit).
+**Last commit pushed:** `4a350be feat(ui): Slack/Resend/GitHub cards + account-email reporter (#5c)` (2026-04-22).
+**Uncommitted at time of write:** #5d slice (backend probe/PUT github + wiki-rag PAT + UI rewrite + tests + handoff update).
+**Date:** 2026-04-17 (original), 2026-04-20 (#3 + #4a), 2026-04-21 (#4b + #5a), 2026-04-22 (#5b Linear + #5c Slack/Resend/GitHub + #5d unification)
 
 ---
 
 ## Objetivo de la próxima sesión
 
-**Siguiente natural: #5d — GitHub/wiki unification + private repo detection (Pattern C).**
+**Siguiente natural: #6 — onboarding wizard + legacy endpoint cleanup + columna plaintext drops.**
 
-#1–#5c cerrados: webhook verif, wiki, per-tenant schema, tools + agents per-tenant, 5 integration cards (OpenRouter + Linear + Slack + Resend + GitHub) + scoped-routes flip + ownership fix + generic `Picker<T>` + account-email reporter. Todo pusheado.
+#1–#5d cerrados: webhook verif, wiki, per-tenant schema, tools + agents per-tenant, 5 integration cards (OpenRouter + Linear + Slack + Resend + GitHub), scoped-routes flip, ownership fix, generic `Picker<T>`, account-email reporter, GitHub/wiki unification con private-repo detection (Pattern C). Todo validado code-side; smoke UI del #5d queda pendiente de usuario.
 
 Baseline al cierre de #5c: TSC runtime 5 errores estable (3 scoped-routes Cycle casts + 2 sendSlackMessage.execute possibly-undefined — pre-existing). TSC frontend limpio. Tests: 106 failing baseline estable, +12 nuevos passing en #5c (+10 `integration-routes.test.ts` para los 3 providers nuevos, +1 `tenant-keys.test.ts` meta propagation, +1 `resend.test.ts` meta.fromEmail override). 0 regresiones netas.
 
@@ -352,40 +352,55 @@ Cerró el bucle de 5 providers en `/integrations`. 2 commits: `d3d9c7c` (backend
 - **Drop columnas plaintext en `projects`**: sin cambio desde #5b. Requiere migrar los callers primero.
 - **Legacy endpoints runtime**: `/api/config/status`, global `/api/linear/members`, `/settings` route con banner — todos siguen vivos. Cleanup en slice aparte (no crítico).
 
-### 5d. GitHub/wiki unification + private repo detection (próximo)
+### 5d. GitHub/wiki unification + private repo detection ✅ DONE (2026-04-22)
 
-**Objetivo:** resolver el dual-source-of-truth entre `projects.repo_url` (wiki clone) y `integration_meta.repoFullName` (GitHub API tools), y habilitar repos privados.
+Unifica `projects.repo_url` (wiki clone) con el `meta.repoFullName` de la integration GitHub (fuente única = `projects.repo_url`) y habilita repos privados vía PAT del tenant. Pattern C progressive locked in y shipped.
 
-**Decisión UX aprobada (2026-04-22):** Pattern C progressive — detectar privacy al crear proyecto, dejar `wiki_status='needs_auth'` si aplica, UI contextual para conectar GitHub.
+**Decisiones UX aplicadas** (pre-acordadas, no redebatir):
+- Un proyecto = un repo. GitHub card sin picker; "Verify access to {projectRepoFullName}". Si el usuario quiere otro repo, crea proyecto nuevo.
+- Probe detecta privacidad al crear proyecto. Non-github URLs (gitlab/bitbucket/self-hosted) saltan el probe y siguen el path público de siempre — el probe es optimización, no gate.
+- `needs_auth` vive en `projects.status` (la columna activa), no en `projects.wiki_status` (que está efectivamente muerto post-#2 bug pre-existing). Consolidar las dos columnas queda como followup.
 
-**Decisión UX aprobada (2026-04-22):** un proyecto = un repo. GitHub card pasa de picker a "verify access to {project.repoFullName}". Si el usuario quiere otro repo, crea proyecto nuevo.
+**Qué shipped:**
 
-**Scope backend:**
-- **`POST /projects`**: parsear `repo_url` → extraer owner/repo → probe `GET api.github.com/repos/:o/:r` sin token, con timeout corto (~2s). Outcomes:
-  - **200** → proyecto creado, wiki arranca clone público normal
-  - **404/403** → proyecto creado con `wiki_status='needs_auth'`, no se dispara wiki
-  - **Timeout/network error** → proceder como si fuera público (no bloquear creación por GitHub flaky)
-- **`wiki-rag.ts`**: al clonar, leer `resolveKey('github', projectId)`. Si hay PAT, inyectar en URL: `https://x-access-token:<pat>@github.com/owner/repo.git`. Si `wiki_status='needs_auth'` y sigue sin PAT, no-op.
-- **`PUT /projects/:id/integrations/github`**: cambia contrato — en vez de esperar meta del picker, valida que el PAT tenga acceso al `projects.repo_url` del proyecto (`GET /repos/:owner/:repo` con Bearer). Si OK: auto-setea `meta = {owner, repo, repoFullName}` matching projects + si `wiki_status='needs_auth'`, dispara wiki-retry. Si el PAT no tiene acceso → error `repo_access_denied` con mensaje claro.
-- **Remover `testGithubKey` preview de repos**: ya no hace `GET /user/repos`. Solo `GET /user` para validar el PAT; el `/test` endpoint queda como "PAT valid yes/no".
+- **Backend — `runtime/src/lib/github-repo.ts` (nuevo)**: `parseGithubRepoUrl` acepta https/ssh/scp URLs (`.git` opcional, trailing slash OK, case-preservado) y retorna null para non-github. `buildAuthenticatedCloneUrl(owner,repo,pat)` → `https://x-access-token:<encoded-pat>@github.com/owner/repo.git` con PAT URL-encoded. `scrubPatFromString(s, pat?)` redacta tanto el patrón `x-access-token:[^@]*@` como el PAT literal. 19 unit tests.
 
-**Scope frontend:**
-- **`GitHubCard` simplificado**: sin picker, sin estado de repos. Input de PAT + botón "Verify access to {projects.repoFullName}". Después de verify+save, card muestra "Repo: X ✓".
-- **Nueva card en `/projects/:id`** (o en el header del projects view) que aparece cuando `wiki_status='needs_auth'`: "Private repo detected — Connect GitHub to enable vectorization" con link directo a `/integrations` o modal inline.
-- **`IntegrationSummary.meta.repoFullName`** deja de mostrarse como campo independiente — ahora siempre debería coincidir con el repo del proyecto.
+- **Backend — probe en `POST /projects`** (`project-routes.ts`): después del INSERT, si `parseGithubRepoUrl(repositoryUrl)` matchea, llama `probeGithubRepoVisibility` con AbortController 2000ms. 200 → `status` sigue `'pending'`, se dispara `generateWiki`. 404/403 → UPDATE `status='needs_auth'` + `wiki_error='Private repo or not found. Connect GitHub in /integrations to enable wiki.'`, NO dispara `generateWiki`. Timeout/network → fallback al path público (log `[projects] GitHub probe failed... treating as public`). Non-github URLs saltan el probe por completo. Response body refleja el status final. 4 tests nuevos en `project-routes.probe.test.ts` (nuevo file — reemplaza la cobertura que el viejo `project-routes.test.ts` no daba por quedar en baseline failing).
 
-**Scope tests:**
-- Nuevo test en `project-routes.test.ts` (o su reemplazo) para el probe de GitHub con 200/404/timeout.
-- Test en `wiki-rag.test.ts` verificando que el clone URL lleva el PAT inyectado cuando hay integration row.
-- Update a `integration-routes.test.ts` GitHub sección — borrar preview/repos tests, agregar repo_access_denied path.
+- **Backend — clone auth + PAT scrub en `wiki-rag.ts`**: `generateWiki` resuelve `resolveKey('github', projectId)` antes del `execFileSync`. Si key + URL parsea github → clone URL se reescribe via `buildAuthenticatedCloneUrl`. Defense-in-depth: si el proyecto está en `status='needs_auth'` y sigue sin PAT, early-return sin tocar la DB (en vez de re-intentar clone público que fallará). Todos los `console.warn`/`console.error` + el write a `projects.error` pasan por `scrubPatFromString(msg, cloneSecret)`. El git stderr rutinariamente echoe la URL autenticada, así que el scrub evita que el PAT quede plaintext en la DB o en los logs.
 
-**Fuera de scope de #5d (explícito):**
-- Onboarding wizard (#6)
-- RBAC
-- `webhook_secrets` refactor
-- Rate limiting
+- **Backend — `testGithubKey` simplificado** (`integration-routes.ts`): drop del `GET /user/repos`. Solo `GET /user` (200 → `{valid:true}` sin preview, 401/403 → `invalid_key`). El path shortcut-persist de `/test` sigue vivo pero escribe meta vacío; PUT siempre sobre-escribe con el meta real del repo del proyecto, así que la UI va direct-PUT.
 
-**Estimación**: 4-6 horas sanas. Tocar `project-routes.ts`, `wiki-rag.ts`, `integration-routes.ts`, `integrations.lazy.tsx`, wiki status UI. Probar con un repo privado real (crear uno de prueba en GitHub si no hay).
+- **Backend — `PUT /integrations/github` con repo-access validation** (`integration-routes.ts:handleGithubPut`): cuando `provider==='github'`, el handler branchea al helper dedicado. Load project → parse `repo_url`. Si non-github → 400 `PROJECT_REPO_NOT_GITHUB`. Si github → probe `GET api.github.com/repos/:o/:r` con Bearer PAT. 200 → `setIntegrationKey` con meta auto-derivado `{owner, repo, repoFullName}` (ignora cualquier meta del body); si `status ∈ {needs_auth, error}` → UPDATE a `'pending'`, `wiki_error=NULL`, dispara `generateWiki` en background. 401/403 → 400 `REPO_ACCESS_DENIED`. 404 → 400 `REPO_NOT_FOUND_WITH_TOKEN`. 6 tests nuevos en `integration-routes.test.ts` cubren los 5 paths + el guard que NO retriggerea wiki cuando ya estaba pending/ready.
+
+- **Backend — `__setClientForTests` real en integration-routes.ts**: era no-op desde #5a, ahora cablea un client compartido que los tests wirean junto con keys + auth. Necesario para que los nuevos tests de PUT /github puedan asertar contra project rows reales en `:memory:` libsql.
+
+- **Frontend — `Project.status` type + `projects.lazy.tsx`**: unión extendida con `'needs_auth'`, nuevo entry en `statusConfig` (Lock ámbar), prompt inline "Private repo detected — connect GitHub" con Link a `/integrations` (aparece debajo del status badge cuando `status==='needs_auth'`). `refetchInterval:5000` existente auto-recoge el flip tras wiki-retry.
+
+- **Frontend — `GitHubCard` rewrite**: sin picker, sin `repos`/`setRepos`/`selectedRepoId` state, sin `testMutation` separado. Single PUT mutation con `{apiKey}` a `/integrations/github`. Botón dinámico "Verify access to {repoFullName}" — repoFullName viene de `useQuery(['project', projectId])` contra `/projects/:id` o del meta de la integration configurada. Branch non-github: si `parseGithubRepo(project.repositoryUrl)` es null, render disabled con "This project's repository isn't hosted on GitHub, so no token is needed." (pre-empta el `PROJECT_REPO_NOT_GITHUB` del backend). Configured state suma NUEVO botón "Retry wiki" que POSTea `/projects/:id/wiki/generate` e invalida `['projects']` — útil tras fallas transitorias del clone sin tener que re-pegar el PAT. Success/error toasts separados para verify vs retry. Dead types `GithubRepo` + `repos?` del `TestPreview` (frontend + backend `integration-routes.ts`) removidos.
+
+**Baselines al cierre**: runtime TSC 5 errores estable (3 scoped-routes Cycle casts + 2 sendSlackMessage possibly-undefined — pre-existing). Frontend TSC limpio. Tests: 106 failing baseline estable + 29 nuevos passing (**19** github-repo parser/scrub + **4** POST /projects probe + **5** PUT /github variants + **1** /test simplificado). **0 regresiones netas**. Total 573 passing / 106 failing / 59 skipped.
+
+**Gotchas nuevos:**
+
+- **PAT leak via git stderr** — `execFileSync('git', [..., cloneUrl, tmpDir])` echoes the clone URL (incluyendo `x-access-token:<pat>@`) en stderr cuando el clone falla. El write a `projects.error` y cualquier `console.error` del pipeline path DEBEN pasar por `scrubPatFromString(msg, cloneSecret)`. Si agregás otro write/log en `wiki-rag.ts` o código que manipule el clone URL, acordate del scrub.
+- **`needs_auth` es un valor de `projects.status`, no un booleano aparte** — las rutas viejas que chequeaban `status === 'ready'` como gate siguen funcionando (needs_auth no es ready). Handlers que hacen `project.status === 'ready' || project.status === 'error'` para el "done" flag del wiki status endpoint correctamente tratan needs_auth como no-done. No hay que propagar chequeos defensivos nuevos en los callers.
+- **Retry trigger semantics en PUT /github** — dispara `generateWiki` solo si `status ∈ {needs_auth, error}`. Pending/processing/ready no retriggerean (evita re-vectorizar repos ya indexados y race conditions con el processing en vuelo). Si el usuario quiere forzar un retry en un proyecto `ready`, usa el botón "Retry wiki" en la GitHubCard configurada (llama `/projects/:id/wiki/generate` direct).
+- **ESM + vi.hoisted para mocks de módulos con consts** — `vi.mock('./wiki-rag', () => ({ generateWiki: mockVar }))` con `const mockVar = vi.fn(...)` falla porque el `vi.mock` se hoistea arriba del `const`. Usar `const { mockVar } = vi.hoisted(() => ({ mockVar: vi.fn(...) }))` — patrón aplicado en `integration-routes.test.ts`.
+- **Tests `:memory:` contra `project-routes.ts` necesitan `__setClientForTests`** — vi.spyOn sobre exports ESM de `@libsql/client` falla (`Cannot redefine property`). Export un setter en vez de spiar. Patrón ya aplicado en scoped-routes, integration-keys, y ahora project-routes + integration-routes.
+
+**Followups (no bloqueantes, abiertos para slices futuros):**
+
+- **Consolidar `projects.status` ↔ `projects.wiki_status` ↔ `projects.error` ↔ `projects.wiki_error`**: pre-existing dual-source-of-truth en varias dimensiones. `wiki-rag.ts` escribe `projects.error` pero el `GET /projects` lee `projects.wiki_error` → errores de wiki nunca llegan a la UI. `scoped-routes.ts:/wiki/generate` escribe `wiki_status='processing'` pero `generateWiki` escribe `status`. No tocado en #5d (scope-out explícito). Consolidar en un solo path.
+- **`scoped-routes.ts:/wiki/generate` no chequea `status==='needs_auth'`**: hoy no hay UI pública que trigger ese endpoint (excepto el retry button nuevo en GitHubCard, que va desde un proyecto que YA tiene PAT configurado), pero si se expone, debería respetar needs_auth. Añadir guard.
+- **PATCH `/projects/:id` cambiando `repo_url` cuando hay integration github existente**: meta de la integration quedaría stale. Opciones: invalidar la integration (`status='invalid'`) al cambiar repo_url, o re-correr el repo-access probe inline. No crítico porque el backend hace server-side validation al usar el PAT.
+- **`webhook_secrets` refactor a PK compuesta**: sigue global. Pending desde #5a.
+- **Drop columnas plaintext en `projects`**: `linear_token`, `linear_webhook_id/url`, `github_token`, `github_repo_owner/name`, `slack_enabled`, `slack_channel_id`, `slack_webhook_url`, `resend_api_key`, `linear_team_id`. Todos los readers ya migraron; dejarlas nullable y dropear en migration dedicada.
+- **Legacy endpoints runtime**: `/api/config/status`, global `/api/linear/members`, `/settings` route con banner — cleanup aparte.
+- **`mastra/index.ts:/wiki/status` (admin route)** lee `projects.status` + `projects.error` de la row más reciente (no scoped por user). Es pre-existing admin endpoint; no scoped a tenant. Revisar si sigue siendo necesario o si `scoped-routes.ts:/wiki/status` lo reemplaza.
+- **`lucide-react` bump** para tener el logo oficial de GitHub (hoy usamos `Code2` como proxy). No crítico.
+
+**Smoke validado** (runtime + frontend containers recreados 2026-04-22 tras landing completo): init-db no tuvo nuevos ALTERs (`needs_auth` es solo un string en la columna TEXT existente), runtime arrancó sin errores de import, containers healthy. El matrix UI (crear proyecto público → proyecto privado → connect PAT → retry wiki → PAT sin acceso → URL gitlab → verificar que `projects.error` no contiene el PAT tras un clone fallido) queda para el usuario — todos los code paths están testeados unit + integration.
 
 ### 6. Test-connection buttons + onboarding wizard
 - Endpoint `POST /integrations/:provider/test` con la key provisional, sin persistir — **DONE en #5a-#5c para los 5 providers**. Falta el wizard.
@@ -475,4 +490,4 @@ docker exec triage-runtime-1 node -e "
 
 ## Qué decirle al próximo agente al arrancar
 
-> "Estamos en `fix/ui-cleanup-cycle-panel`, todo pusheado a origin (tip: `4a350be`). Arco multi-tenant #1-#5c cerrado: webhook verif, wiki, per-tenant schema, tools + agents per-tenant, y las 5 cards de integración (OpenRouter/Linear/Slack/Resend/GitHub) en `/integrations`. Lee `docs/HANDOFF-MULTI-TENANT-HARDENING-2026-04-17.md` **sección 5c + 5d** antes de tocar código — #5c cerró con un dual-source-of-truth entre `projects.repo_url` y el meta de GitHub integration, y #5d es el plan concreto para unificar eso + detectar repos privados (Pattern C aprobado). Decisiones UX ya lockeadas: un proyecto = un repo; GitHub card pasa a 'verify access' sin picker; clone con PAT inyectado `https://x-access-token:<pat>@github.com/...`. No toques `.env` ni hagas commits sin que te lo pida. Si ves algo raro en el estado del repo (stash, archivos untracked, ramas nuevas), preguntame antes de accionar."
+> "Estamos en `fix/ui-cleanup-cycle-panel`. #1-#5d cerrado code-side (tip pushed: `4a350be`; #5d landed local pending commit). Arco multi-tenant completo: webhook verif, wiki, per-tenant schema/keys/agents/tools, 5 integration cards (OpenRouter/Linear/Slack/Resend/GitHub) + GitHub/wiki unification con private-repo detection (Pattern C). Lee `docs/HANDOFF-MULTI-TENANT-HARDENING-2026-04-17.md` **sección 5d** antes de tocar código del lado github/wiki — ahí están los gotchas frescos (PAT leak en git stderr + scrub obligatorio, retry trigger semantics, ESM `vi.hoisted` para module mocks) y los followups que quedaron explícitamente fuera. Smoke UI del #5d (probe público, needs_auth flip, connect PAT, retry wiki, PAT sin acceso, URL gitlab, PAT scrub en DB) todavía no corrió — todos los paths están testeados unit + integration pero el walkthrough en browser queda pendiente. Próximo slice natural es #6 (onboarding wizard + cleanup de endpoints legacy + drop de columnas plaintext). No toques `.env` ni hagas commits sin que te lo pida. Si ves algo raro en el estado del repo, preguntame antes de accionar."
