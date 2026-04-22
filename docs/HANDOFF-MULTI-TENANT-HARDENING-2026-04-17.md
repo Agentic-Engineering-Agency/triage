@@ -1,23 +1,26 @@
 # Handoff — Multi-tenant hardening & UX redesign
 
-**Branch:** `fix/ui-cleanup-cycle-panel`
-**Last commit:** `6206218 docs: handoff update for #5a slice closure + #5b followups` (2026-04-21)
-**Uncommitted at time of write:** #5b Linear slice (ver sección 5b abajo) — pendiente commit.
-**Date:** 2026-04-17 (original), 2026-04-20 (#3 + #4a), 2026-04-21 (#4b + #5a), 2026-04-22 (#5b Linear)
+**Branch:** `fix/ui-cleanup-cycle-panel` — 14 commits pusheados al origin.
+**Last commit:** `4a350be feat(ui): Slack/Resend/GitHub cards + account-email reporter (#5c)` (2026-04-22)
+**Uncommitted at time of write:** ninguno — working tree limpio.
+**Date:** 2026-04-17 (original), 2026-04-20 (#3 + #4a), 2026-04-21 (#4b + #5a), 2026-04-22 (#5b Linear + #5c Slack/Resend/GitHub)
 
 ---
 
 ## Objetivo de la próxima sesión
 
-**Siguiente natural: #5c — cards de Resend / Slack / GitHub en `/integrations`.**
+**Siguiente natural: #5d — GitHub/wiki unification + private repo detection (Pattern C).**
 
-#1–#5b cerrados (webhook verif, wiki, per-tenant schema, tools + agents per-tenant, UI OpenRouter, UI Linear + scoped-routes flip + ownership fix). Estado del branch después de #5b: 10 commits pusheados + 1 commit pendiente para el slice Linear.
+#1–#5c cerrados: webhook verif, wiki, per-tenant schema, tools + agents per-tenant, 5 integration cards (OpenRouter + Linear + Slack + Resend + GitHub) + scoped-routes flip + ownership fix + generic `Picker<T>` + account-email reporter. Todo pusheado.
 
-Baseline actualizado: TSC runtime 5 errores (baja 9 vs 14 post-#5a — el flip limpió los `getProject(string | undefined)` legacy). TSC frontend limpio. Tests: 106 failing estable, +19 nuevos passing (+13 `scoped-routes.test.ts` nuevo + +6 Linear en `integration-routes.test.ts`). Los 13 tests de scoped-routes que vivían en `project-routes.test.ts` están ahora `describe.skip` — fueron reemplazados por el file nuevo que sí tiene `:memory: libsql` y cookies válidas.
+Baseline al cierre de #5c: TSC runtime 5 errores estable (3 scoped-routes Cycle casts + 2 sendSlackMessage.execute possibly-undefined — pre-existing). TSC frontend limpio. Tests: 106 failing baseline estable, +12 nuevos passing en #5c (+10 `integration-routes.test.ts` para los 3 providers nuevos, +1 `tenant-keys.test.ts` meta propagation, +1 `resend.test.ts` meta.fromEmail override). 0 regresiones netas.
 
-El sistema corre end-to-end: chat stream + /api/test/slack-agent loggean `[tenant-keys] project=<id> provider=openrouter source=env` confirmando que el `model:` dynamic de los agentes resuelve per-tenant y cae a env cuando no hay fila en `project_integrations`. #1-#4 del arco multi-tenant cerrados; falta #5 (UI BYO) + #6 (test connection + wizard).
+Smoke #5c validado end-to-end el 2026-04-22:
+- Resend card (PAT + fromEmail manual) → Test & Save → card "From: ..."
+- Slack card con token minimal-scope (`chat:write` only) → `auth.test` pasa, `conversations.list` falla con `missing_scope` → UI cae a input manual de channelId con hint sobre scopes. Confirma que el mismo token del `.env` (que sólo tiene chat:write) funciona via manual input.
+- GitHub card → picker de repos → Save → card "Repo: owner/name". Funcionó aislado, pero destapa el dual-source-of-truth con `projects.repo_url` — lo resuelve #5d.
 
-Ver la sección **"Priorización"** más abajo para el detalle.
+Ver la sección **"Priorización"** más abajo para el detalle de #5d.
 
 ---
 
@@ -31,6 +34,8 @@ Probado end-to-end esta semana:
 - Webhook simulado: issue → "Done" → resume workflow → email de resolución al reporter → mensaje "✅ resolved" en el chat thread
 - Webhook simulado: issue → "In Review" sin evidencia → bot lo revierte a "In Progress" y nagea al assignee
 - Observability dashboard: `llm_usage` table se llena via `onFinish` del chatRoute; pricing funciona con prefix-match para model IDs versionados de OpenRouter
+- `/integrations` end-to-end con los 5 providers: OpenRouter (test+save directo), Linear (picker de teams), Slack (picker cuando hay scopes, input manual cuando falta `channels:read`), Resend (PAT + fromEmail manual), GitHub (picker de repos — a unificar en #5d)
+- Reporter email en `chat.tsx` viene de `useAuth().user.email` en vez de localStorage (key `reporter_email` muerta)
 
 No probado todavía:
 
@@ -312,11 +317,78 @@ Aterrizó la card de Linear + cleanup del `/settings` legacy + flip del `scoped-
 - **`webhook_secrets` refactor a PK compuesta**: sigue global. Cuando Linear card agregue "Register webhook" (dentro de #5c o slice dedicado), migrar a `(project_id, provider)` con `setWebhookSecret(projectId, provider, secret)`. Incluye cambio en el handler `/webhooks/linear` para lookup por project.
 - **Drop columnas plaintext en `projects`**: `linear_token`, `linear_webhook_id/url`, `github_token`, `github_repo_owner/name`, `slack_enabled`, `slack_channel_id`, `slack_webhook_url`, `resend_api_key`, `linear_team_id` (leído solo por env-fallback hoy; una vez que todos los projects migren, se puede dropear). Después del cleanup de endpoints.
 
-### 5c. UI BYO keys — Resend/Slack/GitHub (próximo)
-Mismo pattern que Linear: expandir `runProviderTest` dispatch + card por provider con su picker-si-aplica. Ver followups arriba para contratos específicos.
+### 5c. UI BYO keys — Slack/Resend/GitHub ✅ DONE (2026-04-22)
+
+Cerró el bucle de 5 providers en `/integrations`. 2 commits: `d3d9c7c` (backend) + `4a350be` (frontend).
+
+**Qué shipped:**
+- **Backend — `resolveKey` shape change**: ahora retorna `{key, meta, source}` en vez de `{key, source}`. Meta se propaga desde la row tenant en `getIntegrationKey`. Callers que solo necesitan `key` siguen funcionando (additive). Tool consumers que leen meta: `resolveResend` (meta.fromEmail precedence meta > env > fallback) y `resolveSlack` (metaChannel de la row, salda el TODO de slack.ts:31-35).
+- **Backend — 3 dispatchers nuevos en `integration-routes.ts`**:
+  - `testSlackKey`: POST `auth.test` (valida token) + GET `conversations.list?types=public_channel,private_channel&limit=200` → `preview.channels`. **Tolerante a missing_scope**: si auth.test pasa pero la list falla (ej. token con solo `chat:write`), retorna `valid:true` con `preview.channels: []`. UI cae a input manual.
+  - `testResendKey`: GET `/domains` → `valid:true`/`invalid_key` binario. Sin preview → persiste con `meta.fromEmail` del body (atajo tipo OpenRouter).
+  - `testGithubKey`: GET `/user` + GET `/user/repos?per_page=100&sort=updated` → `preview.repos`. Headers: Bearer + `X-GitHub-Api-Version: 2022-11-28`.
+- **Frontend — `components/picker.tsx` nuevo**: `Picker<T>` genérico con `items/value/getValue/getLabel/onChange/placeholder`. Outside-click + Escape. `TeamPicker` borrado — `LinearCard` migrado al shared. Rule-of-three cumplido: Linear teams + Slack channels + GitHub repos.
+- **Frontend — 3 cards nuevas en `integrations.lazy.tsx`**:
+  - `SlackCard`: `tokenValidated` state separa "token ok" de "enumeration ok". Si channels está vacío → input manual de channelId con hint de scopes (`channels:read`, `groups:read`). Meta guardada: `{channelId, channelName?}` — channelName solo si pickeado del picker.
+  - `ResendCard`: 2 inputs (PAT + fromEmail) + validación client-side de email con regex. Un solo botón "Test & Save". Meta: `{fromEmail}`.
+  - `GitHubCard`: flujo tipo Linear (PAT → Test → picker → Save). Meta: `{owner, repo, repoFullName}`. **Nota**: este picker queda redundante con `projects.repo_url` — se simplifica a "verify access" en #5d.
+  - Los 3 `StubCard` borrados.
+- **Frontend — `chat.tsx` reporter_email migration**: los 3 callsites (`handleCreateTicket`, `handleUpdateExisting`, `handleCreateNew`) leen `user?.email` de `useAuth()` en vez de `localStorage.getItem('reporter_email')`. Early-return si no hay user (chat está detrás de auth). La key `reporter_email` en localStorage quedó muerta — verificado sin writers restantes.
+- **Tests**: `integration-routes.test.ts` +10 (Slack preview/missing_scope/invalid_auth/network/PUT con channelId, Resend persist+meta/401, GitHub preview/401/headers). `tenant-keys.test.ts` +1 meta propagation. `resend.test.ts` +1 meta.fromEmail override via dynamic re-import (patrón ya usado en el file, cuidado con el leak flag de vi.doMock+resetModules). `integration-routes.test.ts` -1 (borrado el test `not_implemented` ahora obsoleto — los 5 providers tienen dispatcher).
+
+**Baselines al cierre**: runtime TSC 5 errores estable, frontend TSC limpio, tests 106 failing baseline, +12 nuevos passing, 0 regresiones.
+
+**Gotchas nuevos:**
+- **lucide-react pineado ^1.7.0**: no exporta `Github` icon — usé `Code2` para la GitHubCard (mismo icono que tenía el StubCard). Si alguien quiere el logo real eventualmente, es slice aparte (bump de lucide).
+- **Slack missing_scope no es fatal**: tokens con solo `chat:write` (lo típico de un bot minimal) no pueden listar canales. Mi dispatcher lo trata como "token valid, UI lo resuelve". Si en el futuro agregamos un warning textual en la response, extender `TestResult` con campo `warning`.
+- **Resend preview shortcut**: a diferencia de Slack/Linear/GitHub, Resend persiste en `/test` sin preview (como OpenRouter) porque `fromEmail` viene del body del request — no hay nada que pickear. El cliente manda `{apiKey, meta: {fromEmail}}` directo al `/test` y backend hace set+markTested en un call.
+
+**Followups (abiertos para #5d y posteriores):**
+- **`GitHubCard` → PAT + "Verify access to {project.repoFullName}"**: sin picker de repos. El repo del proyecto es source of truth. Si el PAT no tiene acceso → error claro.
+- **Private repo detection al crear proyecto** (#5d Pattern C — ver abajo).
+- **`wiki_status='needs_auth'`** como nuevo estado, con UI prompt para conectar GitHub.
+- **Clone autenticado en wiki-rag.ts**: inyectar PAT `https://x-access-token:<pat>@github.com/...` cuando hay integration GitHub para el proyecto.
+- **`webhook_secrets` refactor a PK compuesta** (pendiente de #5b): seguirá global hasta que se agregue "Register webhook" button.
+- **Drop columnas plaintext en `projects`**: sin cambio desde #5b. Requiere migrar los callers primero.
+- **Legacy endpoints runtime**: `/api/config/status`, global `/api/linear/members`, `/settings` route con banner — todos siguen vivos. Cleanup en slice aparte (no crítico).
+
+### 5d. GitHub/wiki unification + private repo detection (próximo)
+
+**Objetivo:** resolver el dual-source-of-truth entre `projects.repo_url` (wiki clone) y `integration_meta.repoFullName` (GitHub API tools), y habilitar repos privados.
+
+**Decisión UX aprobada (2026-04-22):** Pattern C progressive — detectar privacy al crear proyecto, dejar `wiki_status='needs_auth'` si aplica, UI contextual para conectar GitHub.
+
+**Decisión UX aprobada (2026-04-22):** un proyecto = un repo. GitHub card pasa de picker a "verify access to {project.repoFullName}". Si el usuario quiere otro repo, crea proyecto nuevo.
+
+**Scope backend:**
+- **`POST /projects`**: parsear `repo_url` → extraer owner/repo → probe `GET api.github.com/repos/:o/:r` sin token, con timeout corto (~2s). Outcomes:
+  - **200** → proyecto creado, wiki arranca clone público normal
+  - **404/403** → proyecto creado con `wiki_status='needs_auth'`, no se dispara wiki
+  - **Timeout/network error** → proceder como si fuera público (no bloquear creación por GitHub flaky)
+- **`wiki-rag.ts`**: al clonar, leer `resolveKey('github', projectId)`. Si hay PAT, inyectar en URL: `https://x-access-token:<pat>@github.com/owner/repo.git`. Si `wiki_status='needs_auth'` y sigue sin PAT, no-op.
+- **`PUT /projects/:id/integrations/github`**: cambia contrato — en vez de esperar meta del picker, valida que el PAT tenga acceso al `projects.repo_url` del proyecto (`GET /repos/:owner/:repo` con Bearer). Si OK: auto-setea `meta = {owner, repo, repoFullName}` matching projects + si `wiki_status='needs_auth'`, dispara wiki-retry. Si el PAT no tiene acceso → error `repo_access_denied` con mensaje claro.
+- **Remover `testGithubKey` preview de repos**: ya no hace `GET /user/repos`. Solo `GET /user` para validar el PAT; el `/test` endpoint queda como "PAT valid yes/no".
+
+**Scope frontend:**
+- **`GitHubCard` simplificado**: sin picker, sin estado de repos. Input de PAT + botón "Verify access to {projects.repoFullName}". Después de verify+save, card muestra "Repo: X ✓".
+- **Nueva card en `/projects/:id`** (o en el header del projects view) que aparece cuando `wiki_status='needs_auth'`: "Private repo detected — Connect GitHub to enable vectorization" con link directo a `/integrations` o modal inline.
+- **`IntegrationSummary.meta.repoFullName`** deja de mostrarse como campo independiente — ahora siempre debería coincidir con el repo del proyecto.
+
+**Scope tests:**
+- Nuevo test en `project-routes.test.ts` (o su reemplazo) para el probe de GitHub con 200/404/timeout.
+- Test en `wiki-rag.test.ts` verificando que el clone URL lleva el PAT inyectado cuando hay integration row.
+- Update a `integration-routes.test.ts` GitHub sección — borrar preview/repos tests, agregar repo_access_denied path.
+
+**Fuera de scope de #5d (explícito):**
+- Onboarding wizard (#6)
+- RBAC
+- `webhook_secrets` refactor
+- Rate limiting
+
+**Estimación**: 4-6 horas sanas. Tocar `project-routes.ts`, `wiki-rag.ts`, `integration-routes.ts`, `integrations.lazy.tsx`, wiki status UI. Probar con un repo privado real (crear uno de prueba en GitHub si no hay).
 
 ### 6. Test-connection buttons + onboarding wizard
-- Endpoint `POST /integrations/:provider/test` con la key provisional, sin persistir
+- Endpoint `POST /integrations/:provider/test` con la key provisional, sin persistir — **DONE en #5a-#5c para los 5 providers**. Falta el wizard.
 - Wizard de primer uso: "antes de usar Triage necesitas configurar: [✓ Linear] [✗ Email] [✗ Slack] [✓ LLM]"
 
 ### Postergable
@@ -338,6 +410,9 @@ Mismo pattern que Linear: expandir `runProviderTest` dispatch + card por provide
 - **`vi.doMock` + `vi.resetModules` leak**: si un test hace `vi.doMock('../../lib/tenant-keys')` y después `vi.resetModules()`, el mock queda activo para tests subsiguientes en el mismo file. Tests que checquean `(Resend as any).mock.calls.length` después de `await import('resend')` van a ver un mock rebindeado en vez del original. Preferir verificar via `mockEmailsSend.toHaveBeenCalledTimes(n)` (la call chain del mock original) en vez de contar constructor calls.
 - **Memory storage per-agent**: `orchestrator.ts` usa su propio `LibSQLStore` (`memory-store`). Mastra top-level storage es separado (`triage-main`). Para leer mensajes del thread usar `agent.getMemory()?.recall()` — el endpoint `/memory/threads/:threadId/messages` ya lo hace.
 - **`include_reasoning: true` en OpenRouter** reserva el full output budget → 402 spurious aunque haya saldo. Está removido, no lo re-agregues sin verificar.
+- **Slack minimal-scope tokens**: un bot con solo `chat:write` autentica en `auth.test` pero falla en `conversations.list` con `missing_scope`. El dispatcher lo trata como "valid, preview vacío" y el UI cae a input manual de channelId. Si en el futuro agregamos un indicador textual en la response, extender `TestResult` con campo opcional `warning`. No es un bug — es reflejo de cómo está configurado el bot en `.env`.
+- **`resolveKey` retorna `meta`**: desde #5c el shape es `{key, meta, source}`. Mocks viejos que retornan `{key: null, source: 'none'}` sin meta pasan hoy porque nada lee `meta` en esos paths, pero si agregás código nuevo que lea meta (ej. el github clone auth de #5d) acordate de actualizar los mocks.
+- **lucide-react ^1.7.0**: versión pineada pre-rebranding, no tiene brand icons como `Github`. Usar `Code2` o `FolderGit2` como proxy. Bump aparte si querés el logo real.
 
 ---
 
@@ -382,10 +457,16 @@ docker exec triage-runtime-1 node -e "
 - **Infra handoff:** `HANDOFF.md` en root — diagrama de contenedores + puertos.
 - **Arquitectura general:** `ARCHITECTURE.md` en root.
 - **Docs de Mastra:** usar MCP `mastra` tools (`searchMastraDocs`, `readMastraDocs`) para verificar API signatures; están cambiando rápido (v1.4).
-- **Git log reciente (branch, sin pushear):**
+- **Git log reciente (todo pusheado a origin):**
+  - `4a350be` — feat(ui): Slack/Resend/GitHub cards + account-email reporter (#5c)
+  - `d3d9c7c` — feat(integrations): Slack/Resend/GitHub test dispatchers + tenant meta (#5c)
+  - `4c518bf` — feat(ui): Linear card + agent project clarification (#5b)
+  - `38fc56e` — feat(integrations): Linear tenant key + scoped-routes ownership (#5b)
+  - `6206218` — docs: handoff update for #5a slice closure + #5b followups
+  - `1caef24` — feat(ui): /integrations page with OpenRouter card + confirm dialog (#5a)
+  - `82713c2` — refactor(integrations): rewrite integration-routes against encrypted path + auth-helpers (#5a)
   - `124f29a` — feat(integrations): resolve OpenRouter keys per-tenant for agents/tools (#4b)
   - `54de998` — feat(integrations): resolve API keys per-tenant in tools (#4a)
-  - `4ec307a` — chore(types): fix pre-existing tsc drift (schema + pricing)
   - `74e05f2` — feat(integrations): envelope-encrypted per-tenant keys schema (#3)
   - `6dcc311` — feat(wiki): project-aware orchestrator + pipeline fixes (#2)
   - `63b13e6` — feat(webhooks): verify Linear signatures con HMAC-SHA256 + secret persistence (#1)
@@ -394,4 +475,4 @@ docker exec triage-runtime-1 node -e "
 
 ## Qué decirle al próximo agente al arrancar
 
-> "Estamos en `fix/ui-cleanup-cycle-panel` (6 commits sin pushear). El sistema funciona end-to-end (smoke reciente: chat stream + admin route loggean `[tenant-keys] source=env` confirmando que el model dynamic resuelve per-tenant). Lee `docs/HANDOFF-MULTI-TENANT-HARDENING-2026-04-17.md` antes de empezar. #1-#4 del arco multi-tenant están cerrados; el siguiente es #5 — UI BYO keys en `/integrations` (cards por dominio, test-connection, save). El backend ya existe (tabla `project_integrations` + crypto-envelope + `integration-routes.ts`), solo falta el frontend. No toques `.env` ni hagas commits sin que te lo pida."
+> "Estamos en `fix/ui-cleanup-cycle-panel`, todo pusheado a origin (tip: `4a350be`). Arco multi-tenant #1-#5c cerrado: webhook verif, wiki, per-tenant schema, tools + agents per-tenant, y las 5 cards de integración (OpenRouter/Linear/Slack/Resend/GitHub) en `/integrations`. Lee `docs/HANDOFF-MULTI-TENANT-HARDENING-2026-04-17.md` **sección 5c + 5d** antes de tocar código — #5c cerró con un dual-source-of-truth entre `projects.repo_url` y el meta de GitHub integration, y #5d es el plan concreto para unificar eso + detectar repos privados (Pattern C aprobado). Decisiones UX ya lockeadas: un proyecto = un repo; GitHub card pasa a 'verify access' sin picker; clone con PAT inyectado `https://x-access-token:<pat>@github.com/...`. No toques `.env` ni hagas commits sin que te lo pida. Si ves algo raro en el estado del repo (stash, archivos untracked, ramas nuevas), preguntame antes de accionar."
