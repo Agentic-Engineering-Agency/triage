@@ -55,3 +55,43 @@ export async function getUserIdFromRequest(c: Context): Promise<string | null> {
   const userId = r.rows[0]?.user_id;
   return userId ? String(userId) : null;
 }
+
+export type OwnershipResult =
+  | { ok: true; userId: string }
+  | { ok: false; status: 401 | 404 };
+
+/**
+ * Ownership gate for any `/projects/:projectId/*` route. Returns:
+ *   - 401 when the request has no valid session
+ *   - 404 when the project doesn't exist OR belongs to a different user
+ *     (uniform 404 so we don't leak existence to non-owners)
+ *
+ * Use `authErrorResponse(c, result.status)` to produce the matching JSON
+ * error body.
+ */
+export async function assertProjectOwnership(
+  c: Context,
+  projectId: string,
+): Promise<OwnershipResult> {
+  const userId = await getUserIdFromRequest(c);
+  if (!userId) return { ok: false, status: 401 };
+  const r = await getClient().execute({
+    sql: 'SELECT 1 FROM projects WHERE id = ? AND user_id = ? LIMIT 1',
+    args: [projectId, userId],
+  });
+  if (r.rows.length === 0) return { ok: false, status: 404 };
+  return { ok: true, userId };
+}
+
+export function authErrorResponse(c: Context, status: 401 | 404) {
+  return c.json(
+    {
+      success: false,
+      error: {
+        code: status === 401 ? 'UNAUTHORIZED' : 'NOT_FOUND',
+        message: status === 401 ? 'No valid session' : 'Project not found',
+      },
+    },
+    status,
+  );
+}

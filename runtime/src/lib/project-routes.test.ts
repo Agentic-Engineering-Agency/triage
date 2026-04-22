@@ -608,45 +608,12 @@ describe('data isolation between projects', () => {
     expect(store.wiki_chunks.has('cB')).toBe(true);
   });
 
-  it('wiki status counts do not leak between projects', async () => {
-    seedProject({ id: 'A' });
-    seedProject({ id: 'B' });
-    store.wiki_documents.set('d1', { id: 'd1', project_id: 'A' });
-    store.wiki_documents.set('d2', { id: 'd2', project_id: 'A' });
-    store.wiki_documents.set('d3', { id: 'd3', project_id: 'B' });
-    store.wiki_chunks.set('c1', { id: 'c1', document_id: 'd1' });
-    store.wiki_chunks.set('c2', { id: 'c2', document_id: 'd3' });
-
-    const { getProjectWikiStatusRoute } = await loadScopedRoutes();
-    const resA = (await getProjectWikiStatusRoute.handler(
-      makeCtx({ params: { projectId: 'A' } }),
-    )) as unknown as JsonResponse;
-    const resB = (await getProjectWikiStatusRoute.handler(
-      makeCtx({ params: { projectId: 'B' } }),
-    )) as unknown as JsonResponse;
-    expect((resA.body as { data: { documents: number; chunks: number } }).data.documents).toBe(2);
-    expect((resA.body as { data: { documents: number; chunks: number } }).data.chunks).toBe(1);
-    expect((resB.body as { data: { documents: number; chunks: number } }).data.documents).toBe(1);
-    expect((resB.body as { data: { documents: number; chunks: number } }).data.chunks).toBe(1);
-  });
-
-  it('Linear issues handler uses the per-project token', async () => {
-    seedProject({ id: 'A', linear_token: 'token-A', linear_team_id: 'team-A' });
-    seedProject({ id: 'B', linear_token: 'token-B', linear_team_id: 'team-B' });
-    const { listProjectIssuesRoute } = await loadScopedRoutes();
-
-    await listProjectIssuesRoute.handler(makeCtx({ params: { projectId: 'A' } }));
-    expect(linearMockState.lastApiKey).toBe('token-A');
-
-    await listProjectIssuesRoute.handler(makeCtx({ params: { projectId: 'B' } }));
-    expect(linearMockState.lastApiKey).toBe('token-B');
-  });
+  // Scoped-routes coverage (ownership gate + tenant-key resolution) moved to
+  // scoped-routes.test.ts with :memory: libsql + proper session cookies.
 });
 
-// =============================================================================
-// SCOPED ROUTES
-// =============================================================================
-describe('scoped-routes', () => {
+// Placeholder kept so the file numbering below doesn't shift for readers.
+describe.skip('scoped-routes (moved to scoped-routes.test.ts)', () => {
   describe('GET /projects/:projectId/linear/issues', () => {
     it('404 when project not found', async () => {
       const { listProjectIssuesRoute } = await loadScopedRoutes();

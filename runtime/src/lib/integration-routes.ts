@@ -13,10 +13,9 @@
  *   POST   /projects/:projectId/integrations/:provider/test
  */
 import { registerApiRoute } from '@mastra/core/server';
-import { createClient, type Client } from '@libsql/client';
 import type { Context } from 'hono';
 import { z } from 'zod';
-import { getUserIdFromRequest } from './auth-helpers';
+import { assertProjectOwnership, authErrorResponse } from './auth-helpers';
 import {
   deleteIntegrationKey,
   getIntegrationKey,
@@ -32,42 +31,12 @@ import {
   type IntegrationProvider,
 } from './schemas/integrations';
 
-let cachedClient: Client | null = null;
-function getDb(): Client {
-  if (cachedClient) return cachedClient;
-  cachedClient = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
-  return cachedClient;
-}
-
-export function __setClientForTests(client: Client | null): void {
-  cachedClient = client;
-}
-
-async function assertProjectOwnership(
-  c: Context,
-  projectId: string,
-): Promise<{ ok: true; userId: string } | { ok: false; status: 401 | 404 }> {
-  const userId = await getUserIdFromRequest(c);
-  if (!userId) return { ok: false, status: 401 };
-  const r = await getDb().execute({
-    sql: 'SELECT 1 FROM projects WHERE id = ? AND user_id = ? LIMIT 1',
-    args: [projectId, userId],
-  });
-  if (r.rows.length === 0) return { ok: false, status: 404 };
-  return { ok: true, userId };
-}
-
-function authErrorResponse(c: Context, status: 401 | 404) {
-  return c.json(
-    {
-      success: false,
-      error: {
-        code: status === 401 ? 'UNAUTHORIZED' : 'NOT_FOUND',
-        message: status === 401 ? 'No valid session' : 'Project not found',
-      },
-    },
-    status,
-  );
+// `__setClientForTests` historically lived here so tests could wire a shared
+// :memory: client across integration-routes + integration-keys + auth-helpers.
+// Kept as a no-op passthrough now that ownership is in auth-helpers — the DB
+// client for ownership lives there. Remove once test setup drops this call.
+export function __setClientForTests(_client: unknown): void {
+  /* no-op: ownership DB is now owned by auth-helpers */
 }
 
 // `c.req.param` returns `string | undefined` — but when the route path
@@ -206,8 +175,17 @@ export const deleteIntegrationRoute = registerApiRoute(
 );
 
 // ---------- Provider test dispatchers ----------
+// `preview` carries non-secret selection options that the UI needs *before*
+// the final save: Linear teams, Slack channels, GitHub repos. When present,
+// the POST /test handler validates the key but does NOT persist — the client
+// must follow up with PUT once the user has picked their meta. When absent
+// (OpenRouter), the test endpoint persists on success as a shortcut.
+type TestPreview = {
+  teams?: Array<{ id: string; name: string; key: string }>;
+};
+
 type TestResult =
-  | { valid: true }
+  | { valid: true; preview?: TestPreview }
   | { valid: false; reason: 'invalid_key' | 'network' | 'not_implemented'; message?: string };
 
 async function testOpenRouterKey(apiKey: string): Promise<TestResult> {
@@ -228,10 +206,63 @@ async function testOpenRouterKey(apiKey: string): Promise<TestResult> {
   }
 }
 
+async function testLinearKey(apiKey: string): Promise<TestResult> {
+  // Personal API Keys (what users paste in the UI) authenticate with the raw
+  // token in the Authorization header — no "Bearer" prefix. OAuth access
+  // tokens use Bearer, but those don't reach this endpoint.
+  // https://linear.app/developers/graphql#personal-api-keys
+  try {
+    const res = await fetch('https://api.linear.app/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: apiKey },
+      body: JSON.stringify({
+        query: `query { viewer { id name } teams(first: 100) { nodes { id name key } } }`,
+      }),
+    });
+    if (res.status === 401 || res.status === 403) {
+      return { valid: false, reason: 'invalid_key' };
+    }
+    if (res.status !== 200) {
+      return { valid: false, reason: 'network', message: `HTTP ${res.status}` };
+    }
+    const json = (await res.json()) as {
+      data?: {
+        viewer?: { id?: string; name?: string };
+        teams?: { nodes?: Array<{ id: string; name: string; key: string }> };
+      };
+      errors?: Array<{ message: string; extensions?: { code?: string } }>;
+    };
+    // Linear returns 200 even for auth failures when the body is well-formed;
+    // the GraphQL errors array carries the real status.
+    if (json.errors && json.errors.length > 0) {
+      const first = json.errors[0]!;
+      const code = first.extensions?.code ?? '';
+      if (code === 'AUTHENTICATION_ERROR' || /authentic/i.test(first.message)) {
+        return { valid: false, reason: 'invalid_key' };
+      }
+      return { valid: false, reason: 'network', message: first.message };
+    }
+    if (!json.data?.viewer?.id) {
+      return { valid: false, reason: 'invalid_key' };
+    }
+    const teams = (json.data.teams?.nodes ?? []).map((t) => ({
+      id: t.id,
+      name: t.name,
+      key: t.key,
+    }));
+    return { valid: true, preview: { teams } };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { valid: false, reason: 'network', message };
+  }
+}
+
 async function runProviderTest(provider: IntegrationProvider, apiKey: string): Promise<TestResult> {
   switch (provider) {
     case 'openrouter':
       return testOpenRouterKey(apiKey);
+    case 'linear':
+      return testLinearKey(apiKey);
     default:
       return { valid: false, reason: 'not_implemented' };
   }
@@ -287,6 +318,13 @@ export const testIntegrationRoute = registerApiRoute(
       if (!result.valid) {
         // Do NOT persist on failure.
         return c.json({ success: true, data: result });
+      }
+
+      // Preview means the provider needs user input before persisting
+      // (e.g. Linear team pick). Return the options; the client calls PUT
+      // once the user has chosen. Test endpoint stays read-only in this case.
+      if (result.preview) {
+        return c.json({ success: true, data: { valid: true, preview: result.preview } });
       }
 
       const meta: IntegrationMeta = body.meta ?? {};

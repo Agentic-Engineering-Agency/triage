@@ -275,16 +275,178 @@ describe('integration-routes', () => {
       expect((listRes.body as { data: unknown[] }).data).toEqual([]);
     });
 
-    it('returns not_implemented for other providers', async () => {
+    it('returns not_implemented for providers without a test impl', async () => {
+      // resend/slack/github not yet wired — linear and openrouter are.
       const res = (await testIntegrationRoute.handler(
         makeCtx({
-          params: { projectId: 'proj-owned', provider: 'linear' },
-          body: { apiKey: 'lin_xxx' },
+          params: { projectId: 'proj-owned', provider: 'resend' },
+          body: { apiKey: 're_xxx' },
         }),
       )) as unknown as JsonRes;
       const body = res.body as { data: { valid: boolean; reason?: string } };
       expect(body.data.valid).toBe(false);
       expect(body.data.reason).toBe('not_implemented');
+    });
+  });
+
+  describe('POST /projects/:id/integrations/linear/test', () => {
+    let fetchMock: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    const linearOkResponse = () => ({
+      status: 200,
+      json: async () => ({
+        data: {
+          viewer: { id: 'user-linear-id', name: 'Alice' },
+          teams: {
+            nodes: [
+              { id: 'team-eng', name: 'Engineering', key: 'ENG' },
+              { id: 'team-ops', name: 'Operations', key: 'OPS' },
+            ],
+          },
+        },
+      }),
+    });
+
+    it('returns teams preview and does NOT persist on valid key', async () => {
+      fetchMock.mockResolvedValueOnce(linearOkResponse());
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'linear' },
+          body: { apiKey: 'lin_api_valid' },
+        }),
+      )) as unknown as JsonRes;
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        data: { valid: boolean; preview?: { teams: Array<{ id: string; name: string; key: string }> } };
+      };
+      expect(body.data.valid).toBe(true);
+      expect(body.data.preview?.teams).toEqual([
+        { id: 'team-eng', name: 'Engineering', key: 'ENG' },
+        { id: 'team-ops', name: 'Operations', key: 'OPS' },
+      ]);
+
+      // Preview path must not write to project_integrations — the client
+      // follows up with PUT after the user picks a team.
+      const listRes = (await listIntegrationsRoute.handler(
+        makeCtx({ params: { projectId: 'proj-owned' } }),
+      )) as unknown as JsonRes;
+      expect((listRes.body as { data: unknown[] }).data).toEqual([]);
+    });
+
+    it('PUT after preview persists with chosen teamId in meta', async () => {
+      fetchMock.mockResolvedValueOnce(linearOkResponse());
+      await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'linear' },
+          body: { apiKey: 'lin_api_valid' },
+        }),
+      );
+      const putRes = (await putIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'linear' },
+          body: {
+            apiKey: 'lin_api_valid',
+            meta: { teamId: 'team-eng', teamName: 'Engineering', teamKey: 'ENG' },
+          },
+        }),
+      )) as unknown as JsonRes;
+      expect(putRes.status).toBe(200);
+      const body = putRes.body as { data: { meta: Record<string, string> } };
+      expect(body.data.meta).toEqual({
+        teamId: 'team-eng',
+        teamName: 'Engineering',
+        teamKey: 'ENG',
+      });
+
+      const resolved = await resolveKey('linear', 'proj-owned');
+      expect(resolved).toEqual({ key: 'lin_api_valid', source: 'tenant' });
+    });
+
+    it('returns invalid_key on HTTP 401 and does not persist', async () => {
+      fetchMock.mockResolvedValueOnce({ status: 401 });
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'linear' },
+          body: { apiKey: 'lin_api_bad' },
+        }),
+      )) as unknown as JsonRes;
+      const body = res.body as { data: { valid: boolean; reason?: string } };
+      expect(body.data.valid).toBe(false);
+      expect(body.data.reason).toBe('invalid_key');
+
+      const listRes = (await listIntegrationsRoute.handler(
+        makeCtx({ params: { projectId: 'proj-owned' } }),
+      )) as unknown as JsonRes;
+      expect((listRes.body as { data: unknown[] }).data).toEqual([]);
+    });
+
+    it('returns invalid_key on GraphQL AUTHENTICATION_ERROR in 200 body', async () => {
+      // Linear returns 200 with `errors: [{ extensions: { code: "AUTHENTICATION_ERROR" } }]`
+      // for bad tokens that parse as well-formed requests.
+      fetchMock.mockResolvedValueOnce({
+        status: 200,
+        json: async () => ({
+          errors: [
+            {
+              message: 'Authentication failed - invalid key',
+              extensions: { code: 'AUTHENTICATION_ERROR' },
+            },
+          ],
+        }),
+      });
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'linear' },
+          body: { apiKey: 'lin_api_malformed' },
+        }),
+      )) as unknown as JsonRes;
+      const body = res.body as { data: { valid: boolean; reason?: string } };
+      expect(body.data.valid).toBe(false);
+      expect(body.data.reason).toBe('invalid_key');
+    });
+
+    it('returns network on fetch throw and does not persist', async () => {
+      fetchMock.mockRejectedValueOnce(new Error('ENOTFOUND'));
+      const res = (await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'linear' },
+          body: { apiKey: 'lin_api_any' },
+        }),
+      )) as unknown as JsonRes;
+      const body = res.body as { data: { valid: boolean; reason?: string; message?: string } };
+      expect(body.data.valid).toBe(false);
+      expect(body.data.reason).toBe('network');
+
+      const listRes = (await listIntegrationsRoute.handler(
+        makeCtx({ params: { projectId: 'proj-owned' } }),
+      )) as unknown as JsonRes;
+      expect((listRes.body as { data: unknown[] }).data).toEqual([]);
+    });
+
+    it('sends the raw PAT without Bearer prefix (Linear contract)', async () => {
+      fetchMock.mockResolvedValueOnce(linearOkResponse());
+      await testIntegrationRoute.handler(
+        makeCtx({
+          params: { projectId: 'proj-owned', provider: 'linear' },
+          body: { apiKey: 'lin_api_raw' },
+        }),
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.linear.app/graphql',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({ Authorization: 'lin_api_raw' }),
+        }),
+      );
     });
   });
 

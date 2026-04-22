@@ -1,8 +1,10 @@
 /**
  * Project-scoped API routes — all routes under /projects/:projectId/*
  *
- * These routes are scoped to a specific project and use that project's
- * integration credentials (Linear token, Slack webhook, GitHub token, etc.)
+ * Every handler gates on `assertProjectOwnership` before touching project
+ * data. Linear credentials are resolved via `getIntegrationKey` with env
+ * fallback — same path as tools and agents so the UI can seed per-project
+ * keys and see them take effect end-to-end.
  *
  * Routes:
  *   GET  /projects/:projectId/linear/issues       — issues for this project's Linear team
@@ -12,13 +14,22 @@
  *   GET  /projects/:projectId/wiki/status         — wiki generation status
  */
 import { registerApiRoute } from '@mastra/core/server';
-import { createClient } from '@libsql/client';
+import { createClient, type Client } from '@libsql/client';
 import { LinearClient } from '@linear/sdk';
 import type { Context } from 'hono';
+import { assertProjectOwnership, authErrorResponse } from './auth-helpers';
+import { getIntegrationKey } from './integration-keys';
 import { generateWiki } from './wiki-rag';
 
-function getDb() {
-  return createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+let cachedClient: Client | null = null;
+function getDb(): Client {
+  if (cachedClient) return cachedClient;
+  cachedClient = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+  return cachedClient;
+}
+
+export function __setClientForTests(client: Client | null): void {
+  cachedClient = client;
 }
 
 /**
@@ -30,34 +41,70 @@ async function getProject(projectId: string) {
   return result.rows[0] || null;
 }
 
+type LinearContext =
+  | { ok: true; apiKey: string; teamId: string; source: 'tenant' | 'env' }
+  | { ok: false; reason: 'no_key' | 'no_team' };
+
+/**
+ * Resolve the API key + team id for a project's Linear integration.
+ *
+ * Tenant row wins: key + meta.teamId come from the encrypted
+ * `project_integrations` row the user set up in /integrations.
+ *
+ * Env fallback: if there's no tenant row, use `process.env.LINEAR_API_KEY`
+ * and read the legacy `projects.linear_team_id` column (populated by the
+ * pre-multi-tenant seed script). This keeps `/projects/:id/linear/*` alive
+ * for projects that haven't onboarded through the new UI yet.
+ */
+async function resolveLinearContext(
+  projectId: string,
+  project: Record<string, unknown>,
+): Promise<LinearContext> {
+  const tenant = await getIntegrationKey(projectId, 'linear');
+  if (tenant.ok) {
+    const teamId = tenant.meta.teamId;
+    if (!teamId) return { ok: false, reason: 'no_team' };
+    return { ok: true, apiKey: tenant.plaintext, teamId, source: 'tenant' };
+  }
+  const envKey = process.env.LINEAR_API_KEY;
+  if (!envKey) return { ok: false, reason: 'no_key' };
+  const teamId = project.linear_team_id;
+  if (typeof teamId !== 'string' || teamId.length === 0) {
+    return { ok: false, reason: 'no_team' };
+  }
+  return { ok: true, apiKey: envKey, teamId, source: 'env' };
+}
+
+function linearConfigError(c: Context, reason: 'no_key' | 'no_team') {
+  const message =
+    reason === 'no_team'
+      ? 'Linear team not selected for this project — re-run Save in /integrations'
+      : 'Linear integration not configured for this project';
+  return c.json(
+    { success: false, error: { code: 'NO_LINEAR_CONFIG', message } },
+    400,
+  );
+}
+
 // ---------- GET /api/projects/:projectId/linear/issues ----------
 export const listProjectIssuesRoute = registerApiRoute('/projects/:projectId/linear/issues', {
   method: 'GET' as const,
   handler: async (c: Context) => {
     try {
       const projectId = c.req.param('projectId');
+      if (!projectId) return authErrorResponse(c, 404);
+      const auth = await assertProjectOwnership(c, projectId);
+      if (!auth.ok) return authErrorResponse(c, auth.status);
+
       const project = await getProject(projectId);
+      if (!project) return authErrorResponse(c, 404);
 
-      if (!project) {
-        return c.json({ success: false, error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found' } }, 404);
-      }
+      const lc = await resolveLinearContext(projectId, project as Record<string, unknown>);
+      if (!lc.ok) return linearConfigError(c, lc.reason);
 
-      if (!project.linear_token) {
-        return c.json(
-          {
-            success: false,
-            error: {
-              code: 'NO_LINEAR_CONFIG',
-              message: 'Linear integration not configured for this project',
-            },
-          },
-          400,
-        );
-      }
-
-      const linearClient = new LinearClient({ apiKey: project.linear_token as string });
+      const linearClient = new LinearClient({ apiKey: lc.apiKey });
       const issues = await linearClient.issues({
-        filter: { team: { id: { eq: project.linear_team_id as string } } },
+        filter: { team: { id: { eq: lc.teamId } } },
         first: 50,
       });
 
@@ -110,27 +157,18 @@ export const getProjectCycleRoute = registerApiRoute('/projects/:projectId/linea
   handler: async (c: Context) => {
     try {
       const projectId = c.req.param('projectId');
+      if (!projectId) return authErrorResponse(c, 404);
+      const auth = await assertProjectOwnership(c, projectId);
+      if (!auth.ok) return authErrorResponse(c, auth.status);
+
       const project = await getProject(projectId);
+      if (!project) return authErrorResponse(c, 404);
 
-      if (!project) {
-        return c.json({ success: false, error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found' } }, 404);
-      }
+      const lc = await resolveLinearContext(projectId, project as Record<string, unknown>);
+      if (!lc.ok) return linearConfigError(c, lc.reason);
 
-      if (!project.linear_token) {
-        return c.json(
-          {
-            success: false,
-            error: {
-              code: 'NO_LINEAR_CONFIG',
-              message: 'Linear integration not configured for this project',
-            },
-          },
-          400,
-        );
-      }
-
-      const linearClient = new LinearClient({ apiKey: project.linear_token as string });
-      const team = await linearClient.team(project.linear_team_id as string);
+      const linearClient = new LinearClient({ apiKey: lc.apiKey });
+      const team = await linearClient.team(lc.teamId);
       const cyclesConnection = await team.cycles({ filter: { isActive: { eq: true } }, first: 1 });
       const activeCycle = cyclesConnection.nodes[0];
 
@@ -165,27 +203,18 @@ export const listProjectMembersRoute = registerApiRoute('/projects/:projectId/li
   handler: async (c: Context) => {
     try {
       const projectId = c.req.param('projectId');
+      if (!projectId) return authErrorResponse(c, 404);
+      const auth = await assertProjectOwnership(c, projectId);
+      if (!auth.ok) return authErrorResponse(c, auth.status);
+
       const project = await getProject(projectId);
+      if (!project) return authErrorResponse(c, 404);
 
-      if (!project) {
-        return c.json({ success: false, error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found' } }, 404);
-      }
+      const lc = await resolveLinearContext(projectId, project as Record<string, unknown>);
+      if (!lc.ok) return linearConfigError(c, lc.reason);
 
-      if (!project.linear_token) {
-        return c.json(
-          {
-            success: false,
-            error: {
-              code: 'NO_LINEAR_CONFIG',
-              message: 'Linear integration not configured for this project',
-            },
-          },
-          400,
-        );
-      }
-
-      const linearClient = new LinearClient({ apiKey: project.linear_token as string });
-      const team = await linearClient.team(project.linear_team_id as string);
+      const linearClient = new LinearClient({ apiKey: lc.apiKey });
+      const team = await linearClient.team(lc.teamId);
       const members = await team.members();
 
       const data = members.nodes
@@ -211,11 +240,12 @@ export const generateProjectWikiRoute = registerApiRoute('/projects/:projectId/w
   handler: async (c: Context) => {
     try {
       const projectId = c.req.param('projectId');
-      const project = await getProject(projectId);
+      if (!projectId) return authErrorResponse(c, 404);
+      const auth = await assertProjectOwnership(c, projectId);
+      if (!auth.ok) return authErrorResponse(c, auth.status);
 
-      if (!project) {
-        return c.json({ success: false, error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found' } }, 404);
-      }
+      const project = await getProject(projectId);
+      if (!project) return authErrorResponse(c, 404);
 
       const db = getDb();
       const now = Date.now();
@@ -250,11 +280,12 @@ export const getProjectWikiStatusRoute = registerApiRoute('/projects/:projectId/
   handler: async (c: Context) => {
     try {
       const projectId = c.req.param('projectId');
-      const project = await getProject(projectId);
+      if (!projectId) return authErrorResponse(c, 404);
+      const auth = await assertProjectOwnership(c, projectId);
+      if (!auth.ok) return authErrorResponse(c, auth.status);
 
-      if (!project) {
-        return c.json({ success: false, error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found' } }, 404);
-      }
+      const project = await getProject(projectId);
+      if (!project) return authErrorResponse(c, 404);
 
       const db = getDb();
 
