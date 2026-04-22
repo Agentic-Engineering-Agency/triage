@@ -1,16 +1,19 @@
 # Handoff — Multi-tenant hardening & UX redesign
 
 **Branch:** `fix/ui-cleanup-cycle-panel`
-**Last commit:** `124f29a feat(integrations): resolve OpenRouter keys per-tenant for agents/tools (#4b)` (2026-04-21)
-**Date:** 2026-04-17 (original), 2026-04-20 (#3 + #4a), 2026-04-21 (#4b)
+**Last commit:** `6206218 docs: handoff update for #5a slice closure + #5b followups` (2026-04-21)
+**Uncommitted at time of write:** #5b Linear slice (ver sección 5b abajo) — pendiente commit.
+**Date:** 2026-04-17 (original), 2026-04-20 (#3 + #4a), 2026-04-21 (#4b + #5a), 2026-04-22 (#5b Linear)
 
 ---
 
 ## Objetivo de la próxima sesión
 
-**Siguiente natural: #5 — UI de configuración BYO keys por dominio.**
+**Siguiente natural: #5c — cards de Resend / Slack / GitHub en `/integrations`.**
 
-Estado del branch: 6 commits pusheables. TSC 47 errores pre-existing (baseline inchanged). Test baseline estable (106 fails pre-existing, 522 passing — +6 nuevos de tenant-openrouter). `project-routes.test.ts` tiene 15 fallos pre-existing en el bloque CRUD (auth 401 en el mock) — son ruido previo.
+#1–#5b cerrados (webhook verif, wiki, per-tenant schema, tools + agents per-tenant, UI OpenRouter, UI Linear + scoped-routes flip + ownership fix). Estado del branch después de #5b: 10 commits pusheados + 1 commit pendiente para el slice Linear.
+
+Baseline actualizado: TSC runtime 5 errores (baja 9 vs 14 post-#5a — el flip limpió los `getProject(string | undefined)` legacy). TSC frontend limpio. Tests: 106 failing estable, +19 nuevos passing (+13 `scoped-routes.test.ts` nuevo + +6 Linear en `integration-routes.test.ts`). Los 13 tests de scoped-routes que vivían en `project-routes.test.ts` están ahora `describe.skip` — fueron reemplazados por el file nuevo que sí tiene `:memory: libsql` y cookies válidas.
 
 El sistema corre end-to-end: chat stream + /api/test/slack-agent loggean `[tenant-keys] project=<id> provider=openrouter source=env` confirmando que el `model:` dynamic de los agentes resuelve per-tenant y cae a env cuando no hay fila en `project_integrations`. #1-#4 del arco multi-tenant cerrados; falta #5 (UI BYO) + #6 (test connection + wizard).
 
@@ -280,8 +283,37 @@ docker compose up -d --force-recreate runtime  # restart NO re-lee env_file
 - **Drop de columnas plaintext**: `projects.linear_token / linear_team_id / linear_webhook_id / linear_webhook_url / github_token / github_repo_owner / github_repo_name / slack_enabled / slack_channel_id / slack_webhook_url / resend_api_key`. Dejarlas nullable hasta que todos los readers hayan migrado; dropearlas en migration posterior.
 - **Out of scope permanente**: `mastra/index.ts:43` LinearClient singleton (linear-sync cron es system-level, no per-tenant).
 
-### 5b. UI BYO keys — Linear/Resend/Slack/GitHub (próximo)
-Mismo pattern que OpenRouter, una card por provider. Cada `testX` en el dispatch (`runProviderTest`) para reemplazar el `not_implemented` actual.
+### 5b. UI BYO keys — Linear slice ✅ DONE (2026-04-22)
+
+Aterrizó la card de Linear + cleanup del `/settings` legacy + flip del `scoped-routes.ts` al path encriptado + ownership gate en todas las rutas `/projects/:id/*`. Aún faltan Resend / Slack / GitHub cards (ahora #5c).
+
+**Qué shipped:**
+- **Backend — `testLinearKey` en `runProviderTest`**: GraphQL `{ viewer { id } teams(first:100) { nodes { id name key } } }`. Auth header es raw PAT, sin `Bearer` (ver gotcha abajo). Retorna `{ valid: true, preview: { teams: [...] } }`.
+- **`TestResult.preview` — contrato nuevo**: la valid-arm ahora tiene un campo opcional `preview`. Cuando está presente, `POST /integrations/:provider/test` valida pero **no persiste** — el cliente hace el save con `PUT /integrations/:provider` una vez el usuario eligió su meta. OpenRouter no tiene preview → sigue persistiendo en `/test` como atajo. Mismo shape reusable para Slack (channels) / GitHub (repos) cuando aterricen.
+- **Frontend — `LinearCard` en `/integrations`**: paste PAT → Test → dropdown de teams del response → Save (PUT con `meta.teamId/teamName/teamKey`). Estado configured muestra "Team: X (KEY)" + Change + Trash con `ConfirmDialog`. Mismo styling/shape que `OpenRouterCard`.
+- **`scoped-routes.ts` flipped**: los 3 handlers Linear (`/issues`, `/cycle`, `/members`) ya no leen `project.linear_token`. Resuelven via `getIntegrationKey(projectId, 'linear')` con fallback a env + legacy `projects.linear_team_id`. Helper nuevo: `resolveLinearContext(projectId, project)` retorna `{apiKey, teamId, source}` o error `no_key`/`no_team`.
+- **Ownership gate en las 5 rutas scoped**: `assertProjectOwnership` extraído de `integration-routes.ts` a `auth-helpers.ts` y aplicado a `/linear/{issues,cycle,members}` + `/wiki/{generate,status}`. Antes cualquier cookie-authed user leía data de cualquier project — bug de seguridad pre-existing cerrado.
+- **`/settings` deprecado**: sacado del sidebar (`__root.tsx`). La ruta `/settings` sigue viva con un banner "Moved to /integrations" para no 404 a bookmarks. Los endpoints runtime (`/api/config/status`, `/api/linear/members` global, `/api/linear/webhook/setup`) quedan en pie — se borran en el slice cleanup final, después de que Resend/Slack/GitHub cards migren su flow.
+- **Tests**: `scoped-routes.test.ts` nuevo (13 passing, ownership + tenant/env resolución + regression guard contra lectura de `linear_token` plaintext). `integration-routes.test.ts` +6 (testLinearKey + preview no-persist + PUT con meta + raw header contract). El bloque scoped-routes de `project-routes.test.ts` quedó `describe.skip` — lo reemplaza el file nuevo con mejor wiring.
+
+**Baselines**: TSC runtime 5 errores (baja 9 vs 14 baseline — el flip eliminó los `projectId: string | undefined → getProject(projectId)` legacy). TSC frontend limpio. Tests: +19 nuevos passing, 106 failing estable (sin regresiones; los 13 tests que antes cubrían scoped-routes en project-routes.test.ts están skipped porque los reemplaza scoped-routes.test.ts).
+
+**Gotchas nuevos:**
+- **Linear PAT header**: `Authorization: <key>` raw, SIN `Bearer`. OAuth tokens sí usan `Bearer`, pero los usuarios pegan PATs (`lin_api_...`) en la UI. Confirmado contra docs oficiales.
+- **Linear 200 con GraphQL errors**: un PAT inválido puede devolver 200 HTTP con `errors: [{extensions: {code: "AUTHENTICATION_ERROR"}}]` en vez de 401 HTTP directo. `testLinearKey` inspecciona ambos paths.
+- **Caddy strip `/api` prefix**: `registerApiRoute('/x', ...)` se sirve en `/x` (sin `/api`). Caddy strippea el prefix en `@projects_api_prefixed`, `@obs_api`, `@integrations_api`. Al testear con curl directo a `localhost:4111`, usar la path sin `/api`. Via frontend (`localhost:3001` o browser) sí va con `/api`.
+- **`project-routes.test.ts` cookie format**: usa `cookie: 'session=test-session-token'` (broken, no matchea el regex `better-auth.session_token=...` de `auth-helpers.extractSessionToken`). Los tests CRUD del file siguen rotos por eso — son parte del baseline. No es regresión de este slice.
+
+**Followups para #5c (próximo):**
+- **Resend card**: `fromEmail` como input manual (la API no tiene `/me`); test probando `GET /domains`. Meta = `{ fromEmail }`. Migrar `reporter_email` de `localStorage` (hoy en `chat.tsx:352,498,515`) a `meta.defaultReporterEmail`.
+- **Slack card**: `auth.test` + `conversations.list` → picker de channel → guardar `channelId` + `channelName` en meta.
+- **GitHub card**: `GET /user` + owner/repo como 2do paso (picker tipo GitHub App, o input manual con validación contra `GET /repos/:owner/:repo`).
+- **Borrar endpoints legacy del runtime**: `/api/config/status`, `/api/linear/members` (global), `/api/linear/webhook/setup` + la ruta `/settings` completa + los imports en `mastra/index.ts`. Hacerlo después de los 3 cards arriba.
+- **`webhook_secrets` refactor a PK compuesta**: sigue global. Cuando Linear card agregue "Register webhook" (dentro de #5c o slice dedicado), migrar a `(project_id, provider)` con `setWebhookSecret(projectId, provider, secret)`. Incluye cambio en el handler `/webhooks/linear` para lookup por project.
+- **Drop columnas plaintext en `projects`**: `linear_token`, `linear_webhook_id/url`, `github_token`, `github_repo_owner/name`, `slack_enabled`, `slack_channel_id`, `slack_webhook_url`, `resend_api_key`, `linear_team_id` (leído solo por env-fallback hoy; una vez que todos los projects migren, se puede dropear). Después del cleanup de endpoints.
+
+### 5c. UI BYO keys — Resend/Slack/GitHub (próximo)
+Mismo pattern que Linear: expandir `runProviderTest` dispatch + card por provider con su picker-si-aplica. Ver followups arriba para contratos específicos.
 
 ### 6. Test-connection buttons + onboarding wizard
 - Endpoint `POST /integrations/:provider/test` con la key provisional, sin persistir

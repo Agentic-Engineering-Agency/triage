@@ -1,6 +1,6 @@
 import { createLazyFileRoute } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   KeyRound,
   Sparkles,
@@ -12,6 +12,8 @@ import {
   Loader2,
   Trash2,
   FolderGit2,
+  ChevronDown,
+  Check,
 } from "lucide-react"
 import { apiFetch } from "@/lib/api"
 import { useCurrentProjectId } from "@/components/project-selector"
@@ -33,10 +35,18 @@ interface IntegrationSummary {
   updatedAt: string
 }
 
+interface TestPreview {
+  teams?: Array<{ id: string; name: string; key: string }>
+}
+
 type TestResponse =
   | {
       valid: true
       integration: IntegrationSummary
+    }
+  | {
+      valid: true
+      preview: TestPreview
     }
   | {
       valid: false
@@ -122,11 +132,7 @@ function IntegrationsContent({ projectId }: { projectId: string }) {
               title="Ticketing"
               description="Where triage creates tickets and checks evidence."
             >
-              <StubCard
-                icon={<Ticket className="h-5 w-5" />}
-                title="Linear"
-                description="Personal API token + team selection."
-              />
+              <LinearCard projectId={projectId} summary={byProvider.linear} />
             </DomainSection>
 
             <DomainSection
@@ -378,6 +384,339 @@ function OpenRouterCard({
         title="Remove OpenRouter key?"
         description="Agents on this project will fall back to the server-side environment key. Existing conversations are unaffected."
         confirmLabel="Remove key"
+        cancelLabel="Keep"
+        loading={deleteMutation.isPending}
+        onCancel={() => setDeleteOpen(false)}
+        onConfirm={() => deleteMutation.mutate()}
+      />
+    </div>
+  )
+}
+
+interface LinearTeam {
+  id: string
+  name: string
+  key: string
+}
+
+function TeamPicker({
+  teams,
+  value,
+  onChange,
+}: {
+  teams: LinearTeam[]
+  value: string
+  onChange: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Close on outside click / Escape so keyboard users can dismiss without
+  // selecting.
+  useEffect(() => {
+    if (!open) return
+    const handleClick = (e: MouseEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false)
+    }
+    document.addEventListener("mousedown", handleClick)
+    document.addEventListener("keydown", handleKey)
+    return () => {
+      document.removeEventListener("mousedown", handleClick)
+      document.removeEventListener("keydown", handleKey)
+    }
+  }, [open])
+
+  const selected = teams.find((t) => t.id === value)
+  const label = selected ? `${selected.name} (${selected.key})` : "Select a team"
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors hover:bg-muted/20"
+      >
+        <span className={selected ? "" : "text-muted-foreground"}>{label}</span>
+        <ChevronDown
+          className={`h-4 w-4 text-muted-foreground transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full rounded-xl border border-border bg-card shadow-neu-sm overflow-hidden">
+          <div className="max-h-60 overflow-y-auto py-1">
+            {teams.map((t) => {
+              const isSelected = t.id === value
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    onChange(t.id)
+                    setOpen(false)
+                  }}
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
+                    isSelected
+                      ? "bg-primary/10 text-foreground"
+                      : "text-foreground hover:bg-muted/30"
+                  }`}
+                >
+                  <span className="flex-1">
+                    {t.name}{" "}
+                    <span className="text-muted-foreground">({t.key})</span>
+                  </span>
+                  {isSelected && (
+                    <Check className="h-4 w-4 text-primary" />
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LinearCard({
+  projectId,
+  summary,
+}: {
+  projectId: string
+  summary: IntegrationSummary | undefined
+}) {
+  const queryClient = useQueryClient()
+  const [apiKey, setApiKey] = useState("")
+  const [teams, setTeams] = useState<LinearTeam[]>([])
+  const [selectedTeamId, setSelectedTeamId] = useState("")
+  const [editing, setEditing] = useState(false)
+  const [testError, setTestError] = useState<string | null>(null)
+  const [saveSuccess, setSaveSuccess] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+
+  const testMutation = useMutation({
+    mutationFn: async (key: string) => {
+      const res = await apiFetch<TestResponse>(
+        `/projects/${projectId}/integrations/linear/test`,
+        { method: "POST", body: JSON.stringify({ apiKey: key }) },
+      )
+      return res
+    },
+    onSuccess: (res) => {
+      if (res.valid && "preview" in res) {
+        setTestError(null)
+        setTeams(res.preview.teams ?? [])
+        setSelectedTeamId(res.preview.teams?.[0]?.id ?? "")
+      } else if (res.valid) {
+        // Backend returned a persisted integration without preview — shouldn't
+        // happen for Linear but handle gracefully.
+        setTestError(null)
+        queryClient.invalidateQueries({ queryKey: ["integrations", projectId] })
+      } else {
+        setTeams([])
+        setSelectedTeamId("")
+        setTestError(reasonToMessage(res))
+      }
+    },
+    onError: (err: Error) => {
+      setTestError(err.message)
+    },
+  })
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const team = teams.find((t) => t.id === selectedTeamId)
+      if (!team) throw new Error("Select a team before saving")
+      return apiFetch<IntegrationSummary>(
+        `/projects/${projectId}/integrations/linear`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            apiKey,
+            meta: { teamId: team.id, teamName: team.name, teamKey: team.key },
+          }),
+        },
+      )
+    },
+    onSuccess: () => {
+      setSaveSuccess(true)
+      setApiKey("")
+      setTeams([])
+      setSelectedTeamId("")
+      setEditing(false)
+      queryClient.invalidateQueries({ queryKey: ["integrations", projectId] })
+      setTimeout(() => setSaveSuccess(false), 2500)
+    },
+    onError: (err: Error) => {
+      setTestError(err.message)
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: () =>
+      apiFetch(`/projects/${projectId}/integrations/linear`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["integrations", projectId] })
+      setApiKey("")
+      setTeams([])
+      setSelectedTeamId("")
+      setEditing(false)
+      setTestError(null)
+      setDeleteOpen(false)
+    },
+  })
+
+  const configured = !!summary
+  const status: Status | "not-configured" = configured ? summary!.status : "not-configured"
+  const showInput = editing || !configured
+
+  return (
+    <div className="rounded-2xl bg-card border border-border/50 p-5 shadow-neu-sm">
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <Ticket className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-foreground">Linear</h3>
+            <p className="text-xs text-muted-foreground">
+              Personal API token + team for ticket creation.
+            </p>
+          </div>
+        </div>
+        <StatusBadge status={status} />
+      </div>
+
+      {showInput ? (
+        <div className="space-y-2">
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => {
+              setApiKey(e.target.value)
+              setTestError(null)
+              setTeams([])
+              setSelectedTeamId("")
+            }}
+            placeholder="lin_api_..."
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
+          />
+
+          {teams.length > 0 && (
+            <div className="space-y-1 pt-1">
+              <label className="text-xs text-muted-foreground font-medium">
+                Team
+              </label>
+              <TeamPicker
+                teams={teams}
+                value={selectedTeamId}
+                onChange={setSelectedTeamId}
+              />
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            {teams.length === 0 ? (
+              <button
+                onClick={() => testMutation.mutate(apiKey)}
+                disabled={!apiKey || testMutation.isPending}
+                className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {testMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" />
+                )}
+                Test
+              </button>
+            ) : (
+              <button
+                onClick={() => saveMutation.mutate()}
+                disabled={!selectedTeamId || saveMutation.isPending}
+                className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {saveMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" />
+                )}
+                Save
+              </button>
+            )}
+            {configured && (
+              <button
+                onClick={() => {
+                  setEditing(false)
+                  setApiKey("")
+                  setTeams([])
+                  setSelectedTeamId("")
+                  setTestError(null)
+                }}
+                className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="flex-1 rounded-xl border border-border bg-background/50 px-3 py-2 text-sm text-muted-foreground font-mono">
+              ●●●●●●●●●●●●●●●●
+            </span>
+            <button
+              onClick={() => setEditing(true)}
+              className="rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+            >
+              Change
+            </button>
+            <button
+              onClick={() => setDeleteOpen(true)}
+              disabled={deleteMutation.isPending}
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+              title="Remove key"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          {summary?.meta.teamName && (
+            <p className="text-xs text-muted-foreground">
+              Team: <span className="text-foreground">{summary.meta.teamName}</span>
+              {summary.meta.teamKey && (
+                <span className="ml-1 text-muted-foreground/70">
+                  ({summary.meta.teamKey})
+                </span>
+              )}
+            </p>
+          )}
+          {summary?.lastTestedAt && (
+            <p className="text-xs text-muted-foreground">
+              Tested {formatRelative(summary.lastTestedAt)}
+            </p>
+          )}
+        </div>
+      )}
+
+      {testError && (
+        <p className="mt-3 text-xs text-red-500 font-medium">{testError}</p>
+      )}
+      {saveSuccess && (
+        <p className="mt-3 text-xs text-emerald-500 font-medium">
+          ✓ Linear connected.
+        </p>
+      )}
+
+      <ConfirmDialog
+        open={deleteOpen}
+        variant="destructive"
+        title="Remove Linear integration?"
+        description="Triage will fall back to the server-side key. Existing tickets are unaffected."
+        confirmLabel="Remove"
         cancelLabel="Keep"
         loading={deleteMutation.isPending}
         onCancel={() => setDeleteOpen(false)}

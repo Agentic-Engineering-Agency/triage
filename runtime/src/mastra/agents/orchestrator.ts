@@ -4,6 +4,7 @@ import { LibSQLStore } from '@mastra/libsql';
 import { createClient } from '@libsql/client';
 import { MODELS } from '../../lib/config';
 import { resolveOpenRouterFromContext } from '../../lib/tenant-openrouter';
+import { listIntegrations } from '../../lib/integration-keys';
 
 // Explicit storage for memory — ensures persistence to the shared LibSQL container
 const memoryStorage = new LibSQLStore({
@@ -72,6 +73,26 @@ When the workflow reports progress back to this chat (issue created, email sent,
 // LibSQL container. Runs at instruction-render time, which is once per agent
 // invocation. Keeping this inline (instead of a cached helper) so stale data
 // can't leak across project switches inside the same process.
+/**
+ * Looks up the Linear integration meta for this Triage project and renders a
+ * single line the prompt can embed. Returns "" when Linear isn't configured
+ * so the instruction block stays clean.
+ */
+async function resolveLinearTeamLine(projectId: string): Promise<string> {
+  try {
+    const rows = await listIntegrations(projectId);
+    const linear = rows.find((r) => r.provider === 'linear');
+    if (!linear) return '';
+    const teamName = linear.meta.teamName;
+    const teamKey = linear.meta.teamKey;
+    if (!teamName) return '';
+    const label = teamKey ? `${teamName} (${teamKey})` : teamName;
+    return `Linear team for ticket creation: **${label}**. This is where \`displayTriageTool\` → Create Ticket will file the issue. It is a Linear team, separate from the Triage project above.`;
+  } catch {
+    return '';
+  }
+}
+
 async function resolveProjectContext(projectId: string | null | undefined) {
   if (!projectId) return null;
   try {
@@ -115,7 +136,7 @@ export const orchestrator = new Agent({
     if (!project) {
       return `${BASE_INSTRUCTIONS}
 
-## Active Project
+## Active Triage Project
 No project is currently selected. If the user asks about a codebase, tell them to select or create one at /projects.`;
     }
 
@@ -124,10 +145,17 @@ No project is currently selected. If the user asks about a codebase, tell them t
       ? `A codebase wiki is indexed for this project (${project.documentsCount} files, ${project.chunksCount} chunks). For ANY question about the codebase — what the project does, how features work, where specific code lives, what to reference during triage — call queryWikiTool with projectId="${project.id}" BEFORE answering from general knowledge. If the results don't cover the question, say so and answer from general knowledge.`
       : `The wiki for this project is "${project.status}" (no chunks indexed yet). Don't call queryWikiTool; answer from general knowledge and tell the user the wiki isn't ready if they ask codebase-specific questions.`;
 
+    const linearLine = await resolveLinearTeamLine(project.id);
+
     return `${BASE_INSTRUCTIONS}
 
-## Active Project
+## Active Triage Project
 name="${project.name}" id="${project.id}" status="${project.status}"
+
+This is the **Triage** project — internal to this app. Its id is a Triage UUID, NOT a Linear id. It scopes the wiki, chat history, and per-project integration keys. It is NOT the same thing as a Linear team/project.
+${linearLine}
+
+If the user asks "en qué proyecto estamos" / "what project are we on" — say it's the Triage project above, and mention the Linear team (if set) as *where tickets get filed*, not as the project. Never claim the Triage project exists in Linear.
 
 ${wikiGuidance}`;
   },
