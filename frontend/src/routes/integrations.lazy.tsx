@@ -1,23 +1,23 @@
 import { createLazyFileRoute } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import {
   KeyRound,
   Sparkles,
   Ticket,
   MessagesSquare,
+  Mail,
   Code2,
   CheckCircle2,
   AlertCircle,
   Loader2,
   Trash2,
   FolderGit2,
-  ChevronDown,
-  Check,
 } from "lucide-react"
 import { apiFetch } from "@/lib/api"
 import { useCurrentProjectId } from "@/components/project-selector"
 import { ConfirmDialog } from "@/components/confirm-dialog"
+import { Picker } from "@/components/picker"
 
 export const Route = createLazyFileRoute("/integrations")({
   component: IntegrationsPage,
@@ -35,8 +35,28 @@ interface IntegrationSummary {
   updatedAt: string
 }
 
+interface LinearTeam {
+  id: string
+  name: string
+  key: string
+}
+interface SlackChannel {
+  id: string
+  name: string
+  isPrivate: boolean
+}
+interface GithubRepo {
+  id: number
+  owner: string
+  name: string
+  fullName: string
+  private: boolean
+}
+
 interface TestPreview {
-  teams?: Array<{ id: string; name: string; key: string }>
+  teams?: LinearTeam[]
+  channels?: SlackChannel[]
+  repos?: GithubRepo[]
 }
 
 type TestResponse =
@@ -139,27 +159,15 @@ function IntegrationsContent({ projectId }: { projectId: string }) {
               title="Communication"
               description="Notifications to reporters and assignees."
             >
-              <StubCard
-                icon={<MessagesSquare className="h-5 w-5" />}
-                title="Resend"
-                description="Outbound email provider."
-              />
-              <StubCard
-                icon={<MessagesSquare className="h-5 w-5" />}
-                title="Slack"
-                description="Bot token + channel for ticket notifications."
-              />
+              <ResendCard projectId={projectId} summary={byProvider.resend} />
+              <SlackCard projectId={projectId} summary={byProvider.slack} />
             </DomainSection>
 
             <DomainSection
               title="Code"
               description="Evidence lookups for resolution review."
             >
-              <StubCard
-                icon={<Code2 className="h-5 w-5" />}
-                title="GitHub"
-                description="Personal access token (repo scope)."
-              />
+              <GitHubCard projectId={projectId} summary={byProvider.github} />
             </DomainSection>
           </>
         )}
@@ -256,7 +264,7 @@ function OpenRouterCard({
         setTimeout(() => setTestSuccess(false), 2500)
       } else {
         setTestSuccess(false)
-        setTestError(reasonToMessage(res))
+        setTestError(reasonToMessage(res, "OpenRouter"))
       }
     },
     onError: (err: Error) => {
@@ -393,95 +401,6 @@ function OpenRouterCard({
   )
 }
 
-interface LinearTeam {
-  id: string
-  name: string
-  key: string
-}
-
-function TeamPicker({
-  teams,
-  value,
-  onChange,
-}: {
-  teams: LinearTeam[]
-  value: string
-  onChange: (id: string) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  // Close on outside click / Escape so keyboard users can dismiss without
-  // selecting.
-  useEffect(() => {
-    if (!open) return
-    const handleClick = (e: MouseEvent) => {
-      if (!containerRef.current?.contains(e.target as Node)) setOpen(false)
-    }
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false)
-    }
-    document.addEventListener("mousedown", handleClick)
-    document.addEventListener("keydown", handleKey)
-    return () => {
-      document.removeEventListener("mousedown", handleClick)
-      document.removeEventListener("keydown", handleKey)
-    }
-  }, [open])
-
-  const selected = teams.find((t) => t.id === value)
-  const label = selected ? `${selected.name} (${selected.key})` : "Select a team"
-
-  return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors hover:bg-muted/20"
-      >
-        <span className={selected ? "" : "text-muted-foreground"}>{label}</span>
-        <ChevronDown
-          className={`h-4 w-4 text-muted-foreground transition-transform ${
-            open ? "rotate-180" : ""
-          }`}
-        />
-      </button>
-      {open && (
-        <div className="absolute z-20 mt-1 w-full rounded-xl border border-border bg-card shadow-neu-sm overflow-hidden">
-          <div className="max-h-60 overflow-y-auto py-1">
-            {teams.map((t) => {
-              const isSelected = t.id === value
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => {
-                    onChange(t.id)
-                    setOpen(false)
-                  }}
-                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
-                    isSelected
-                      ? "bg-primary/10 text-foreground"
-                      : "text-foreground hover:bg-muted/30"
-                  }`}
-                >
-                  <span className="flex-1">
-                    {t.name}{" "}
-                    <span className="text-muted-foreground">({t.key})</span>
-                  </span>
-                  {isSelected && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 function LinearCard({
   projectId,
   summary,
@@ -519,7 +438,7 @@ function LinearCard({
       } else {
         setTeams([])
         setSelectedTeamId("")
-        setTestError(reasonToMessage(res))
+        setTestError(reasonToMessage(res, "Linear"))
       }
     },
     onError: (err: Error) => {
@@ -611,10 +530,18 @@ function LinearCard({
               <label className="text-xs text-muted-foreground font-medium">
                 Team
               </label>
-              <TeamPicker
-                teams={teams}
+              <Picker
+                items={teams}
                 value={selectedTeamId}
+                getValue={(t) => t.id}
+                getLabel={(t) => (
+                  <>
+                    {t.name}{" "}
+                    <span className="text-muted-foreground">({t.key})</span>
+                  </>
+                )}
                 onChange={setSelectedTeamId}
+                placeholder="Select a team"
               />
             </div>
           )}
@@ -726,42 +653,724 @@ function LinearCard({
   )
 }
 
-function StubCard({
-  icon,
-  title,
-  description,
+function SlackCard({
+  projectId,
+  summary,
 }: {
-  icon: React.ReactNode
-  title: string
-  description: string
+  projectId: string
+  summary: IntegrationSummary | undefined
 }) {
+  const queryClient = useQueryClient()
+  const [apiKey, setApiKey] = useState("")
+  const [channels, setChannels] = useState<SlackChannel[]>([])
+  const [selectedChannelId, setSelectedChannelId] = useState("")
+  const [manualChannelId, setManualChannelId] = useState("")
+  // `tokenValidated` separates "token is good" from "enumeration succeeded".
+  // A bot token with only chat:write authenticates fine but can't list channels
+  // — we still let the user save by typing the channel ID manually.
+  const [tokenValidated, setTokenValidated] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [testError, setTestError] = useState<string | null>(null)
+  const [saveSuccess, setSaveSuccess] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+
+  const testMutation = useMutation({
+    mutationFn: async (key: string) =>
+      apiFetch<TestResponse>(
+        `/projects/${projectId}/integrations/slack/test`,
+        { method: "POST", body: JSON.stringify({ apiKey: key }) },
+      ),
+    onSuccess: (res) => {
+      if (res.valid && "preview" in res) {
+        setTestError(null)
+        setTokenValidated(true)
+        setChannels(res.preview.channels ?? [])
+        setSelectedChannelId(res.preview.channels?.[0]?.id ?? "")
+      } else if (!res.valid) {
+        setTokenValidated(false)
+        setChannels([])
+        setSelectedChannelId("")
+        setTestError(reasonToMessage(res, "Slack"))
+      }
+    },
+    onError: (err: Error) => setTestError(err.message),
+  })
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const picked = channels.find((c) => c.id === selectedChannelId)
+      const channelId = picked?.id ?? manualChannelId.trim()
+      if (!channelId) throw new Error("Select or enter a channel before saving")
+      const meta: Record<string, string> = { channelId }
+      if (picked) meta.channelName = picked.name
+      return apiFetch<IntegrationSummary>(
+        `/projects/${projectId}/integrations/slack`,
+        { method: "PUT", body: JSON.stringify({ apiKey, meta }) },
+      )
+    },
+    onSuccess: () => {
+      setSaveSuccess(true)
+      setApiKey("")
+      setChannels([])
+      setSelectedChannelId("")
+      setManualChannelId("")
+      setTokenValidated(false)
+      setEditing(false)
+      queryClient.invalidateQueries({ queryKey: ["integrations", projectId] })
+      setTimeout(() => setSaveSuccess(false), 2500)
+    },
+    onError: (err: Error) => setTestError(err.message),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: () =>
+      apiFetch(`/projects/${projectId}/integrations/slack`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["integrations", projectId] })
+      setApiKey("")
+      setChannels([])
+      setSelectedChannelId("")
+      setManualChannelId("")
+      setTokenValidated(false)
+      setEditing(false)
+      setTestError(null)
+      setDeleteOpen(false)
+    },
+  })
+
+  const configured = !!summary
+  const status: Status | "not-configured" = configured ? summary!.status : "not-configured"
+  const showInput = editing || !configured
+
   return (
-    <div className="rounded-2xl bg-card/50 border border-dashed border-border/50 p-5 opacity-70">
+    <div className="rounded-2xl bg-card border border-border/50 p-5 shadow-neu-sm">
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted/40 text-muted-foreground">
-            {icon}
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <MessagesSquare className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="text-sm font-medium text-foreground">{title}</h3>
-            <p className="text-xs text-muted-foreground">{description}</p>
+            <h3 className="text-sm font-medium text-foreground">Slack</h3>
+            <p className="text-xs text-muted-foreground">
+              Bot token + channel for triage notifications.
+            </p>
           </div>
         </div>
-        <span className="rounded-lg bg-muted/40 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-          Coming soon
-        </span>
+        <StatusBadge status={status} />
       </div>
-      <div className="rounded-xl border border-border/50 bg-background/40 px-3 py-2 text-xs text-muted-foreground">
-        Currently falls back to server-side environment variable.
-      </div>
+
+      {showInput ? (
+        <div className="space-y-2">
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => {
+              setApiKey(e.target.value)
+              setTestError(null)
+              setTokenValidated(false)
+              setChannels([])
+              setSelectedChannelId("")
+              setManualChannelId("")
+            }}
+            placeholder="xoxb-..."
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
+          />
+
+          {tokenValidated && channels.length > 0 && (
+            <div className="space-y-1 pt-1">
+              <label className="text-xs text-muted-foreground font-medium">
+                Channel
+              </label>
+              <Picker
+                items={channels}
+                value={selectedChannelId}
+                getValue={(c) => c.id}
+                getLabel={(c) => (
+                  <>
+                    {c.isPrivate ? "🔒 " : "#"}
+                    {c.name}
+                  </>
+                )}
+                onChange={setSelectedChannelId}
+                placeholder="Select a channel"
+              />
+            </div>
+          )}
+
+          {tokenValidated && channels.length === 0 && (
+            <div className="space-y-1 pt-1">
+              <label className="text-xs text-muted-foreground font-medium">
+                Channel ID
+              </label>
+              <input
+                type="text"
+                value={manualChannelId}
+                onChange={(e) => setManualChannelId(e.target.value)}
+                placeholder="C01234ABCDE"
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
+              />
+              <p className="text-[11px] text-muted-foreground/80">
+                Token authenticated but lacks <code>channels:read</code>/<code>groups:read</code>.
+                Paste the channel ID manually (right-click channel → Copy link).
+              </p>
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            {!tokenValidated ? (
+              <button
+                onClick={() => testMutation.mutate(apiKey)}
+                disabled={!apiKey || testMutation.isPending}
+                className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {testMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" />
+                )}
+                Test
+              </button>
+            ) : (
+              <button
+                onClick={() => saveMutation.mutate()}
+                disabled={
+                  (channels.length > 0 ? !selectedChannelId : !manualChannelId.trim()) ||
+                  saveMutation.isPending
+                }
+                className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {saveMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" />
+                )}
+                Save
+              </button>
+            )}
+            {configured && (
+              <button
+                onClick={() => {
+                  setEditing(false)
+                  setApiKey("")
+                  setChannels([])
+                  setSelectedChannelId("")
+                  setManualChannelId("")
+                  setTokenValidated(false)
+                  setTestError(null)
+                }}
+                className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="flex-1 rounded-xl border border-border bg-background/50 px-3 py-2 text-sm text-muted-foreground font-mono">
+              ●●●●●●●●●●●●●●●●
+            </span>
+            <button
+              onClick={() => setEditing(true)}
+              className="rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+            >
+              Change
+            </button>
+            <button
+              onClick={() => setDeleteOpen(true)}
+              disabled={deleteMutation.isPending}
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+              title="Remove key"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          {(summary?.meta.channelName || summary?.meta.channelId) && (
+            <p className="text-xs text-muted-foreground">
+              Channel:{" "}
+              <span className="text-foreground">
+                {summary.meta.channelName
+                  ? `#${summary.meta.channelName}`
+                  : summary.meta.channelId}
+              </span>
+            </p>
+          )}
+          {summary?.lastTestedAt && (
+            <p className="text-xs text-muted-foreground">
+              Tested {formatRelative(summary.lastTestedAt)}
+            </p>
+          )}
+        </div>
+      )}
+
+      {testError && (
+        <p className="mt-3 text-xs text-red-500 font-medium">{testError}</p>
+      )}
+      {saveSuccess && (
+        <p className="mt-3 text-xs text-emerald-500 font-medium">
+          ✓ Slack connected.
+        </p>
+      )}
+
+      <ConfirmDialog
+        open={deleteOpen}
+        variant="destructive"
+        title="Remove Slack integration?"
+        description="Triage will fall back to the server-side bot token. Existing messages are unaffected."
+        confirmLabel="Remove"
+        cancelLabel="Keep"
+        loading={deleteMutation.isPending}
+        onCancel={() => setDeleteOpen(false)}
+        onConfirm={() => deleteMutation.mutate()}
+      />
     </div>
   )
 }
 
-function reasonToMessage(res: Extract<TestResponse, { valid: false }>): string {
-  if (res.reason === "invalid_key") return "Key rejected by OpenRouter (401)."
+function ResendCard({
+  projectId,
+  summary,
+}: {
+  projectId: string
+  summary: IntegrationSummary | undefined
+}) {
+  const queryClient = useQueryClient()
+  const [apiKey, setApiKey] = useState("")
+  const [fromEmail, setFromEmail] = useState("")
+  const [editing, setEditing] = useState(false)
+  const [testError, setTestError] = useState<string | null>(null)
+  const [testSuccess, setTestSuccess] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+
+  const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail)
+
+  const testMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch<TestResponse>(
+        `/projects/${projectId}/integrations/resend/test`,
+        {
+          method: "POST",
+          body: JSON.stringify({ apiKey, meta: { fromEmail } }),
+        },
+      ),
+    onSuccess: (res) => {
+      if (res.valid) {
+        setTestSuccess(true)
+        setTestError(null)
+        setApiKey("")
+        setFromEmail("")
+        setEditing(false)
+        queryClient.invalidateQueries({ queryKey: ["integrations", projectId] })
+        setTimeout(() => setTestSuccess(false), 2500)
+      } else {
+        setTestSuccess(false)
+        setTestError(reasonToMessage(res, "Resend"))
+      }
+    },
+    onError: (err: Error) => {
+      setTestError(err.message)
+      setTestSuccess(false)
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: () =>
+      apiFetch(`/projects/${projectId}/integrations/resend`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["integrations", projectId] })
+      setApiKey("")
+      setFromEmail("")
+      setEditing(false)
+      setTestError(null)
+      setDeleteOpen(false)
+    },
+  })
+
+  const configured = !!summary
+  const status: Status | "not-configured" = configured ? summary!.status : "not-configured"
+  const showInput = editing || !configured
+
+  return (
+    <div className="rounded-2xl bg-card border border-border/50 p-5 shadow-neu-sm">
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <Mail className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-foreground">Resend</h3>
+            <p className="text-xs text-muted-foreground">
+              API key + verified from address for outbound email.
+            </p>
+          </div>
+        </div>
+        <StatusBadge status={status} />
+      </div>
+
+      {showInput ? (
+        <div className="space-y-2">
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => {
+              setApiKey(e.target.value)
+              setTestError(null)
+            }}
+            placeholder="re_..."
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
+          />
+          <input
+            type="email"
+            value={fromEmail}
+            onChange={(e) => {
+              setFromEmail(e.target.value)
+              setTestError(null)
+            }}
+            placeholder="triage@yourdomain.com"
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <p className="text-[11px] text-muted-foreground/80">
+            Must be an address on a domain verified in your Resend account.
+          </p>
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => testMutation.mutate()}
+              disabled={!apiKey || !isValidEmail || testMutation.isPending}
+              className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+              {testMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              Test & Save
+            </button>
+            {configured && (
+              <button
+                onClick={() => {
+                  setEditing(false)
+                  setApiKey("")
+                  setFromEmail("")
+                  setTestError(null)
+                }}
+                className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="flex-1 rounded-xl border border-border bg-background/50 px-3 py-2 text-sm text-muted-foreground font-mono">
+              ●●●●●●●●●●●●●●●●
+            </span>
+            <button
+              onClick={() => setEditing(true)}
+              className="rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+            >
+              Change
+            </button>
+            <button
+              onClick={() => setDeleteOpen(true)}
+              disabled={deleteMutation.isPending}
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+              title="Remove key"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          {summary?.meta.fromEmail && (
+            <p className="text-xs text-muted-foreground">
+              From:{" "}
+              <span className="text-foreground">{summary.meta.fromEmail}</span>
+            </p>
+          )}
+          {summary?.lastTestedAt && (
+            <p className="text-xs text-muted-foreground">
+              Tested {formatRelative(summary.lastTestedAt)}
+            </p>
+          )}
+        </div>
+      )}
+
+      {testError && (
+        <p className="mt-3 text-xs text-red-500 font-medium">{testError}</p>
+      )}
+      {testSuccess && (
+        <p className="mt-3 text-xs text-emerald-500 font-medium">
+          ✓ Resend connected.
+        </p>
+      )}
+
+      <ConfirmDialog
+        open={deleteOpen}
+        variant="destructive"
+        title="Remove Resend integration?"
+        description="Triage will fall back to the server-side key. Queued emails already sent are unaffected."
+        confirmLabel="Remove"
+        cancelLabel="Keep"
+        loading={deleteMutation.isPending}
+        onCancel={() => setDeleteOpen(false)}
+        onConfirm={() => deleteMutation.mutate()}
+      />
+    </div>
+  )
+}
+
+function GitHubCard({
+  projectId,
+  summary,
+}: {
+  projectId: string
+  summary: IntegrationSummary | undefined
+}) {
+  const queryClient = useQueryClient()
+  const [apiKey, setApiKey] = useState("")
+  const [repos, setRepos] = useState<GithubRepo[]>([])
+  const [selectedRepoId, setSelectedRepoId] = useState("")
+  const [editing, setEditing] = useState(false)
+  const [testError, setTestError] = useState<string | null>(null)
+  const [saveSuccess, setSaveSuccess] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+
+  const testMutation = useMutation({
+    mutationFn: async (key: string) =>
+      apiFetch<TestResponse>(
+        `/projects/${projectId}/integrations/github/test`,
+        { method: "POST", body: JSON.stringify({ apiKey: key }) },
+      ),
+    onSuccess: (res) => {
+      if (res.valid && "preview" in res) {
+        setTestError(null)
+        setRepos(res.preview.repos ?? [])
+        setSelectedRepoId(String(res.preview.repos?.[0]?.id ?? ""))
+      } else if (!res.valid) {
+        setRepos([])
+        setSelectedRepoId("")
+        setTestError(reasonToMessage(res, "GitHub"))
+      }
+    },
+    onError: (err: Error) => setTestError(err.message),
+  })
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const repo = repos.find((r) => String(r.id) === selectedRepoId)
+      if (!repo) throw new Error("Select a repository before saving")
+      return apiFetch<IntegrationSummary>(
+        `/projects/${projectId}/integrations/github`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            apiKey,
+            meta: {
+              owner: repo.owner,
+              repo: repo.name,
+              repoFullName: repo.fullName,
+            },
+          }),
+        },
+      )
+    },
+    onSuccess: () => {
+      setSaveSuccess(true)
+      setApiKey("")
+      setRepos([])
+      setSelectedRepoId("")
+      setEditing(false)
+      queryClient.invalidateQueries({ queryKey: ["integrations", projectId] })
+      setTimeout(() => setSaveSuccess(false), 2500)
+    },
+    onError: (err: Error) => setTestError(err.message),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: () =>
+      apiFetch(`/projects/${projectId}/integrations/github`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["integrations", projectId] })
+      setApiKey("")
+      setRepos([])
+      setSelectedRepoId("")
+      setEditing(false)
+      setTestError(null)
+      setDeleteOpen(false)
+    },
+  })
+
+  const configured = !!summary
+  const status: Status | "not-configured" = configured ? summary!.status : "not-configured"
+  const showInput = editing || !configured
+
+  return (
+    <div className="rounded-2xl bg-card border border-border/50 p-5 shadow-neu-sm">
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <Code2 className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-foreground">GitHub</h3>
+            <p className="text-xs text-muted-foreground">
+              Personal access token (repo scope) + repository for evidence lookups.
+            </p>
+          </div>
+        </div>
+        <StatusBadge status={status} />
+      </div>
+
+      {showInput ? (
+        <div className="space-y-2">
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => {
+              setApiKey(e.target.value)
+              setTestError(null)
+              setRepos([])
+              setSelectedRepoId("")
+            }}
+            placeholder="ghp_... or github_pat_..."
+            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
+          />
+
+          {repos.length > 0 && (
+            <div className="space-y-1 pt-1">
+              <label className="text-xs text-muted-foreground font-medium">
+                Repository
+              </label>
+              <Picker
+                items={repos}
+                value={selectedRepoId}
+                getValue={(r) => String(r.id)}
+                getLabel={(r) => (
+                  <>
+                    {r.fullName}
+                    {r.private && (
+                      <span className="ml-1 text-muted-foreground">(private)</span>
+                    )}
+                  </>
+                )}
+                onChange={setSelectedRepoId}
+                placeholder="Select a repository"
+              />
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            {repos.length === 0 ? (
+              <button
+                onClick={() => testMutation.mutate(apiKey)}
+                disabled={!apiKey || testMutation.isPending}
+                className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {testMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" />
+                )}
+                Test
+              </button>
+            ) : (
+              <button
+                onClick={() => saveMutation.mutate()}
+                disabled={!selectedRepoId || saveMutation.isPending}
+                className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {saveMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" />
+                )}
+                Save
+              </button>
+            )}
+            {configured && (
+              <button
+                onClick={() => {
+                  setEditing(false)
+                  setApiKey("")
+                  setRepos([])
+                  setSelectedRepoId("")
+                  setTestError(null)
+                }}
+                className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="flex-1 rounded-xl border border-border bg-background/50 px-3 py-2 text-sm text-muted-foreground font-mono">
+              ●●●●●●●●●●●●●●●●
+            </span>
+            <button
+              onClick={() => setEditing(true)}
+              className="rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+            >
+              Change
+            </button>
+            <button
+              onClick={() => setDeleteOpen(true)}
+              disabled={deleteMutation.isPending}
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+              title="Remove key"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          {summary?.meta.repoFullName && (
+            <p className="text-xs text-muted-foreground">
+              Repo:{" "}
+              <span className="text-foreground">{summary.meta.repoFullName}</span>
+            </p>
+          )}
+          {summary?.lastTestedAt && (
+            <p className="text-xs text-muted-foreground">
+              Tested {formatRelative(summary.lastTestedAt)}
+            </p>
+          )}
+        </div>
+      )}
+
+      {testError && (
+        <p className="mt-3 text-xs text-red-500 font-medium">{testError}</p>
+      )}
+      {saveSuccess && (
+        <p className="mt-3 text-xs text-emerald-500 font-medium">
+          ✓ GitHub connected.
+        </p>
+      )}
+
+      <ConfirmDialog
+        open={deleteOpen}
+        variant="destructive"
+        title="Remove GitHub integration?"
+        description="Triage will fall back to the server-side token. Nothing is deleted from GitHub."
+        confirmLabel="Remove"
+        cancelLabel="Keep"
+        loading={deleteMutation.isPending}
+        onCancel={() => setDeleteOpen(false)}
+        onConfirm={() => deleteMutation.mutate()}
+      />
+    </div>
+  )
+}
+
+function reasonToMessage(
+  res: Extract<TestResponse, { valid: false }>,
+  providerName: string,
+): string {
+  if (res.reason === "invalid_key") return `Key rejected by ${providerName} (401).`
   if (res.reason === "network")
-    return `Couldn't reach OpenRouter${res.message ? ` — ${res.message}` : ""}.`
+    return `Couldn't reach ${providerName}${res.message ? ` — ${res.message}` : ""}.`
   if (res.reason === "not_implemented")
     return "Test connection isn't implemented for this provider yet."
   return "Test failed."

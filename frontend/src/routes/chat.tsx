@@ -349,7 +349,8 @@ function ChatPage() {
   // When user clicks "Create Ticket" on the triage card, stream workflow progress via SSE
   // into a single WorkflowTimeline component that updates in-place as events arrive.
   const handleCreateTicket = async (triageData: Record<string, unknown>, cardKey: string) => {
-    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat'
+    const reporterEmail = user?.email
+    if (!reporterEmail) return
     setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'submitting' } }))
 
     // Steps accumulated in one assistant message rendered as WorkflowTimeline.
@@ -495,7 +496,8 @@ function ChatPage() {
   }
 
   const handleUpdateExisting = async (dupData: Record<string, unknown>) => {
-    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat'
+    const reporterEmail = user?.email
+    if (!reporterEmail) return
     try {
       await apiFetch('/workflows/triage-workflow/trigger', {
         method: 'POST',
@@ -512,7 +514,8 @@ function ChatPage() {
   }
 
   const handleCreateNew = async (_dupData: Record<string, unknown>) => {
-    const reporterEmail = localStorage.getItem('reporter_email') ?? 'user@agenticengineering.lat'
+    const reporterEmail = user?.email
+    if (!reporterEmail) return
     try {
       await apiFetch('/workflows/triage-workflow/trigger', {
         method: 'POST',
