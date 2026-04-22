@@ -1,4 +1,4 @@
-import { createLazyFileRoute } from "@tanstack/react-router"
+import { createLazyFileRoute, Link } from "@tanstack/react-router"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import {
@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Clock,
+  Lock,
   Trash2,
   Database,
   FileCode,
@@ -24,7 +25,7 @@ interface Project {
   name: string
   repositoryUrl: string
   branch: string
-  status: "pending" | "processing" | "ready" | "error"
+  status: "pending" | "processing" | "ready" | "error" | "needs_auth"
   documentsCount: number
   chunksCount: number
   error: string | null
@@ -296,6 +297,12 @@ function ProjectCard({
       color: "text-red-500",
       bg: "bg-red-500/10",
     },
+    needs_auth: {
+      icon: Lock,
+      label: "Needs GitHub Auth",
+      color: "text-amber-500",
+      bg: "bg-amber-500/10",
+    },
   }
 
   const status = statusConfig[project.status] || statusConfig.pending
@@ -383,6 +390,21 @@ function ProjectCard({
       {project.status === "error" && project.error && (
         <div className="mt-3 rounded-lg bg-red-500/5 border border-red-500/20 px-3 py-2">
           <p className="text-xs text-red-400 line-clamp-2">{project.error}</p>
+        </div>
+      )}
+
+      {/* Private-repo prompt — set by POST /projects probe (#5d) */}
+      {project.status === "needs_auth" && (
+        <div className="mt-3 rounded-lg bg-amber-500/5 border border-amber-500/20 px-3 py-2 flex items-center justify-between gap-3">
+          <p className="text-xs text-amber-400/90">
+            Private repo detected — connect GitHub to enable wiki generation.
+          </p>
+          <Link
+            to="/integrations"
+            className="shrink-0 rounded-md border border-amber-500/30 px-2 py-1 text-[11px] font-medium text-amber-400 hover:bg-amber-500/10 transition-colors"
+          >
+            Connect
+          </Link>
         </div>
       )}
     </div>

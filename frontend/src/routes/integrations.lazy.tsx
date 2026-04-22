@@ -45,18 +45,10 @@ interface SlackChannel {
   name: string
   isPrivate: boolean
 }
-interface GithubRepo {
-  id: number
-  owner: string
-  name: string
-  fullName: string
-  private: boolean
-}
 
 interface TestPreview {
   teams?: LinearTeam[]
   channels?: SlackChannel[]
-  repos?: GithubRepo[]
 }
 
 type TestResponse =
@@ -1121,6 +1113,27 @@ function ResendCard({
   )
 }
 
+interface ProjectForGithub {
+  id: string
+  name: string
+  repositoryUrl: string
+  status: string
+}
+
+/**
+ * Simple github.com URL parser — mirrors the backend helper so the card can
+ * pre-empt a "project repo isn't on GitHub" error and render a friendlier
+ * disabled state up-front. Backend still enforces authoritatively.
+ */
+function parseGithubRepo(url: string): { owner: string; repo: string; full: string } | null {
+  if (!url) return null
+  const m =
+    /^(?:https?|ssh):\/\/(?:[^@]+@)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url.trim()) ??
+    /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url.trim())
+  if (!m) return null
+  return { owner: m[1], repo: m[2], full: `${m[1]}/${m[2]}` }
+}
+
 function GitHubCard({
   projectId,
   summary,
@@ -1130,62 +1143,53 @@ function GitHubCard({
 }) {
   const queryClient = useQueryClient()
   const [apiKey, setApiKey] = useState("")
-  const [repos, setRepos] = useState<GithubRepo[]>([])
-  const [selectedRepoId, setSelectedRepoId] = useState("")
   const [editing, setEditing] = useState(false)
-  const [testError, setTestError] = useState<string | null>(null)
+  const [verifyError, setVerifyError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [retrySuccess, setRetrySuccess] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
 
-  const testMutation = useMutation({
-    mutationFn: async (key: string) =>
-      apiFetch<TestResponse>(
-        `/projects/${projectId}/integrations/github/test`,
-        { method: "POST", body: JSON.stringify({ apiKey: key }) },
-      ),
-    onSuccess: (res) => {
-      if (res.valid && "preview" in res) {
-        setTestError(null)
-        setRepos(res.preview.repos ?? [])
-        setSelectedRepoId(String(res.preview.repos?.[0]?.id ?? ""))
-      } else if (!res.valid) {
-        setRepos([])
-        setSelectedRepoId("")
-        setTestError(reasonToMessage(res, "GitHub"))
-      }
-    },
-    onError: (err: Error) => setTestError(err.message),
+  // The card needs the project's repo URL to render "Verify access to X".
+  // `/projects/:id` is a cheap ownership-checked read.
+  const { data: project } = useQuery<ProjectForGithub>({
+    queryKey: ["project", projectId],
+    queryFn: () => apiFetch<ProjectForGithub>(`/projects/${projectId}`),
   })
 
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      const repo = repos.find((r) => String(r.id) === selectedRepoId)
-      if (!repo) throw new Error("Select a repository before saving")
-      return apiFetch<IntegrationSummary>(
+  const parsed = project ? parseGithubRepo(project.repositoryUrl) : null
+  const repoFullName = summary?.meta.repoFullName ?? parsed?.full ?? null
+
+  const verifyMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch<IntegrationSummary>(
         `/projects/${projectId}/integrations/github`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            apiKey,
-            meta: {
-              owner: repo.owner,
-              repo: repo.name,
-              repoFullName: repo.fullName,
-            },
-          }),
-        },
-      )
-    },
+        { method: "PUT", body: JSON.stringify({ apiKey }) },
+      ),
     onSuccess: () => {
       setSaveSuccess(true)
       setApiKey("")
-      setRepos([])
-      setSelectedRepoId("")
       setEditing(false)
+      setVerifyError(null)
       queryClient.invalidateQueries({ queryKey: ["integrations", projectId] })
+      // Project status may have flipped needs_auth → pending; refresh so the
+      // UI picks that up without a tab switch.
+      queryClient.invalidateQueries({ queryKey: ["projects"] })
+      queryClient.invalidateQueries({ queryKey: ["project", projectId] })
       setTimeout(() => setSaveSuccess(false), 2500)
     },
-    onError: (err: Error) => setTestError(err.message),
+    onError: (err: Error) => setVerifyError(err.message),
+  })
+
+  const retryMutation = useMutation({
+    mutationFn: () =>
+      apiFetch(`/projects/${projectId}/wiki/generate`, { method: "POST" }),
+    onSuccess: () => {
+      setRetrySuccess(true)
+      queryClient.invalidateQueries({ queryKey: ["projects"] })
+      queryClient.invalidateQueries({ queryKey: ["project", projectId] })
+      setTimeout(() => setRetrySuccess(false), 2500)
+    },
+    onError: (err: Error) => setVerifyError(err.message),
   })
 
   const deleteMutation = useMutation({
@@ -1194,17 +1198,21 @@ function GitHubCard({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["integrations", projectId] })
       setApiKey("")
-      setRepos([])
-      setSelectedRepoId("")
       setEditing(false)
-      setTestError(null)
+      setVerifyError(null)
       setDeleteOpen(false)
     },
   })
 
   const configured = !!summary
-  const status: Status | "not-configured" = configured ? summary!.status : "not-configured"
+  const status: Status | "not-configured" = configured
+    ? summary!.status
+    : "not-configured"
   const showInput = editing || !configured
+
+  // Project repo isn't on GitHub — don't even offer the PAT input. Mirrors
+  // the backend PROJECT_REPO_NOT_GITHUB rejection but avoids a round-trip.
+  const projectIsNonGithub = project !== undefined && parsed === null && Boolean(project.repositoryUrl)
 
   return (
     <div className="rounded-2xl bg-card border border-border/50 p-5 shadow-neu-sm">
@@ -1216,87 +1224,51 @@ function GitHubCard({
           <div>
             <h3 className="text-sm font-medium text-foreground">GitHub</h3>
             <p className="text-xs text-muted-foreground">
-              Personal access token (repo scope) + repository for evidence lookups.
+              Personal access token (repo scope) for private-repo wiki + evidence lookups.
             </p>
           </div>
         </div>
         <StatusBadge status={status} />
       </div>
 
-      {showInput ? (
+      {projectIsNonGithub ? (
+        <p className="text-xs text-muted-foreground">
+          This project's repository isn't hosted on GitHub, so no token is needed.
+        </p>
+      ) : showInput ? (
         <div className="space-y-2">
           <input
             type="password"
             value={apiKey}
             onChange={(e) => {
               setApiKey(e.target.value)
-              setTestError(null)
-              setRepos([])
-              setSelectedRepoId("")
+              setVerifyError(null)
             }}
             placeholder="ghp_... or github_pat_..."
             className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
           />
 
-          {repos.length > 0 && (
-            <div className="space-y-1 pt-1">
-              <label className="text-xs text-muted-foreground font-medium">
-                Repository
-              </label>
-              <Picker
-                items={repos}
-                value={selectedRepoId}
-                getValue={(r) => String(r.id)}
-                getLabel={(r) => (
-                  <>
-                    {r.fullName}
-                    {r.private && (
-                      <span className="ml-1 text-muted-foreground">(private)</span>
-                    )}
-                  </>
-                )}
-                onChange={setSelectedRepoId}
-                placeholder="Select a repository"
-              />
-            </div>
-          )}
-
           <div className="flex gap-2 pt-1">
-            {repos.length === 0 ? (
-              <button
-                onClick={() => testMutation.mutate(apiKey)}
-                disabled={!apiKey || testMutation.isPending}
-                className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {testMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="h-4 w-4" />
-                )}
-                Test
-              </button>
-            ) : (
-              <button
-                onClick={() => saveMutation.mutate()}
-                disabled={!selectedRepoId || saveMutation.isPending}
-                className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {saveMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="h-4 w-4" />
-                )}
-                Save
-              </button>
-            )}
+            <button
+              onClick={() => verifyMutation.mutate()}
+              disabled={!apiKey || verifyMutation.isPending || !repoFullName}
+              className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+              {verifyMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              {repoFullName
+                ? `Verify access to ${repoFullName}`
+                : "Verify access"}
+            </button>
             {configured && (
               <button
                 onClick={() => {
                   setEditing(false)
                   setApiKey("")
-                  setRepos([])
-                  setSelectedRepoId("")
-                  setTestError(null)
+                  setVerifyError(null)
                 }}
                 className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
               >
@@ -1318,6 +1290,18 @@ function GitHubCard({
               Change
             </button>
             <button
+              onClick={() => retryMutation.mutate()}
+              disabled={retryMutation.isPending}
+              className="rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors disabled:opacity-50"
+              title="Re-run wiki generation with the stored token"
+            >
+              {retryMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                "Retry wiki"
+              )}
+            </button>
+            <button
               onClick={() => setDeleteOpen(true)}
               disabled={deleteMutation.isPending}
               className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50"
@@ -1326,10 +1310,10 @@ function GitHubCard({
               <Trash2 className="h-4 w-4" />
             </button>
           </div>
-          {summary?.meta.repoFullName && (
+          {repoFullName && (
             <p className="text-xs text-muted-foreground">
               Repo:{" "}
-              <span className="text-foreground">{summary.meta.repoFullName}</span>
+              <span className="text-foreground">{repoFullName}</span>
             </p>
           )}
           {summary?.lastTestedAt && (
@@ -1340,12 +1324,17 @@ function GitHubCard({
         </div>
       )}
 
-      {testError && (
-        <p className="mt-3 text-xs text-red-500 font-medium">{testError}</p>
+      {verifyError && (
+        <p className="mt-3 text-xs text-red-500 font-medium">{verifyError}</p>
       )}
       {saveSuccess && (
         <p className="mt-3 text-xs text-emerald-500 font-medium">
           ✓ GitHub connected.
+        </p>
+      )}
+      {retrySuccess && (
+        <p className="mt-3 text-xs text-emerald-500 font-medium">
+          ✓ Wiki generation started.
         </p>
       )}
 
