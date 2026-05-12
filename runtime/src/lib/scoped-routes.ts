@@ -42,37 +42,24 @@ async function getProject(projectId: string) {
 }
 
 type LinearContext =
-  | { ok: true; apiKey: string; teamId: string; source: 'tenant' | 'env' }
+  | { ok: true; apiKey: string; teamId: string }
   | { ok: false; reason: 'no_key' | 'no_team' };
 
 /**
  * Resolve the API key + team id for a project's Linear integration.
  *
- * Tenant row wins: key + meta.teamId come from the encrypted
- * `project_integrations` row the user set up in /integrations.
- *
- * Env fallback: if there's no tenant row, use `process.env.LINEAR_API_KEY`
- * and read the legacy `projects.linear_team_id` column (populated by the
- * pre-multi-tenant seed script). This keeps `/projects/:id/linear/*` alive
- * for projects that haven't onboarded through the new UI yet.
+ * Tenant row required: key + meta.teamId come from the encrypted
+ * `project_integrations` row the user set up in /integrations. The
+ * pre-multi-tenant env-fallback path (which read `projects.linear_team_id`)
+ * was removed alongside the plaintext-columns drop — projects must be
+ * onboarded through the new UI to use `/projects/:id/linear/*`.
  */
-async function resolveLinearContext(
-  projectId: string,
-  project: Record<string, unknown>,
-): Promise<LinearContext> {
+async function resolveLinearContext(projectId: string): Promise<LinearContext> {
   const tenant = await getIntegrationKey(projectId, 'linear');
-  if (tenant.ok) {
-    const teamId = tenant.meta.teamId;
-    if (!teamId) return { ok: false, reason: 'no_team' };
-    return { ok: true, apiKey: tenant.plaintext, teamId, source: 'tenant' };
-  }
-  const envKey = process.env.LINEAR_API_KEY;
-  if (!envKey) return { ok: false, reason: 'no_key' };
-  const teamId = project.linear_team_id;
-  if (typeof teamId !== 'string' || teamId.length === 0) {
-    return { ok: false, reason: 'no_team' };
-  }
-  return { ok: true, apiKey: envKey, teamId, source: 'env' };
+  if (!tenant.ok) return { ok: false, reason: 'no_key' };
+  const teamId = tenant.meta.teamId;
+  if (!teamId) return { ok: false, reason: 'no_team' };
+  return { ok: true, apiKey: tenant.plaintext, teamId };
 }
 
 function linearConfigError(c: Context, reason: 'no_key' | 'no_team') {
@@ -96,10 +83,7 @@ export const listProjectIssuesRoute = registerApiRoute('/projects/:projectId/lin
       const auth = await assertProjectOwnership(c, projectId);
       if (!auth.ok) return authErrorResponse(c, auth.status);
 
-      const project = await getProject(projectId);
-      if (!project) return authErrorResponse(c, 404);
-
-      const lc = await resolveLinearContext(projectId, project as Record<string, unknown>);
+      const lc = await resolveLinearContext(projectId);
       if (!lc.ok) return linearConfigError(c, lc.reason);
 
       const linearClient = new LinearClient({ apiKey: lc.apiKey });
@@ -161,10 +145,7 @@ export const getProjectCycleRoute = registerApiRoute('/projects/:projectId/linea
       const auth = await assertProjectOwnership(c, projectId);
       if (!auth.ok) return authErrorResponse(c, auth.status);
 
-      const project = await getProject(projectId);
-      if (!project) return authErrorResponse(c, 404);
-
-      const lc = await resolveLinearContext(projectId, project as Record<string, unknown>);
+      const lc = await resolveLinearContext(projectId);
       if (!lc.ok) return linearConfigError(c, lc.reason);
 
       const linearClient = new LinearClient({ apiKey: lc.apiKey });
@@ -207,10 +188,7 @@ export const listProjectMembersRoute = registerApiRoute('/projects/:projectId/li
       const auth = await assertProjectOwnership(c, projectId);
       if (!auth.ok) return authErrorResponse(c, auth.status);
 
-      const project = await getProject(projectId);
-      if (!project) return authErrorResponse(c, 404);
-
-      const lc = await resolveLinearContext(projectId, project as Record<string, unknown>);
+      const lc = await resolveLinearContext(projectId);
       if (!lc.ok) return linearConfigError(c, lc.reason);
 
       const linearClient = new LinearClient({ apiKey: lc.apiKey });

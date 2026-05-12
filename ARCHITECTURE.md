@@ -19,32 +19,44 @@ Projects are the root entity in the system, stored in the `projects` table with:
 ```sql
 CREATE TABLE projects (
   id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES auth_user(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
+  description TEXT,
   repo_url TEXT NOT NULL,
   repo_default_branch TEXT DEFAULT 'main',
-  
-  -- Integration credentials (per-project)
-  linear_token TEXT,
-  linear_team_id TEXT,
-  linear_webhook_id TEXT,
-  linear_webhook_url TEXT,
-  
-  github_token TEXT,
-  github_repo_owner TEXT,
-  github_repo_name TEXT,
-  
-  slack_enabled BOOLEAN DEFAULT 0,
-  slack_webhook_url TEXT,
-  slack_channel_id TEXT,
-  
+
   -- Wiki/RAG status
   wiki_status TEXT DEFAULT 'idle',
+  status TEXT NOT NULL DEFAULT 'pending',
+  documents_count INTEGER NOT NULL DEFAULT 0,
+  chunks_count INTEGER NOT NULL DEFAULT 0,
   wiki_error TEXT,
-  documents_count INTEGER DEFAULT 0,
-  chunks_count INTEGER DEFAULT 0,
-  
+  last_wiki_generated_at INTEGER,
+
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
+);
+```
+
+### Integration Credentials
+
+Integration secrets (Linear PATs, GitHub tokens, Slack bot tokens, Resend keys,
+OpenRouter keys) **never** live on the `projects` row. They are stored in the
+`project_integrations` table, encrypted with AES-256-GCM under a per-row DEK
+that is itself wrapped by `APP_MASTER_KEY` (envelope encryption — see
+`runtime/src/lib/crypto-envelope.ts`).
+
+```sql
+CREATE TABLE project_integrations (
+  project_id     TEXT NOT NULL,
+  provider       TEXT NOT NULL, -- linear | resend | slack | github | openrouter
+  encrypted_key  BLOB NOT NULL,
+  meta           TEXT NOT NULL DEFAULT '{}', -- non-sensitive: teamId, channelId, repoFullName, fromEmail, …
+  status         TEXT NOT NULL DEFAULT 'active',
+  last_tested_at INTEGER,
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
+  PRIMARY KEY (project_id, provider)
 );
 ```
 
@@ -71,12 +83,12 @@ Implements CRUD operations on projects:
 - `DELETE /projects/:id` — cascade delete project and all related data
 
 #### B. Integration Configuration Routes (`integration-routes.ts`)
-Per-project integration setup and testing:
-- `POST /projects/:projectId/settings/linear/test` — validate Linear token, save
-- `POST /projects/:projectId/settings/linear/webhook` — register webhook with Linear API
-- `POST /projects/:projectId/settings/github/test` — validate GitHub PAT
-- `POST /projects/:projectId/settings/slack/test` — send test message to webhook
-- `GET /projects/:projectId/settings/integrations` — fetch all integration status
+Per-project integration setup, validation, and testing. Same shape across all 5
+providers (linear | resend | slack | github | openrouter):
+- `GET    /projects/:projectId/integrations` — list all integrations for the project (status + non-sensitive meta)
+- `PUT    /projects/:projectId/integrations/:provider` — upsert key + meta (envelope-encrypted)
+- `DELETE /projects/:projectId/integrations/:provider` — remove an integration
+- `POST   /projects/:projectId/integrations/:provider/test` — validate a key against the upstream API without persisting (returns picker data: teams, channels, repos, …)
 
 #### C. Project-Scoped Routes (`scoped-routes.ts`)
 Per-project data queries using project's own credentials:
@@ -88,8 +100,9 @@ Per-project data queries using project's own credentials:
 
 **Implementation pattern**:
 ```
-Extract projectId → Fetch project row → Validate required integration (e.g., linear_token) 
-→ Use project's credentials → Filter data to project_id → Return
+Extract projectId → Assert ownership → Resolve integration key via
+getIntegrationKey(projectId, provider) (decrypts envelope) → Use the
+per-tenant credentials → Filter data to project_id → Return
 ```
 
 #### D. Middleware (`project-middleware.ts`)
@@ -122,37 +135,31 @@ Validates `projectId` parameter before route handlers:
 - Emits custom event `triage:project-change` when selection changes
 - Other components listen to this event and auto-refetch project-scoped data
 
-#### Integration Settings (`project-settings.lazy.tsx`)
-Per-project integration configuration page accessible at `/project-settings`:
+#### Integrations Page (`integrations.lazy.tsx`)
+Single per-project integrations page at `/integrations`. Each of the 5 providers
+(Linear, Resend, Slack, GitHub, OpenRouter) renders a card that walks the user
+through Test → pick from upstream picker (teams / channels / repos / domains) →
+Save. Persistence goes through the encrypted `project_integrations` row keyed
+by `(project_id, provider)`.
 
-**Three sections**:
-
-**Linear Integration**
-- Input field for API token
-- Test & Save button → calls `POST /api/projects/:projectId/settings/linear/test`
-- On success: shows "Connected as <name> (<email>)"
-- Webhook registration section (only if token configured):
-  - Pre-filled webhook URL: `{origin}/api/webhooks/linear`
-  - Optional Team ID input
-  - Register Webhook button → calls `POST /api/projects/:projectId/settings/linear/webhook`
-
-**GitHub Integration**
-- Input fields: Owner, Repo, Personal Access Token
-- Test & Save → `POST /api/projects/:projectId/settings/github/test`
-- Shows authenticated user on success
-
-**Slack Integration**
-- Webhook URL input (masked)
-- Optional Channel ID input
-- Test & Save → `POST /api/projects/:projectId/settings/slack/test`
-- Backend sends real test message to webhook
+**Card flow (same shape per provider)**:
+1. User pastes the API key/PAT.
+2. `POST /projects/:projectId/integrations/:provider/test` — backend validates
+   against the upstream API (e.g. `LinearClient.viewer`, GitHub `/user`, Slack
+   `auth.test`, Resend `/domains`) and returns picker data without persisting.
+3. User picks the resource (team, channel, repo, fromEmail).
+4. `PUT /projects/:projectId/integrations/:provider` with `{ key, meta }` —
+   backend envelope-encrypts the key, stores `meta` JSON alongside, and marks
+   `last_tested_at`.
+5. Card flips to configured state with a "Change" button (relaunches the flow)
+   and a "Disconnect" trash button (DELETE).
 
 **UI Features**:
-- Status indicator per integration (green checkmark "Configured" or red X "Not configured")
-- Masked input fields for sensitive values
-- Loading states and error messages
-- Query invalidation to refresh status after save
-- Integrations are project-scoped via `useCurrentProjectId()` hook
+- Status badge per card: active | invalid | disabled, sourced from the
+  `project_integrations.status` column.
+- Sensitive fields use masked inputs; the stored ciphertext is never returned.
+- Query invalidation refreshes status after save.
+- All requests are project-scoped via `useCurrentProjectId()`.
 
 ## Data Flow: Creating a Project & Generating Wiki
 
@@ -177,40 +184,46 @@ Per-project integration configuration page accessible at `/project-settings`:
 ## Data Flow: Using a Project's Integrations
 
 ```
-1. User navigates to /project-settings
+1. User navigates to /integrations
    ↓
-2. Frontend fetches GET /projects/:projectId/settings/integrations
+2. Frontend fetches GET /projects/:projectId/integrations (per-project status)
    ↓
-3. Shows configuration status (configured boolean, non-sensitive metadata)
+3. Shows configuration status (active | invalid | disabled + non-sensitive
+   metadata from `project_integrations.meta`: teamId, channelId, repoFullName,
+   fromEmail, …). The encrypted key itself is never returned.
    ↓
-4. User enters Linear token and clicks Test & Save
+4. User enters a Linear PAT and clicks Test & Save
    ↓
-5. POST /api/projects/:projectId/settings/linear/test { token }
+5. POST /projects/:projectId/integrations/linear/test { key } — backend
+   validates via LinearClient.viewer + team listing for the picker UI
    ↓
-6. Backend validates token via LinearClient.viewer
+6. User picks a team, clicks Save → PUT /projects/:projectId/integrations/linear
+   { key, meta: { teamId, teamName, teamKey } }
    ↓
-7. Saves token to projects.linear_token (encrypted in production)
+7. Backend envelope-encrypts the key and UPSERTs the project_integrations row;
+   `meta` (non-sensitive) is stored as JSON alongside.
    ↓
-8. Frontend invalidates query and refreshes status
+8. Frontend invalidates query and refreshes status → "Team: X (KEY)" card
    ↓
-9. User registers webhook via POST /projects/:projectId/settings/linear/webhook
+9. Optional: register Linear webhook → secret persisted to webhook_secrets
+   keyed by (provider, project_id)
    ↓
-10. Backend creates webhook via LinearClient.createWebhook()
-    ↓
-11. Webhook ID and URL stored in DB
-    ↓
-12. When issue moves to Done, webhook sends update to /api/webhooks/linear
-    ↓
-13. Endpoint resumes suspended workflow run for that project
+10. When issue moves to Done, the webhook hits /api/webhooks/linear, the
+    handler verifies HMAC against webhook_secrets, then resumes the suspended
+    workflow run for the right project.
 ```
 
 ## Data Isolation Guarantees
 
 **Project A and Project B cannot see each other's data**:
 
-1. **Credential isolation**: Each project stores its own Linear token, GitHub token, Slack webhook
-   - A Linear query by Project A uses Project A's token and team ID
-   - Project B's token/team is completely separate
+1. **Credential isolation**: Each project's integration keys live in their own
+   encrypted `project_integrations` row (PK = `(project_id, provider)`),
+   decrypted on demand via `getIntegrationKey`. Plaintext never crosses a
+   project boundary.
+   - A Linear query for Project A decrypts Project A's key and uses
+     `meta.teamId` from the same row.
+   - Project B's row is a separate ciphertext under a separate DEK.
    
 2. **Document isolation**: Wiki documents and chunks are filtered by `WHERE project_id = ?`
    - Queries never leak documents from other projects
@@ -248,7 +261,7 @@ runtime/
   src/
     lib/
       project-routes.ts           # GET/POST/PATCH/DELETE /projects
-      integration-routes.ts       # POST /projects/:projectId/settings/*
+      integration-routes.ts       # GET/PUT/DELETE/POST /projects/:projectId/integrations/*
       scoped-routes.ts            # GET/POST /projects/:projectId/linear/* /wiki/*
       project-middleware.ts       # projectId validation middleware
       wiki-rag.ts                 # Wiki generation pipeline
