@@ -16,17 +16,11 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as IndexRouteImport } from './routes/index'
 
-const SettingsLazyRouteImport = createFileRoute('/settings')()
 const ProjectsLazyRouteImport = createFileRoute('/projects')()
 const ObservabilityLazyRouteImport = createFileRoute('/observability')()
 const IntegrationsLazyRouteImport = createFileRoute('/integrations')()
 const BoardLazyRouteImport = createFileRoute('/board')()
 
-const SettingsLazyRoute = SettingsLazyRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any).lazy(() => import('./routes/settings.lazy').then((d) => d.Route))
 const ProjectsLazyRoute = ProjectsLazyRouteImport.update({
   id: '/projects',
   path: '/projects',
@@ -77,7 +71,6 @@ export interface FileRoutesByFullPath {
   '/integrations': typeof IntegrationsLazyRoute
   '/observability': typeof ObservabilityLazyRoute
   '/projects': typeof ProjectsLazyRoute
-  '/settings': typeof SettingsLazyRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -88,7 +81,6 @@ export interface FileRoutesByTo {
   '/integrations': typeof IntegrationsLazyRoute
   '/observability': typeof ObservabilityLazyRoute
   '/projects': typeof ProjectsLazyRoute
-  '/settings': typeof SettingsLazyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -100,7 +92,6 @@ export interface FileRoutesById {
   '/integrations': typeof IntegrationsLazyRoute
   '/observability': typeof ObservabilityLazyRoute
   '/projects': typeof ProjectsLazyRoute
-  '/settings': typeof SettingsLazyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -113,7 +104,6 @@ export interface FileRouteTypes {
     | '/integrations'
     | '/observability'
     | '/projects'
-    | '/settings'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -124,7 +114,6 @@ export interface FileRouteTypes {
     | '/integrations'
     | '/observability'
     | '/projects'
-    | '/settings'
   id:
     | '__root__'
     | '/'
@@ -135,7 +124,6 @@ export interface FileRouteTypes {
     | '/integrations'
     | '/observability'
     | '/projects'
-    | '/settings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -147,18 +135,10 @@ export interface RootRouteChildren {
   IntegrationsLazyRoute: typeof IntegrationsLazyRoute
   ObservabilityLazyRoute: typeof ObservabilityLazyRoute
   ProjectsLazyRoute: typeof ProjectsLazyRoute
-  SettingsLazyRoute: typeof SettingsLazyRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsLazyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/projects': {
       id: '/projects'
       path: '/projects'
@@ -173,18 +153,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ObservabilityLazyRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/board': {
-      id: '/board'
-      path: '/board'
-      fullPath: '/board'
-      preLoaderRoute: typeof BoardLazyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/integrations': {
       id: '/integrations'
       path: '/integrations'
       fullPath: '/integrations'
       preLoaderRoute: typeof IntegrationsLazyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/board': {
+      id: '/board'
+      path: '/board'
+      fullPath: '/board'
+      preLoaderRoute: typeof BoardLazyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/register': {
@@ -227,7 +207,6 @@ const rootRouteChildren: RootRouteChildren = {
   IntegrationsLazyRoute: IntegrationsLazyRoute,
   ObservabilityLazyRoute: ObservabilityLazyRoute,
   ProjectsLazyRoute: ProjectsLazyRoute,
-  SettingsLazyRoute: SettingsLazyRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -139,7 +139,7 @@ Activity Report:
 
 - **Issue:** Slack message never arrives
   - **Check:** Bot token valid? Channel ID saved to project?
-  - **Verify:** `GET /projects/:id/settings/integrations` returns `slack.configured: true`
+  - **Verify:** `GET /projects/:id/integrations` returns the slack row with `status: 'active'`
 
 - **Issue:** Comments not showing in activity summary
   - **Check:** Issue was updated with status before webhook fired?
@@ -161,8 +161,8 @@ POST /projects
 # → Wiki generation starts in background
 
 # 2. Configure Linear integration
-POST /projects/:projectId/settings/linear/test
-{ "token": "lin_api_..." }
+PUT /projects/:projectId/integrations/linear
+{ "key": "lin_api_...", "meta": { "teamId": "...", "teamName": "...", "teamKey": "..." } }
 
 # 3. Configure assignee & reporter
 # (Assume Linear team already set up)

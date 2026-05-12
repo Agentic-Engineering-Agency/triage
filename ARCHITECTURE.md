@@ -83,12 +83,12 @@ Implements CRUD operations on projects:
 - `DELETE /projects/:id` — cascade delete project and all related data
 
 #### B. Integration Configuration Routes (`integration-routes.ts`)
-Per-project integration setup and testing:
-- `POST /projects/:projectId/settings/linear/test` — validate Linear token, save
-- `POST /projects/:projectId/settings/linear/webhook` — register webhook with Linear API
-- `POST /projects/:projectId/settings/github/test` — validate GitHub PAT
-- `POST /projects/:projectId/settings/slack/test` — send test message to webhook
-- `GET /projects/:projectId/settings/integrations` — fetch all integration status
+Per-project integration setup, validation, and testing. Same shape across all 5
+providers (linear | resend | slack | github | openrouter):
+- `GET    /projects/:projectId/integrations` — list all integrations for the project (status + non-sensitive meta)
+- `PUT    /projects/:projectId/integrations/:provider` — upsert key + meta (envelope-encrypted)
+- `DELETE /projects/:projectId/integrations/:provider` — remove an integration
+- `POST   /projects/:projectId/integrations/:provider/test` — validate a key against the upstream API without persisting (returns picker data: teams, channels, repos, …)
 
 #### C. Project-Scoped Routes (`scoped-routes.ts`)
 Per-project data queries using project's own credentials:
@@ -135,37 +135,31 @@ Validates `projectId` parameter before route handlers:
 - Emits custom event `triage:project-change` when selection changes
 - Other components listen to this event and auto-refetch project-scoped data
 
-#### Integration Settings (`project-settings.lazy.tsx`)
-Per-project integration configuration page accessible at `/project-settings`:
+#### Integrations Page (`integrations.lazy.tsx`)
+Single per-project integrations page at `/integrations`. Each of the 5 providers
+(Linear, Resend, Slack, GitHub, OpenRouter) renders a card that walks the user
+through Test → pick from upstream picker (teams / channels / repos / domains) →
+Save. Persistence goes through the encrypted `project_integrations` row keyed
+by `(project_id, provider)`.
 
-**Three sections**:
-
-**Linear Integration**
-- Input field for API token
-- Test & Save button → calls `POST /api/projects/:projectId/settings/linear/test`
-- On success: shows "Connected as <name> (<email>)"
-- Webhook registration section (only if token configured):
-  - Pre-filled webhook URL: `{origin}/api/webhooks/linear`
-  - Optional Team ID input
-  - Register Webhook button → calls `POST /api/projects/:projectId/settings/linear/webhook`
-
-**GitHub Integration**
-- Input fields: Owner, Repo, Personal Access Token
-- Test & Save → `POST /api/projects/:projectId/settings/github/test`
-- Shows authenticated user on success
-
-**Slack Integration**
-- Webhook URL input (masked)
-- Optional Channel ID input
-- Test & Save → `POST /api/projects/:projectId/settings/slack/test`
-- Backend sends real test message to webhook
+**Card flow (same shape per provider)**:
+1. User pastes the API key/PAT.
+2. `POST /projects/:projectId/integrations/:provider/test` — backend validates
+   against the upstream API (e.g. `LinearClient.viewer`, GitHub `/user`, Slack
+   `auth.test`, Resend `/domains`) and returns picker data without persisting.
+3. User picks the resource (team, channel, repo, fromEmail).
+4. `PUT /projects/:projectId/integrations/:provider` with `{ key, meta }` —
+   backend envelope-encrypts the key, stores `meta` JSON alongside, and marks
+   `last_tested_at`.
+5. Card flips to configured state with a "Change" button (relaunches the flow)
+   and a "Disconnect" trash button (DELETE).
 
 **UI Features**:
-- Status indicator per integration (green checkmark "Configured" or red X "Not configured")
-- Masked input fields for sensitive values
-- Loading states and error messages
-- Query invalidation to refresh status after save
-- Integrations are project-scoped via `useCurrentProjectId()` hook
+- Status badge per card: active | invalid | disabled, sourced from the
+  `project_integrations.status` column.
+- Sensitive fields use masked inputs; the stored ciphertext is never returned.
+- Query invalidation refreshes status after save.
+- All requests are project-scoped via `useCurrentProjectId()`.
 
 ## Data Flow: Creating a Project & Generating Wiki
 
@@ -267,7 +261,7 @@ runtime/
   src/
     lib/
       project-routes.ts           # GET/POST/PATCH/DELETE /projects
-      integration-routes.ts       # POST /projects/:projectId/settings/*
+      integration-routes.ts       # GET/PUT/DELETE/POST /projects/:projectId/integrations/*
       scoped-routes.ts            # GET/POST /projects/:projectId/linear/* /wiki/*
       project-middleware.ts       # projectId validation middleware
       wiki-rag.ts                 # Wiki generation pipeline
