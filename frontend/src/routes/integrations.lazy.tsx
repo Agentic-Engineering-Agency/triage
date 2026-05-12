@@ -3,10 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import {
   KeyRound,
-  Sparkles,
-  Ticket,
-  MessagesSquare,
-  Mail,
   CheckCircle2,
   AlertCircle,
   Loader2,
@@ -17,6 +13,7 @@ import { apiFetch } from "@/lib/api"
 import { useCurrentProjectId } from "@/components/project-selector"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Picker } from "@/components/picker"
+import { BrandIcon } from "@/components/brand-icon"
 
 export const Route = createLazyFileRoute("/integrations")({
   component: IntegrationsPage,
@@ -65,20 +62,9 @@ type TestResponse =
       message?: string
     }
 
-// Inline GitHub logo — lucide-react dropped brand icons; using official mark
-// as a small SVG keeps us free of an extra icon dependency.
-function GithubIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.09 3.29 9.4 7.86 10.93.58.1.79-.25.79-.56 0-.27-.01-1-.02-1.96-3.2.69-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.08-.12-.29-.51-1.47.11-3.06 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.9-.39.99 0 1.98.13 2.9.39 2.21-1.49 3.18-1.18 3.18-1.18.62 1.59.23 2.77.11 3.06.74.8 1.19 1.82 1.19 3.08 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.07.78 2.16 0 1.56-.01 2.81-.01 3.19 0 .31.21.67.8.55C20.71 21.4 24 17.09 24 12 24 5.65 18.85.5 12.5.5z" />
-    </svg>
-  )
-}
+// Brand icons (GitHub, Linear, Slack, Resend, OpenRouter) now route through
+// `BrandIcon` which serves themed SVGs sourced from svgl.app and shipped from
+// `/public/brands/`. Lucide-react dropped brand logos on trademark grounds.
 
 function IntegrationsPage() {
   const [currentProjectId] = useCurrentProjectId()
@@ -302,7 +288,7 @@ function OpenRouterCard({
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <Sparkles className="h-5 w-5" />
+            <BrandIcon name="openrouter" className="h-5 w-5" />
           </div>
           <div>
             <h3 className="text-sm font-medium text-foreground">OpenRouter</h3>
@@ -504,7 +490,7 @@ function LinearCard({
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <Ticket className="h-5 w-5" />
+            <BrandIcon name="linear" className="h-5 w-5" />
           </div>
           <div>
             <h3 className="text-sm font-medium text-foreground">Linear</h3>
@@ -753,7 +739,7 @@ function SlackCard({
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <MessagesSquare className="h-5 w-5" />
+            <BrandIcon name="slack" className="h-5 w-5" />
           </div>
           <div>
             <h3 className="text-sm font-medium text-foreground">Slack</h3>
@@ -1002,7 +988,7 @@ function ResendCard({
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <Mail className="h-5 w-5" />
+            <BrandIcon name="resend" className="h-5 w-5" />
           </div>
           <div>
             <h3 className="text-sm font-medium text-foreground">Resend</h3>
@@ -1233,7 +1219,7 @@ function GitHubCard({
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <GithubIcon className="h-5 w-5" />
+            <BrandIcon name="github" className="h-5 w-5" />
           </div>
           <div>
             <h3 className="text-sm font-medium text-foreground">GitHub</h3>
