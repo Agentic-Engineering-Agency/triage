@@ -110,9 +110,9 @@ docker logs <container-name>
 
 ### Check Runtime Health
 ```bash
-curl http://localhost:4111/api/config/status
+curl http://localhost:4111/health
 # Expected response:
-# {"success":true,"data":{"linearConfigured":true,"openrouterConfigured":true}}
+# {"status":"ok","service":"triage-runtime"}
 ```
 
 ### Access Web UI
@@ -194,8 +194,9 @@ docker compose logs -f
 # Is runtime connecting to database?
 curl http://localhost:4111/health
 
-# Can runtime reach Linear?
-curl http://localhost:4111/api/linear/members
+# Can runtime reach Linear? (requires session — call from the UI or
+# inspect the per-project endpoint with auth cookies):
+# curl --cookie "$COOKIE" http://localhost:4111/api/projects/<id>/linear/members
 
 # Can runtime reach Langfuse?
 # Check logs for initialization messages
@@ -279,7 +280,7 @@ Once the complete flow works end-to-end:
 
 1. **Test with your Linear workspace** — Update `LINEAR_TEAM_ID` to your workspace
 2. **Configure Slack notifications** — Add `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID`
-3. **Setup wiki generation** — Trigger `/api/wiki/generate` for RAG
+3. **Setup wiki generation** — Trigger `POST /api/projects/:id/wiki/generate` for RAG
 4. **Monitor in production** — Use Langfuse dashboard for observability
 5. **Configure GitHub webhooks** — Link PRs to tickets for full automation
 

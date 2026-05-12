@@ -262,7 +262,7 @@ DONE
 - [ ] `OPENROUTER_API_KEY` is valid
 - [ ] `LIBSQL_URL` points to running database
 - [ ] Docker containers are running: `docker ps`
-- [ ] Runtime is responding: `curl http://localhost:4111/api/config/status`
+- [ ] Runtime is responding: `curl http://localhost:4111/health`
 
 ## Reset State
 

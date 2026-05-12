@@ -4,9 +4,9 @@
  *
  * Two independent axes under test:
  *   1. Ownership gate: unauthenticated → 401, cross-tenant → 404.
- *   2. Credential resolution: tenant row wins; falls back to env + legacy
- *      `projects.linear_team_id` when no tenant row; surfaces NO_LINEAR_CONFIG
- *      when neither source has usable data.
+ *   2. Credential resolution: tenant row required; surfaces NO_LINEAR_CONFIG
+ *      when no tenant row exists or it lacks a teamId. The legacy env +
+ *      `projects.linear_team_id` fallback was removed in MT-06.
  *
  * Uses `:memory:` libsql and a stubbed @linear/sdk so we can observe which
  * apiKey + teamId reached the SDK on each call.
@@ -89,18 +89,16 @@ async function seedDb(): Promise<Client> {
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
-  // Columns mirror the runtime shape closely enough for the handlers.
-  // `linear_team_id` is the legacy plaintext column the env-fallback path
-  // still reads from. `linear_token` is intentionally left null — the new
-  // code must not read it even when a row exists.
+  // Columns mirror the runtime shape. The legacy plaintext integration
+  // columns (`linear_token`, `linear_team_id`, etc.) were dropped in MT-06,
+  // so the seed schema no longer carries them and there is no env-fallback
+  // path left that could read them.
   await client.execute(`CREATE TABLE projects (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
     repo_url TEXT,
     repo_default_branch TEXT,
-    linear_token TEXT,
-    linear_team_id TEXT,
     wiki_status TEXT,
     wiki_error TEXT,
     status TEXT,
@@ -136,20 +134,17 @@ async function seedDb(): Promise<Client> {
     sql: 'INSERT INTO auth_session (id, user_id, token, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
     args: ['s2', 'user-other', 'other-token', now + 1_000_000, now, now],
   });
-  // proj-owned: legacy `linear_team_id` present so env-fallback has something
-  // to resolve; `linear_token` deliberately NULL to prove the flip doesn't
-  // read the plaintext column anymore.
   await client.execute({
     sql: `INSERT INTO projects
-            (id, user_id, name, repo_url, repo_default_branch, linear_token, linear_team_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
-    args: ['proj-owned', 'user-owner', 'mine', 'https://github.com/x/y', 'main', 'team-legacy', now, now],
+            (id, user_id, name, repo_url, repo_default_branch, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: ['proj-owned', 'user-owner', 'mine', 'https://github.com/x/y', 'main', now, now],
   });
   await client.execute({
     sql: `INSERT INTO projects
-            (id, user_id, name, repo_url, repo_default_branch, linear_token, linear_team_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
-    args: ['proj-foreign', 'user-other', 'not-mine', 'https://github.com/z/w', 'main', 'team-legacy', now, now],
+            (id, user_id, name, repo_url, repo_default_branch, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: ['proj-foreign', 'user-other', 'not-mine', 'https://github.com/z/w', 'main', now, now],
   });
   return client;
 }
@@ -292,16 +287,6 @@ describe('scoped-routes', () => {
       expect(lastCall.teamId).toBe('team-tenant');
     });
 
-    it('falls back to env + legacy projects.linear_team_id when no tenant row', async () => {
-      process.env.LINEAR_API_KEY = 'env-fallback-key';
-      const res = (await scoped.getProjectCycleRoute.handler(
-        makeCtx({ params: { projectId: 'proj-owned' } }),
-      )) as unknown as JsonRes;
-      expect(res.status).toBe(200);
-      expect(lastCall.apiKey).toBe('env-fallback-key');
-      expect(lastCall.teamId).toBe('team-legacy');
-    });
-
     it('returns 400 NO_LINEAR_CONFIG when tenant missing teamId', async () => {
       await seedTenantLinear('proj-owned', 'tenant-pat', {
         /* meta without teamId */
@@ -314,28 +299,19 @@ describe('scoped-routes', () => {
       expect((res.body as { error: { code: string } }).error.code).toBe('NO_LINEAR_CONFIG');
     });
 
-    it('returns 400 NO_LINEAR_CONFIG when neither tenant nor env have a key', async () => {
+    it('returns 400 NO_LINEAR_CONFIG when no tenant row, even with LINEAR_API_KEY env set', async () => {
+      // MT-06 dropped the legacy env-fallback path (which read
+      // projects.linear_team_id alongside env LINEAR_API_KEY). Projects must
+      // be onboarded through /integrations to use scoped routes; env alone
+      // does not unblock them anymore.
+      process.env.LINEAR_API_KEY = 'env-key-that-must-be-ignored';
       const res = (await scoped.listProjectIssuesRoute.handler(
         makeCtx({ params: { projectId: 'proj-owned' } }),
       )) as unknown as JsonRes;
       expect(res.status).toBe(400);
       expect((res.body as { error: { code: string } }).error.code).toBe('NO_LINEAR_CONFIG');
-    });
-
-    it('never reads projects.linear_token plaintext (regression guard)', async () => {
-      // Set a nonsense plaintext token on the project row directly — if the
-      // flip left any read path for it, the SDK spy would capture it.
-      await client.execute({
-        sql: 'UPDATE projects SET linear_token = ? WHERE id = ?',
-        args: ['plaintext-MUST-NOT-LEAK', 'proj-owned'],
-      });
-      process.env.LINEAR_API_KEY = 'env-ok';
-
-      await scoped.listProjectIssuesRoute.handler(
-        makeCtx({ params: { projectId: 'proj-owned' } }),
-      );
-      expect(lastCall.apiKey).not.toBe('plaintext-MUST-NOT-LEAK');
-      expect(lastCall.apiKey).toBe('env-ok');
+      // The handler never reached the Linear SDK — apiKey stays at reset value.
+      expect(lastCall.apiKey).toBeNull();
     });
   });
 
