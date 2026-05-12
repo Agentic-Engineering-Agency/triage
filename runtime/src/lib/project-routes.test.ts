@@ -347,7 +347,7 @@ function makeCtx(opts: { params?: Record<string, string>; body?: unknown; header
   const body = opts.body;
   // Default headers include a valid session cookie for auth
   const headers = {
-    cookie: 'session=test-session-token',
+    cookie: 'better-auth.session_token=test-session-token.sig',
     ...opts.headers,
   };
   return {
