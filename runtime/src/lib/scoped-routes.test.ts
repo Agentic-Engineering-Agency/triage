@@ -103,6 +103,7 @@ async function seedDb(): Promise<Client> {
     linear_team_id TEXT,
     wiki_status TEXT,
     wiki_error TEXT,
+    status TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
@@ -335,6 +336,44 @@ describe('scoped-routes', () => {
       );
       expect(lastCall.apiKey).not.toBe('plaintext-MUST-NOT-LEAK');
       expect(lastCall.apiKey).toBe('env-ok');
+    });
+  });
+
+  describe('wiki-generate needs_auth guard', () => {
+    beforeEach(async () => {
+      const wikiRag = await import('./wiki-rag');
+      vi.mocked(wikiRag.generateWiki).mockClear();
+    });
+
+    it('returns 400 PROJECT_NEEDS_AUTH when project.status is needs_auth', async () => {
+      await client.execute({
+        sql: "UPDATE projects SET status = 'needs_auth' WHERE id = ?",
+        args: ['proj-owned'],
+      });
+
+      const res = (await scoped.generateProjectWikiRoute.handler(
+        makeCtx({ params: { projectId: 'proj-owned' } }),
+      )) as unknown as JsonRes;
+
+      expect(res.status).toBe(400);
+      expect((res.body as { error: { code: string } }).error.code).toBe(
+        'PROJECT_NEEDS_AUTH',
+      );
+
+      const wikiRag = await import('./wiki-rag');
+      expect(vi.mocked(wikiRag.generateWiki)).not.toHaveBeenCalled();
+    });
+
+    it('proceeds to processing when project.status is not needs_auth', async () => {
+      const res = (await scoped.generateProjectWikiRoute.handler(
+        makeCtx({ params: { projectId: 'proj-owned' } }),
+      )) as unknown as JsonRes;
+
+      expect(res.status).toBe(200);
+      expect((res.body as { data: { status: string } }).data.status).toBe('processing');
+
+      const wikiRag = await import('./wiki-rag');
+      expect(vi.mocked(wikiRag.generateWiki)).toHaveBeenCalledTimes(1);
     });
   });
 });

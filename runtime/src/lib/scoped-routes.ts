@@ -247,6 +247,25 @@ export const generateProjectWikiRoute = registerApiRoute('/projects/:projectId/w
       const project = await getProject(projectId);
       if (!project) return authErrorResponse(c, 404);
 
+      // Defense-in-depth: if GitHub probe flipped this project to needs_auth
+      // (private repo without a PAT), refuse to spawn another clone attempt.
+      // The retry button in GitHubCard goes through PUT /integrations/github
+      // which sets up the PAT first; any other caller hitting this endpoint
+      // without a configured PAT would just produce another auth failure.
+      if (project.status === 'needs_auth') {
+        return c.json(
+          {
+            success: false,
+            error: {
+              code: 'PROJECT_NEEDS_AUTH',
+              message:
+                'Private repository — connect a GitHub PAT in /integrations before generating the wiki',
+            },
+          },
+          400,
+        );
+      }
+
       const db = getDb();
       const now = Date.now();
 
