@@ -330,12 +330,14 @@ describe('REQ-T06: .env.example File', () => {
     const content = fs.readFileSync(filePath, 'utf-8');
 
     // WHEN we inspect variable group headers
-    // THEN it SHALL contain groups for App, LLM/AI, Integrations, Langfuse, and Infrastructure
+    // THEN it SHALL contain groups for App, LLM/AI, Integrations, Auth, and Frontend
+    // (Langfuse / ClickHouse / Redis / MinIO / Postgres moved to Helm values
+    // in commit 7e0bd39 and are asserted in tests/infra-k8s/helm-chart.test.ts.)
     expect(content).toMatch(/app/i);
     expect(content).toMatch(/llm|ai|openrouter/i);
     expect(content).toMatch(/integration|linear|resend/i);
-    expect(content).toMatch(/langfuse/i);
-    expect(content).toMatch(/infra|postgres|redis|clickhouse|minio/i);
+    expect(content).toMatch(/better.auth|app_master_key/i);
+    expect(content).toMatch(/frontend|caddy/i);
   });
 
   // Scenario 3 — Error case: CHANGEME placeholders for secrets
@@ -347,9 +349,10 @@ describe('REQ-T06: .env.example File', () => {
     // WHEN we count CHANGEME occurrences
     const changemeMatches = content.match(/CHANGEME/g);
 
-    // THEN there SHALL be at least 14 CHANGEME placeholders
+    // THEN there SHALL be at least 10 CHANGEME placeholders
+    // (Reduced from 14 after the Langfuse-stack secrets moved to Helm values.)
     expect(changemeMatches).not.toBeNull();
-    expect(changemeMatches!.length).toBeGreaterThanOrEqual(14);
+    expect(changemeMatches!.length).toBeGreaterThanOrEqual(10);
   });
 });
 
