@@ -20,6 +20,7 @@ import type { Context } from 'hono';
 import { assertProjectOwnership, authErrorResponse } from './auth-helpers';
 import { getIntegrationKey } from './integration-keys';
 import { generateWiki } from './wiki-rag';
+import { setWebhookSecret, LINEAR_PROVIDER } from './webhook-secrets';
 
 let cachedClient: Client | null = null;
 function getDb(): Client {
@@ -212,6 +213,230 @@ export const listProjectMembersRoute = registerApiRoute('/projects/:projectId/li
   },
 });
 
+// Per-project sync tracking (mirrors linear-sync.ts globals but keyed by project)
+const projectSyncMeta = new Map<
+  string,
+  { lastSyncedAt: Date | null; syncInProgress: boolean }
+>()
+
+function getProjectSyncMeta(projectId: string) {
+  if (!projectSyncMeta.has(projectId)) {
+    projectSyncMeta.set(projectId, { lastSyncedAt: null, syncInProgress: false })
+  }
+  return projectSyncMeta.get(projectId)!
+}
+
+async function syncProjectLinearIssues(
+  projectId: string,
+  apiKey: string,
+  teamId: string,
+): Promise<Record<string, Array<Record<string, unknown>>>> {
+  const meta = getProjectSyncMeta(projectId)
+  if (meta.syncInProgress) {
+    console.log(`[linear-sync] Sync already in progress for ${projectId}, skipping`)
+    const cached = await getCachedProjectIssues(projectId)
+    if (cached) return cached
+    throw new Error('Sync in progress and no cached data available')
+  }
+
+  meta.syncInProgress = true
+  console.log(`[linear-sync] Starting sync for project ${projectId}...`)
+  const startTime = Date.now()
+
+  try {
+    const linearClient = new LinearClient({ apiKey })
+    const issues = await linearClient.issues({
+      filter: { team: { id: { eq: teamId } } },
+      first: 50,
+    })
+
+    const grouped: Record<string, Array<Record<string, unknown>>> = {}
+    for (const issue of issues.nodes) {
+      const state = await issue.state
+      const stateName = state?.name ?? 'Unknown'
+      if (!grouped[stateName]) grouped[stateName] = []
+
+      const assigneeNode = await issue.assignee
+      const labelsConnection = await issue.labels()
+      let projectName: string | null = null
+      try {
+        const proj = await issue.project
+        if (proj) projectName = proj.name
+      } catch { /* project may not exist */ }
+
+      grouped[stateName].push({
+        id: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+        priority: issue.priority,
+        estimate: issue.estimate ?? null,
+        project: projectName,
+        url: issue.url,
+        createdAt: issue.createdAt?.toISOString?.() ?? String(issue.createdAt),
+        updatedAt: issue.updatedAt?.toISOString?.() ?? String(issue.updatedAt),
+        assignee: assigneeNode ? { id: assigneeNode.id, name: assigneeNode.name } : null,
+        labels: labelsConnection.nodes.map((l: { id: string; name: string; color: string }) => ({
+          id: l.id,
+          name: l.name,
+          color: l.color,
+        })),
+      })
+    }
+
+    const db = getDb()
+    const now = Date.now()
+    await db.execute({
+      sql: `INSERT OR REPLACE INTO linear_sync_cache (id, team_id, data, synced_at)
+            VALUES (?, ?, ?, ?)`,
+      args: [projectId, teamId, JSON.stringify(grouped), now],
+    })
+
+    meta.lastSyncedAt = new Date(now)
+    const elapsed = Date.now() - startTime
+    const totalIssues = Object.values(grouped).flat().length
+    console.log(`[linear-sync] Sync complete for ${projectId}: ${totalIssues} issues in ${elapsed}ms`)
+    return grouped
+  } finally {
+    meta.syncInProgress = false
+  }
+}
+
+async function getCachedProjectIssues(
+  projectId: string,
+): Promise<Record<string, Array<Record<string, unknown>>> | null> {
+  try {
+    const db = getDb()
+    const result = await db.execute({
+      sql: 'SELECT data, synced_at FROM linear_sync_cache WHERE id = ?',
+      args: [projectId],
+    })
+    const row = result.rows[0]
+    if (!row) return null
+    const meta = getProjectSyncMeta(projectId)
+    if (!meta.lastSyncedAt && row.synced_at) {
+      meta.lastSyncedAt = new Date(Number(row.synced_at))
+    }
+    return JSON.parse(row.data as string) as Record<string, Array<Record<string, unknown>>>
+  } catch (error) {
+    console.error(
+      `[linear-sync] Failed to read cache for ${projectId}:`,
+      error instanceof Error ? error.message : error,
+    )
+    return null
+  }
+}
+
+function getProjectLastSyncedAt(projectId: string): Date | null {
+  return getProjectSyncMeta(projectId).lastSyncedAt
+}
+
+function isProjectSyncInProgress(projectId: string): boolean {
+  return getProjectSyncMeta(projectId).syncInProgress
+}
+
+// ---------- POST /api/projects/:projectId/linear/sync ----------
+export const syncProjectIssuesRoute = registerApiRoute('/projects/:projectId/linear/sync', {
+  method: 'POST' as const,
+  handler: async (c: Context) => {
+    try {
+      const projectId = c.req.param('projectId')
+      if (!projectId) return authErrorResponse(c, 404)
+      const auth = await assertProjectOwnership(c, projectId)
+      if (!auth.ok) return authErrorResponse(c, auth.status)
+
+      const lc = await resolveLinearContext(projectId)
+      if (!lc.ok) return linearConfigError(c, lc.reason)
+
+      const grouped = await syncProjectLinearIssues(projectId, lc.apiKey, lc.teamId)
+      const totalIssues = Object.values(grouped).flat().length
+      return c.json({
+        success: true,
+        data: {
+          issueCount: totalIssues,
+          syncedAt: getProjectLastSyncedAt(projectId)?.toISOString() ?? null,
+        },
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500)
+    }
+  },
+})
+
+// ---------- GET /api/projects/:projectId/linear/sync/status ----------
+export const getProjectSyncStatusRoute = registerApiRoute('/projects/:projectId/linear/sync/status', {
+  method: 'GET' as const,
+  handler: async (c: Context) => {
+    try {
+      const projectId = c.req.param('projectId')
+      if (!projectId) return authErrorResponse(c, 404)
+      const auth = await assertProjectOwnership(c, projectId)
+      if (!auth.ok) return authErrorResponse(c, auth.status)
+
+      return c.json({
+        success: true,
+        data: {
+          lastSyncedAt: getProjectLastSyncedAt(projectId)?.toISOString() ?? null,
+          syncInProgress: isProjectSyncInProgress(projectId),
+        },
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500)
+    }
+  },
+})
+
+// ---------- POST /api/projects/:projectId/linear/webhook/setup ----------
+export const setupProjectWebhookRoute = registerApiRoute('/projects/:projectId/linear/webhook/setup', {
+  method: 'POST' as const,
+  handler: async (c: Context) => {
+    try {
+      const projectId = c.req.param('projectId')
+      if (!projectId) return authErrorResponse(c, 404)
+      const auth = await assertProjectOwnership(c, projectId)
+      if (!auth.ok) return authErrorResponse(c, auth.status)
+
+      const lc = await resolveLinearContext(projectId)
+      if (!lc.ok) return linearConfigError(c, lc.reason)
+
+      const body = (await c.req.json()) as { url?: string }
+      if (!body.url) {
+        return c.json({ success: false, error: { code: 'MISSING_URL', message: 'url is required' } }, 400)
+      }
+
+      const linearClient = new LinearClient({ apiKey: lc.apiKey })
+      const result = await linearClient.createWebhook({
+        url: body.url,
+        teamId: lc.teamId,
+        resourceTypes: ['Issue'],
+        enabled: true,
+      })
+      const webhook = await result.webhook
+
+      if (webhook?.secret) {
+        await setWebhookSecret(LINEAR_PROVIDER, webhook.secret, webhook.id ?? null, projectId)
+      } else {
+        console.warn(`[webhook/setup] Linear response missing secret for project ${projectId}`)
+      }
+
+      return c.json({
+        success: true,
+        data: {
+          id: webhook?.id,
+          url: webhook?.url,
+          enabled: webhook?.enabled,
+          secretStored: Boolean(webhook?.secret),
+        },
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500)
+    }
+  },
+})
+
+
 // ---------- POST /api/projects/:projectId/wiki/generate ----------
 export const generateProjectWikiRoute = registerApiRoute('/projects/:projectId/wiki/generate', {
   method: 'POST' as const,
@@ -322,6 +547,9 @@ export const scopedRoutes = [
   listProjectIssuesRoute,
   getProjectCycleRoute,
   listProjectMembersRoute,
+  syncProjectIssuesRoute,
+  getProjectSyncStatusRoute,
+  setupProjectWebhookRoute,
   generateProjectWikiRoute,
   getProjectWikiStatusRoute,
-];
+]

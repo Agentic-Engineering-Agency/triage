@@ -530,33 +530,33 @@ function BoardPage() {
   const queryClient = useQueryClient();
 
   const { data, isLoading, error } = useQuery<GroupedIssues>({
-    queryKey: ['linear-issues'],
-    queryFn: () => apiFetch('/linear/issues'),
+    queryKey: ['linear-issues', currentProjectId],
+    queryFn: () => apiFetch(`/projects/${currentProjectId}/linear/issues`),
     staleTime: 300_000, // 5 minutes — data is cached on the server
     enabled: !!currentProjectId,
   });
 
   const { data: cycleData } = useQuery<CycleData | null>({
-    queryKey: ['linear-cycle-active'],
-    queryFn: () => apiFetch('/linear/cycle/active'),
+    queryKey: ['linear-cycle-active', currentProjectId],
+    queryFn: () => apiFetch(`/projects/${currentProjectId}/linear/cycle`),
     staleTime: 300_000,
     enabled: !!currentProjectId,
   });
 
   // Sync status query
   const { data: syncStatus } = useQuery<{ lastSyncedAt: string | null; syncInProgress: boolean }>({
-    queryKey: ['linear-sync-status'],
-    queryFn: () => apiFetch('/linear/sync/status'),
+    queryKey: ['linear-sync-status', currentProjectId],
+    queryFn: () => apiFetch(`/projects/${currentProjectId}/linear/sync/status`),
     refetchInterval: 30_000,
     enabled: !!currentProjectId,
   });
 
   // Manual sync mutation
   const syncMutation = useMutation({
-    mutationFn: () => apiFetch('/linear/sync', { method: 'POST' }),
+    mutationFn: () => apiFetch(`/projects/${currentProjectId}/linear/sync`, { method: 'POST' }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['linear-issues'] });
-      queryClient.invalidateQueries({ queryKey: ['linear-sync-status'] });
+      queryClient.invalidateQueries({ queryKey: ['linear-issues', currentProjectId] });
+      queryClient.invalidateQueries({ queryKey: ['linear-sync-status', currentProjectId] });
     },
   });
 
@@ -569,10 +569,10 @@ function BoardPage() {
   // Trigger a sync on mount (session start)
   useEffect(() => {
     if (currentProjectId) {
-      apiFetch('/linear/sync', { method: 'POST' })
+      apiFetch(`/projects/${currentProjectId}/linear/sync`, { method: 'POST' })
         .then(() => {
-          queryClient.invalidateQueries({ queryKey: ['linear-issues'] });
-          queryClient.invalidateQueries({ queryKey: ['linear-sync-status'] });
+          queryClient.invalidateQueries({ queryKey: ['linear-issues', currentProjectId] });
+          queryClient.invalidateQueries({ queryKey: ['linear-sync-status', currentProjectId] });
         })
         .catch(() => { /* sync failure is non-fatal */ });
     }
