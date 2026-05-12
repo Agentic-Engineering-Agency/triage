@@ -1,21 +1,32 @@
 import { Mastra } from '@mastra/core';
+import { RequestContext } from '@mastra/core/request-context';
 import { registerApiRoute } from '@mastra/core/server';
 import { LibSQLStore } from '@mastra/libsql';
 import { chatRoute } from '@mastra/ai-sdk';
 import { LinearClient } from '@linear/sdk';
 import type { Context } from 'hono';
 
-import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent } from './agents/index';
+import { orchestrator, triageAgent, resolutionReviewer, codeReviewAgent, slackNotificationAgent } from './agents/index';
 import { triageWorkflow } from './workflows/index';
+import { sendSlackMessage } from './tools/slack';
 import { auth } from '../lib/auth';
 import { projectRoutes } from '../lib/project-routes';
 import { webhookRoutes } from '../lib/webhook-routes';
+import { integrationRoutes } from '../lib/integration-routes';
+import { scopedRoutes } from '../lib/scoped-routes';
+import { observabilityRoutes } from '../lib/observability-routes';
 import { config, LINEAR_CONSTANTS, LINEAR_BASE_URL } from '../lib/config';
+import { getMemoryInitializationContext } from '../lib/memory-context-init';
+import { syncLinearIssues, getCachedIssues, getLastSyncedAt, isSyncInProgress, initLinearSync } from '../lib/linear-sync';
 import { createClient } from '@libsql/client';
 import { getLinearIssueComments, updateLinearIssue } from './tools/linear';
 import { findGitHubEvidenceForIssueTool } from './tools/github';
 import { sendTicketNotification, sendResolutionNotification } from './tools/resend';
 import { sendSlackTicketNotification, sendSlackResolutionNotification } from './tools/slack';
+import { logUsage } from '../lib/usage-logger';
+import { verifyLinearSignature } from '../lib/verify-linear-signature';
+import { getWebhookSecret, LINEAR_PROVIDER } from '../lib/webhook-secrets';
+import { getUserIdFromRequest } from '../lib/auth-helpers';
 
 // Paranoid anchored regex for parsing a repository URL. Bounded lengths,
 // single-pass, no catastrophic backtracking.
@@ -38,6 +49,7 @@ export const mastra = new Mastra({
     'triage-agent': triageAgent,
     'resolution-reviewer': resolutionReviewer,
     'code-review-agent': codeReviewAgent,
+    'slack-notification-agent': slackNotificationAgent,
   },
   workflows: {
     'triage-workflow': triageWorkflow,
@@ -47,8 +59,58 @@ export const mastra = new Mastra({
     url: process.env.LIBSQL_URL || 'http://libsql:8080',
   }),
   server: {
+    middleware: [
+      // Hoist the active projectId from the incoming request into requestContext
+      // so agents, tools, and workflows can read it via
+      // `requestContext.get('projectId')` without threading it through every
+      // call site. The frontend sends it as the `x-project-id` header on
+      // DefaultChatTransport; we also accept `x-project-id` from any other
+      // client (scripts, tests) that wants to scope a request.
+      async (c, next) => {
+        const projectId = c.req.header('x-project-id');
+        if (projectId) {
+          const requestContext = c.get('requestContext');
+          requestContext?.set('projectId', projectId);
+        }
+        await next();
+      },
+    ],
     apiRoutes: [
-      chatRoute({ path: '/chat', agent: 'orchestrator', sendReasoning: true, defaultOptions: { savePerStep: true } }),
+      // Track per-call llm usage for the orchestrator. Mastra calls onFinish
+      // once per stream completion with the AI SDK event (usage, response,
+      // runId). We intentionally skip threadId/projectId here because the
+      // chatRoute helper doesn't surface request-body context inside onFinish
+      // — populating those would require replacing chatRoute with a custom
+      // handler. Aggregations by model/agent still work without them.
+      chatRoute({
+        path: '/chat',
+        agent: 'orchestrator',
+        sendReasoning: true,
+        defaultOptions: {
+          savePerStep: true,
+          onFinish: (async (event: Record<string, unknown>) => {
+            try {
+              const usage = (event.usage ?? {}) as Record<string, unknown>;
+              const response = (event.response ?? {}) as Record<string, unknown>;
+              // AI SDK v4 uses promptTokens/completionTokens; v5 uses
+              // inputTokens/outputTokens. Read both, prefer the v5 shape.
+              const inputTokens = Number((usage.inputTokens as number | undefined) ?? (usage.promptTokens as number | undefined) ?? 0);
+              const outputTokens = Number((usage.outputTokens as number | undefined) ?? (usage.completionTokens as number | undefined) ?? 0);
+              const model = (response.modelId as string | undefined)
+                ?? ((event.model as Record<string, unknown> | undefined)?.modelId as string | undefined)
+                ?? 'unknown';
+              await logUsage({
+                agentId: 'orchestrator',
+                model,
+                inputTokens,
+                outputTokens,
+              });
+            } catch (err) {
+              console.error('[chat/onFinish] usage logging failed:', err instanceof Error ? err.message : err);
+            }
+          }) as never,
+        },
+      }),
       registerApiRoute('/health', {
         method: 'GET',
         handler: async (c) => c.json({ status: 'ok', service: 'triage-runtime' }),
@@ -60,7 +122,8 @@ export const mastra = new Mastra({
         },
       }),
 
-      // GET /api/linear/issues — fetch and group by state
+      // GET /api/linear/issues — serve from local cache (synced from Linear API)
+      // Falls back to a live sync if cache is empty
       {
         path: '/api/linear/issues',
         method: 'GET' as const,
@@ -70,38 +133,13 @@ export const mastra = new Mastra({
               return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
             }
 
-            const issues = await linearClient.issues({
-              filter: { team: { id: { eq: LINEAR_CONSTANTS.TEAM_ID } } },
-              first: 50,
-            });
+            // Try reading from cache first
+            let grouped = await getCachedIssues();
 
-            const grouped: Record<string, Array<Record<string, unknown>>> = {};
-            for (const issue of issues.nodes) {
-              const state = await issue.state;
-              const stateName = state?.name ?? 'Unknown';
-              if (!grouped[stateName]) grouped[stateName] = [];
-
-              const assigneeNode = await issue.assignee;
-              const labelsConnection = await issue.labels();
-              let projectName: string | null = null;
-              try {
-                const proj = await issue.project;
-                if (proj) projectName = proj.name;
-              } catch { /* project may not exist */ }
-
-              grouped[stateName].push({
-                id: issue.id,
-                identifier: issue.identifier,
-                title: issue.title,
-                priority: issue.priority,
-                estimate: issue.estimate ?? null,
-                project: projectName,
-                url: issue.url,
-                createdAt: issue.createdAt?.toISOString?.() ?? String(issue.createdAt),
-                updatedAt: issue.updatedAt?.toISOString?.() ?? String(issue.updatedAt),
-                assignee: assigneeNode ? { id: assigneeNode.id, name: assigneeNode.name } : null,
-                labels: labelsConnection.nodes.map((l: { id: string; name: string; color: string }) => ({ id: l.id, name: l.name, color: l.color })),
-              });
+            // If cache is empty, trigger a sync and wait for it
+            if (!grouped) {
+              console.log('[api/linear/issues] Cache empty, triggering sync...');
+              grouped = await syncLinearIssues();
             }
 
             return c.json({ success: true, data: grouped });
@@ -109,6 +147,48 @@ export const mastra = new Mastra({
             const message = error instanceof Error ? error.message : String(error);
             return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
           }
+        },
+      },
+
+      // POST /api/linear/sync — trigger a manual sync from Linear API
+      {
+        path: '/api/linear/sync',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            if (!linearClient) {
+              return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
+            }
+
+            const grouped = await syncLinearIssues();
+            const totalIssues = Object.values(grouped).flat().length;
+
+            return c.json({
+              success: true,
+              data: {
+                issueCount: totalIssues,
+                syncedAt: getLastSyncedAt()?.toISOString() ?? null,
+              },
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
+          }
+        },
+      },
+
+      // GET /api/linear/sync/status — check when data was last synced
+      {
+        path: '/api/linear/sync/status',
+        method: 'GET' as const,
+        handler: async (c: Context) => {
+          return c.json({
+            success: true,
+            data: {
+              lastSyncedAt: getLastSyncedAt()?.toISOString() ?? null,
+              syncInProgress: isSyncInProgress(),
+            },
+          });
         },
       },
 
@@ -151,6 +231,21 @@ export const mastra = new Mastra({
         },
       },
 
+      // GET /api/config/status — check configuration status
+      {
+        path: '/api/config/status',
+        method: 'GET' as const,
+        handler: async (c: Context) => {
+          return c.json({
+            success: true,
+            data: {
+              linearConfigured: !!config.LINEAR_API_KEY,
+              openrouterConfigured: !!process.env.OPENROUTER_API_KEY,
+            },
+          });
+        },
+      },
+
       // GET /api/linear/members — list team members
       {
         path: '/api/linear/members',
@@ -180,6 +275,87 @@ export const mastra = new Mastra({
         },
       },
 
+      // POST /api/wiki/generate — start wiki generation via wiki-rag pipeline
+      {
+        path: '/api/wiki/generate',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            const body = await c.req.json() as { repoUrl?: string };
+            if (!body.repoUrl) {
+              return c.json({ success: false, error: { code: 'MISSING_REPO_URL', message: 'repoUrl is required' } }, 400);
+            }
+
+            const { generateWiki } = await import('../lib/wiki-rag');
+            const crypto = await import('crypto');
+
+            const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+            const projectId = crypto.randomUUID();
+            const now = Date.now();
+
+            // Create project record
+            await db.execute({
+              sql: `INSERT INTO projects (id, name, repository_url, branch, status, created_at, updated_at) VALUES (?, ?, ?, 'main', 'processing', ?, ?)`,
+              args: [projectId, body.repoUrl.split('/').pop() || 'repo', body.repoUrl, now, now],
+            });
+
+            console.log(`[wiki/generate] Starting wiki generation for: ${body.repoUrl} (project: ${projectId})`);
+
+            // Run in background (non-blocking)
+            generateWiki(projectId, body.repoUrl).catch((err: Error) => {
+              console.error(`[wiki/generate] Pipeline error: ${err.message}`);
+            });
+
+            return c.json({ success: true, data: { status: 'processing', repoUrl: body.repoUrl, projectId } });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return c.json({ success: false, error: { code: 'WIKI_ERROR', message } }, 500);
+          }
+        },
+      },
+
+      // GET /api/wiki/status — wiki generation status (reads from projects table + counts from wiki_* tables)
+      {
+        path: '/api/wiki/status',
+        method: 'GET' as const,
+        handler: async (c: Context) => {
+          try {
+            const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+
+            // Get the latest project
+            const projectResult = await db.execute('SELECT id, status, error FROM projects ORDER BY created_at DESC LIMIT 1');
+            const project = projectResult.rows[0];
+            if (!project) {
+              return c.json({ success: true, data: { total: 0, processed: 0, done: true, status: 'idle' } });
+            }
+
+            // Count actual documents and chunks from the tables
+            const docsResult = await db.execute('SELECT COUNT(*) as count FROM wiki_documents WHERE project_id = ?', [project.id as string]);
+            const chunksResult = await db.execute('SELECT COUNT(*) as count FROM wiki_chunks WHERE document_id IN (SELECT id FROM wiki_documents WHERE project_id = ?)', [project.id as string]);
+
+            const docCount = Number(docsResult.rows[0]?.count ?? 0);
+            const chunkCount = Number(chunksResult.rows[0]?.count ?? 0);
+            const done = project.status === 'ready' || project.status === 'error';
+
+            return c.json({
+              success: true,
+              data: {
+                total: docCount + chunkCount,
+                processed: chunkCount, // chunks are the actual embeddings created
+                done,
+                status: project.status,
+                error: project.error || undefined,
+                documents: docCount,
+                chunks: chunkCount,
+              },
+            });
+          } catch (err) {
+            console.error('[wiki/status] Error:', err instanceof Error ? err.message : 'unknown');
+            return c.json({ success: true, data: { total: 0, processed: 0, done: false, status: 'error' } });
+          }
+        },
+      },
+
       // POST /api/linear/webhook/setup — register the Linear webhook for this deployment
       {
         path: '/api/linear/webhook/setup',
@@ -200,7 +376,15 @@ export const mastra = new Mastra({
               enabled: true,
             });
             const webhook = await result.webhook;
-            return c.json({ success: true, data: { id: webhook?.id, url: webhook?.url, enabled: webhook?.enabled } });
+            // Linear returns the signing secret only on creation — persist it
+            // immediately so /api/webhooks/linear can verify incoming payloads.
+            if (webhook?.secret) {
+              const { setWebhookSecret, LINEAR_PROVIDER } = await import('../lib/webhook-secrets');
+              await setWebhookSecret(LINEAR_PROVIDER, webhook.secret, webhook.id ?? null);
+            } else {
+              console.warn('[webhook/setup] Linear response missing secret — signature verification will reject all incoming webhooks');
+            }
+            return c.json({ success: true, data: { id: webhook?.id, url: webhook?.url, enabled: webhook?.enabled, secretStored: Boolean(webhook?.secret) } });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
@@ -209,14 +393,37 @@ export const mastra = new Mastra({
       },
 
       // POST /api/webhooks/linear — resume suspended workflow when issue moves to Done
+      // Also handles In Review evidence checks from main
       {
         path: '/api/webhooks/linear',
         method: 'POST' as const,
         createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
           return async (c: Context) => {
             try {
-              const payload = await c.req.json() as Record<string, unknown>;
-              console.log('[webhook/linear] Received:', JSON.stringify(payload).slice(0, 500));
+              // ── Signature verification ──────────────────────────────────
+              // Fail closed: reject unsigned or unverifiable webhooks before
+              // parsing JSON, so a forged POST can't trigger workflow resume.
+              const secret = await getWebhookSecret(LINEAR_PROVIDER);
+              if (!secret) {
+                console.warn('[webhook/linear] No secret configured — rejecting. Call POST /api/linear/webhook/setup first.');
+                return c.json(
+                  { success: false, error: { code: 'SECRET_NOT_CONFIGURED', message: 'Webhook signing secret not registered' } },
+                  503,
+                );
+              }
+              const rawBody = Buffer.from(await c.req.raw.arrayBuffer());
+              const signature = c.req.header('linear-signature') ?? null;
+              const timestampHeader = c.req.header('linear-timestamp') ?? null;
+              const verified = verifyLinearSignature<Record<string, unknown>>(secret, rawBody, signature, timestampHeader);
+              if (!verified.ok) {
+                console.warn('[webhook/linear] Signature verification failed:', verified.reason);
+                return c.json(
+                  { success: false, error: { code: 'INVALID_SIGNATURE', message: verified.reason } },
+                  401,
+                );
+              }
+              const payload = verified.payload;
+              console.log('[webhook/linear] Received (verified):', JSON.stringify(payload).slice(0, 500));
 
               const action = payload.action as string;
               const type = payload.type as string;
@@ -297,10 +504,12 @@ export const mastra = new Mastra({
                     // No evidence — move back to In Progress and nag the assignee.
                     console.log(`[webhook/linear] No evidence for ${issueId} — reverting to In Progress`);
 
-                    const revertResult = await updateLinearIssue.execute?.(
-                      { issueId, stateId: LINEAR_CONSTANTS.STATES.IN_PROGRESS } as never,
+                    const { resolveStateId } = await import('../mastra/tools/linear-state-resolver');
+                    const inProgressId = await resolveStateId('IN PROGRESS', config.LINEAR_API_KEY);
+                    const revertResult = inProgressId ? await updateLinearIssue.execute?.(
+                      { issueId, stateId: inProgressId } as never,
                       {} as never,
-                    );
+                    ) : null;
                     const revertOk = !!revertResult
                       && typeof revertResult === 'object'
                       && 'success' in revertResult
@@ -387,10 +596,12 @@ export const mastra = new Mastra({
                   // Evidence found — advance to Done and notify reporter.
                   console.log(`[webhook/linear] Evidence found for ${issueId} — marking Done`);
 
-                  const advanceResult = await updateLinearIssue.execute?.(
-                    { issueId, stateId: LINEAR_CONSTANTS.STATES.DONE } as never,
+                  const { resolveStateId: resolveDoneId } = await import('../mastra/tools/linear-state-resolver');
+                  const doneId = await resolveDoneId('DONE', config.LINEAR_API_KEY);
+                  const advanceResult = doneId ? await updateLinearIssue.execute?.(
+                    { issueId, stateId: doneId } as never,
                     {} as never,
-                  );
+                  ) : null;
                   const advanceOk = !!advanceResult
                     && typeof advanceResult === 'object'
                     && 'success' in advanceResult
@@ -514,9 +725,50 @@ export const mastra = new Mastra({
               const workflow = m.getWorkflow('triage-workflow');
               const workflowRun = await workflow.createRun({ runId: matchedRunId });
 
+              // Resume in background — after completion, save resolution message to the chat thread
               workflowRun.resume({
                 step: 'suspend',
                 resumeData: { newStatus: issueState.name ?? 'Done', updatedAt },
+              }).then(async () => {
+                console.log(`[webhook/linear] Workflow resumed and completed for run ${matchedRunId}`);
+                // Look up the threadId from workflow_runs table
+                const dbClient = createClient({
+                  url: process.env.LIBSQL_URL || 'http://libsql:8080',
+                });
+                const row = await dbClient.execute({
+                  sql: `SELECT thread_id, issue_url FROM workflow_runs WHERE run_id = ?`,
+                  args: [matchedRunId],
+                });
+                const threadId = row.rows[0]?.thread_id as string | undefined;
+                const issueUrl = (row.rows[0]?.issue_url as string) || '';
+                if (threadId) {
+                  const viewLink = issueUrl ? ` — [View in Linear](${issueUrl})` : '';
+                  const resolutionMsg = `\u2705 Issue resolved! The assignee marked it as "${issueState.name ?? 'Done'}". Resolution notifications have been sent. Check your email for details.${viewLink}`;
+                  // Save to the conversation thread via Mastra v1.4+ memory API
+                  const storage = m.getStorage() as unknown as { stores?: { memory?: { saveMessages: (args: { messages: Array<Record<string, unknown>> }) => Promise<unknown> } } };
+                  if (storage?.stores?.memory?.saveMessages) {
+                    // Look up resourceId from the thread's existing messages
+                    const listStore = storage.stores.memory as unknown as { listMessages: (args: { threadId: string; perPage?: number | false }) => Promise<{ messages: Array<{ resourceId?: string }> }> };
+                    const existing = await listStore.listMessages({ threadId, perPage: 1 }).catch(() => ({ messages: [] }));
+                    const resourceId = existing.messages[0]?.resourceId ?? 'anonymous';
+                    await storage.stores!.memory!.saveMessages({
+                      messages: [{
+                        id: `resolution-${Date.now()}`,
+                        threadId,
+                        resourceId,
+                        role: 'assistant',
+                        createdAt: new Date(),
+                        content: { format: 2, parts: [{ type: 'text', text: resolutionMsg }] },
+                      }],
+                    });
+                  }
+                  // Update run status
+                  await dbClient.execute({
+                    sql: `UPDATE workflow_runs SET status = 'completed' WHERE run_id = ?`,
+                    args: [matchedRunId],
+                  });
+                  console.log(`[webhook/linear] Resolution message saved to thread ${threadId}`);
+                }
               }).catch((err: Error) => {
                 console.error('[webhook/linear] Resume error:', err.message);
               });
@@ -554,9 +806,546 @@ export const mastra = new Mastra({
         },
       },
 
-      // Project management and simple webhook routes
+      // POST /api/workflows/triage-workflow/stream — run workflow with SSE progress streaming
+      {
+        path: '/api/workflows/triage-workflow/stream',
+        method: 'POST' as const,
+        createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
+          return async (c: Context) => {
+            // SSE headers
+            c.header('Content-Type', 'text/event-stream');
+            c.header('Cache-Control', 'no-cache');
+            c.header('Connection', 'keep-alive');
+
+            const body = await c.req.json() as Record<string, unknown>;
+            const threadId = body.threadId as string | undefined;
+
+            // Helper to format an SSE message
+            const sseMessage = (data: Record<string, unknown>) =>
+              `data: ${JSON.stringify(data)}\n\n`;
+
+            return c.body(
+              new ReadableStream({
+                async start(controller) {
+                  const encoder = new TextEncoder();
+                  const send = (data: Record<string, unknown>) => {
+                    try { controller.enqueue(encoder.encode(sseMessage(data))); } catch { /* stream closed */ }
+                  };
+
+                  try {
+                    const workflow = m.getWorkflow('triage-workflow');
+                    const run = await workflow.createRun();
+
+                    // Save runId → threadId mapping for webhook resolution notifications
+                    if (threadId) {
+                      const dbClient = createClient({
+                        url: process.env.LIBSQL_URL || 'http://libsql:8080',
+                      });
+                      await dbClient.execute({
+                        sql: `INSERT OR REPLACE INTO workflow_runs (id, run_id, thread_id, status, created_at) VALUES (?, ?, ?, 'running', ?)`,
+                        args: [run.runId, run.runId, threadId, Date.now()],
+                      }).catch((err: Error) => console.error('[workflow/stream] Failed to save run mapping:', err.message));
+                    }
+
+                    send({ step: 'intake', status: 'running', message: 'Analyzing incident...' });
+
+                    // Per-step labels for user-facing progress messages
+                    const stepLabels: Record<string, string> = {
+                      intake: 'Analyzing incident...',
+                      triage: 'Classifying severity and root cause...',
+                      dedup: 'Checking for duplicates...',
+                      ticket: 'Creating Linear ticket...',
+                      notify: 'Sending notifications...',
+                      suspend: 'Waiting for assignee to resolve the issue...',
+                    };
+
+                    // Use Mastra's native per-step streaming API. `run.stream()` returns
+                    // a WorkflowRunOutput whose `fullStream` emits WorkflowStreamEvents
+                    // ('workflow-step-start', 'workflow-step-result',
+                    //  'workflow-step-suspended', 'workflow-paused', 'workflow-finish', ...)
+                    // in real-time as the workflow executes — unlike run.start() which
+                    // only resolves at the very end.
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const streamOutput = (run as any).stream({ inputData: body, closeOnSuspend: true });
+
+                    // Track which step IDs we've already emitted a terminal event for
+                    // (avoids duplicate completions if both step-result and step-suspended
+                    // arrive for the same step).
+                    const emittedSteps = new Set<string>();
+
+                    for await (const event of streamOutput.fullStream as AsyncIterable<{
+                      type: string;
+                      payload?: Record<string, unknown>;
+                    }>) {
+                      const type = event.type;
+                      const payload = event.payload ?? {};
+                      const stepId = payload.id as string | undefined;
+
+                      if (type === 'workflow-step-start' && stepId) {
+                        // Emit a "running" event so the UI can show early "Analyzing" feedback
+                        // for the first steps before they complete.
+                        send({
+                          step: stepId,
+                          status: 'running',
+                          message: stepLabels[stepId] ?? `Running ${stepId}...`,
+                        });
+                        continue;
+                      }
+
+                      if (type === 'workflow-step-result' && stepId) {
+                        const status = payload.status as string | undefined;
+                        const output = payload.output as Record<string, unknown> | undefined;
+
+                        if (status === 'failed') {
+                          const errMsg = typeof payload.error === 'string'
+                            ? payload.error
+                            : (payload.error as { message?: string })?.message ?? `Step ${stepId} failed`;
+                          send({ step: stepId, status: 'error', message: errMsg });
+                          emittedSteps.add(stepId);
+                          continue;
+                        }
+
+                        // Success path
+                        if (emittedSteps.has(stepId)) continue;
+                        emittedSteps.add(stepId);
+
+                        if (stepId === 'ticket' && output) {
+                          send({
+                            step: 'ticket',
+                            status: 'completed',
+                            message: `Issue created: ${output.issueId ?? 'N/A'}`,
+                            data: {
+                              issueId: output.issueId,
+                              issueUrl: output.issueUrl,
+                              wasUpdated: output.wasUpdated,
+                            },
+                          });
+                          // Persist issueId for webhook resolution lookup
+                          if (threadId && output.issueId) {
+                            const dbClient2 = createClient({
+                              url: process.env.LIBSQL_URL || 'http://libsql:8080',
+                            });
+                            dbClient2.execute({
+                              sql: `UPDATE workflow_runs SET issue_id = ?, issue_url = ?, status = 'suspended' WHERE run_id = ?`,
+                              args: [output.issueId as string, (output.issueUrl as string) ?? '', run.runId],
+                            }).catch((err: Error) => console.error('[workflow/stream] Failed to update run mapping:', err.message));
+                          }
+                        } else if (stepId === 'notify' && output) {
+                          send({ step: 'notify', status: 'completed', message: stepLabels.notify, data: output });
+                          if (output.notificationSent) {
+                            // notifiedEmail is the actual recipient (assignee, with reporter fallback).
+                            const destEmail = (output.notifiedEmail as string | undefined)
+                              ?? (output.reporterEmail as string | undefined);
+                            if (destEmail) {
+                              send({ step: 'notify-email', status: 'completed', message: `Email sent to ${destEmail}` });
+                            }
+                            send({ step: 'notify-slack', status: 'completed', message: 'Slack notification sent' });
+                          }
+                        } else {
+                          send({
+                            step: stepId,
+                            status: 'completed',
+                            message: stepLabels[stepId] ?? `Step ${stepId} completed`,
+                            data: output,
+                          });
+                        }
+                        continue;
+                      }
+
+                      if (type === 'workflow-step-suspended' && stepId) {
+                        // The `suspend` step is what the frontend keys on to render
+                        // "Waiting for assignee..." with the Linear link. Pull issueId
+                        // and issueUrl from the suspend step's input/output since those
+                        // are the canonical source at suspension time.
+                        const output = (payload.output as Record<string, unknown> | undefined) ?? {};
+                        const suspendInput = (payload.payload as Record<string, unknown> | undefined) ?? {};
+                        const issueId = (output.issueId as string | undefined) ?? (suspendInput.issueId as string | undefined);
+                        const issueUrl = (output.issueUrl as string | undefined) ?? (suspendInput.issueUrl as string | undefined);
+
+                        if (emittedSteps.has(stepId)) continue;
+                        emittedSteps.add(stepId);
+
+                        send({
+                          step: stepId === 'suspend' ? 'suspend' : stepId,
+                          status: 'suspended',
+                          message: stepLabels[stepId] ?? 'Workflow suspended',
+                          data: { issueId, issueUrl },
+                        });
+                        continue;
+                      }
+
+                      if (type === 'workflow-finish' || type === 'workflow-paused' || type === 'workflow-canceled') {
+                        // Terminal signals — the outer loop will exit when fullStream closes.
+                        continue;
+                      }
+                    }
+
+                    send({ step: 'done', status: 'done', message: 'Workflow stream complete' });
+                  } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    console.error('[workflow/stream] Error:', message);
+                    send({ step: 'error', status: 'error', message });
+                  } finally {
+                    try { controller.close(); } catch { /* already closed */ }
+                  }
+                },
+              }),
+            );
+          };
+        },
+      },
+
+      // POST /api/memory/init/:threadId — initialize thread memory with LINEAR_CONSTANTS context
+      {
+        path: '/api/memory/init/:threadId',
+        method: 'POST' as const,
+        createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
+          return async (c: Context) => {
+            try {
+              const threadId = c.req.param('threadId');
+
+              if (!threadId) {
+                return c.json({ success: false, error: { code: 'MISSING_THREAD_ID', message: 'threadId is required' } }, 400);
+              }
+
+              const storage = m.getStorage() as unknown as { stores?: { memory?: { saveMessages: (args: { messages: Array<Record<string, unknown>> }) => Promise<unknown> } } };
+              if (!storage?.stores?.memory?.saveMessages) {
+                console.error('[memory] Messages store not available');
+                return c.json({ success: false, error: { code: 'NO_STORAGE', message: 'Memory storage not available' } }, 500);
+              }
+
+              const contextMessage = getMemoryInitializationContext();
+
+              // Mastra memory requires a resourceId — fall back to 'anonymous'
+              // when there's no authenticated session (scripts, tests).
+              const resourceId = (await getUserIdFromRequest(c)) ?? 'anonymous';
+
+              await storage.stores!.memory!.saveMessages({
+                messages: [{
+                  id: `ctx-${threadId}`,
+                  role: 'system',
+                  threadId,
+                  resourceId,
+                  createdAt: new Date(),
+                  content: { format: 2, parts: [{ type: 'text', text: contextMessage }] },
+                }],
+              });
+
+              console.log(`[memory/init] Initialized context for thread ${threadId}`);
+
+              return c.json({ success: true, data: { initialized: true, threadId } });
+            } catch (error) {
+              console.error('[memory/init] Error:', error instanceof Error ? error.message : String(error));
+              return c.json({ success: false, error: { code: 'INIT_ERROR', message: 'Failed to initialize memory' } }, 500);
+            }
+          };
+        },
+      },
+
+      // GET /memory/threads/:threadId/messages — fetch conversation history
+      {
+        path: '/memory/threads/:threadId/messages',
+        method: 'GET' as const,
+        createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
+          return async (c: Context) => {
+            try {
+              const threadId = c.req.param('threadId');
+
+              if (!threadId) {
+                return c.json({ success: false, error: { code: 'MISSING_THREAD_ID', message: 'threadId is required' } }, 400);
+              }
+
+              // Prefer the agent's own Memory (which the chat route uses to save messages).
+              // The agent's Memory uses a dedicated LibSQLStore, so reading via its
+              // recall() guarantees we read from the same store that persisted the turn.
+              // Falls back to Mastra top-level storage if the agent or its memory is unavailable.
+              const agentId = c.req.query('agentId') || 'orchestrator';
+              const agent = m.getAgentById(agentId);
+              const agentMemory = agent ? await agent.getMemory?.() : null;
+
+              if (agentMemory?.recall) {
+                try {
+                  const result = await agentMemory.recall({ threadId, perPage: false });
+                  const msgs = Array.isArray(result?.messages) ? result.messages : [];
+                  console.log(`[memory/messages] thread=${threadId} agent=${agentId} source=agentMemory count=${msgs.length}`);
+                  return c.json({ messages: msgs });
+                } catch (e) {
+                  console.warn('[memory/messages] agentMemory.recall failed, falling back to storage:', e instanceof Error ? e.message : String(e));
+                }
+              }
+
+              const storage = m.getStorage() as unknown as { stores?: { memory?: { listMessages: (args: { threadId: string; perPage?: number | false }) => Promise<{ messages: Array<Record<string, unknown>> }> } } };
+              if (!storage?.stores?.memory?.listMessages) {
+                console.error('[memory] Messages store not available');
+                return c.json({ messages: [] });
+              }
+
+              const result = await storage.stores.memory.listMessages({ threadId, perPage: false });
+              console.log(`[memory/messages] thread=${threadId} agent=${agentId} source=storage count=${result.messages?.length ?? 0}`);
+              return c.json({ messages: result.messages || [] });
+            } catch (error) {
+              console.error('[memory] Error fetching messages:', error instanceof Error ? error.message : String(error));
+              return c.json({ messages: [] });
+            }
+          };
+        },
+      },
+
+      // POST /api/memory/save-message — persist an arbitrary message to a conversation thread
+      {
+        path: '/api/memory/save-message',
+        method: 'POST' as const,
+        createHandler: async ({ mastra: m }: { mastra: Mastra }) => {
+          return async (c: Context) => {
+            try {
+              const body = await c.req.json() as {
+                threadId?: string;
+                role?: string;
+                content?: string;
+                parts?: Array<Record<string, unknown>>;
+              };
+
+              if (!body.threadId || (!body.content && !body.parts)) {
+                return c.json({ success: false, error: { code: 'MISSING_FIELDS', message: 'threadId and (content or parts) are required' } }, 400);
+              }
+
+              const storage = m.getStorage() as unknown as { stores?: { memory?: { saveMessages: (args: { messages: Array<Record<string, unknown>> }) => Promise<unknown> } } };
+              if (!storage?.stores?.memory?.saveMessages) {
+                return c.json({ success: false, error: { code: 'NO_STORAGE', message: 'Memory storage not available' } }, 500);
+              }
+
+              const resourceId = (await getUserIdFromRequest(c)) ?? 'anonymous';
+
+              // Caller can pass either `content` (plain text) or `parts` (rich:
+              // tool-invocation, reasoning, file, etc.). Always store in the
+              // Mastra v2 shape: { format: 2, parts: [...] }.
+              const parts = body.parts && body.parts.length > 0
+                ? body.parts
+                : [{ type: 'text', text: body.content ?? '' }];
+
+              await storage.stores!.memory!.saveMessages({
+                messages: [{
+                  id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  resourceId,
+                  role: body.role ?? 'assistant',
+                  threadId: body.threadId,
+                  createdAt: new Date(),
+                  content: { format: 2, parts },
+                }],
+              });
+
+              return c.json({ success: true, data: { saved: true } });
+            } catch (error) {
+              console.error('[memory/save-message] Error:', error instanceof Error ? error.message : String(error));
+              return c.json({ success: false, error: { code: 'SAVE_ERROR', message: 'Failed to save message' } }, 500);
+            }
+          };
+        },
+      },
+
+      // POST /api/memory/card-state — persist triage card confirmed/error state
+      {
+        path: '/api/memory/card-state',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            const body = await c.req.json() as {
+              threadId?: string;
+              messageId?: string;
+              toolIndex?: number;
+              state?: string;
+              linearUrl?: string;
+            };
+
+            if (!body.threadId || !body.messageId || body.toolIndex === undefined || !body.state) {
+              return c.json({ success: false, error: { code: 'MISSING_FIELDS', message: 'threadId, messageId, toolIndex, and state are required' } }, 400);
+            }
+
+            const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+
+            // Ensure card_states table exists (idempotent)
+            await db.execute(`CREATE TABLE IF NOT EXISTS card_states (
+              id TEXT PRIMARY KEY,
+              thread_id TEXT NOT NULL,
+              message_id TEXT NOT NULL,
+              tool_index INTEGER NOT NULL,
+              state TEXT NOT NULL DEFAULT 'confirmed',
+              linear_url TEXT,
+              created_at INTEGER NOT NULL
+            )`);
+
+            const id = `${body.threadId}-${body.messageId}-${body.toolIndex}`;
+            await db.execute({
+              sql: `INSERT OR REPLACE INTO card_states (id, thread_id, message_id, tool_index, state, linear_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              args: [id, body.threadId, body.messageId, body.toolIndex, body.state, body.linearUrl ?? null, Date.now()],
+            });
+
+            console.log(`[memory/card-state] Saved state=${body.state} for ${id}`);
+            return c.json({ success: true, data: { saved: true } });
+          } catch (error) {
+            console.error('[memory/card-state] Error:', error instanceof Error ? error.message : String(error));
+            return c.json({ success: false, error: { code: 'CARD_STATE_ERROR', message: 'Failed to save card state' } }, 500);
+          }
+        },
+      },
+
+      // GET /api/memory/card-states/:threadId — fetch persisted card states for a thread
+      {
+        path: '/api/memory/card-states/:threadId',
+        method: 'GET' as const,
+        handler: async (c: Context) => {
+          try {
+            const threadId = c.req.param('threadId');
+            if (!threadId) {
+              return c.json({ success: true, data: { cardStates: {} } });
+            }
+
+            const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+
+            // Ensure table exists (in case it hasn't been created yet)
+            await db.execute(`CREATE TABLE IF NOT EXISTS card_states (
+              id TEXT PRIMARY KEY,
+              thread_id TEXT NOT NULL,
+              message_id TEXT NOT NULL,
+              tool_index INTEGER NOT NULL,
+              state TEXT NOT NULL DEFAULT 'confirmed',
+              linear_url TEXT,
+              created_at INTEGER NOT NULL
+            )`);
+
+            const result = await db.execute({
+              sql: 'SELECT message_id, tool_index, state, linear_url FROM card_states WHERE thread_id = ?',
+              args: [threadId],
+            });
+
+            const cardStates: Record<string, { state: string; linearUrl?: string }> = {};
+            for (const row of result.rows) {
+              const key = `${row.message_id}-${row.tool_index}`;
+              cardStates[key] = {
+                state: row.state as string,
+                ...(row.linear_url ? { linearUrl: row.linear_url as string } : {}),
+              };
+            }
+
+            return c.json({ success: true, data: { cardStates } });
+          } catch (error) {
+            console.error('[memory/card-states] Error:', error instanceof Error ? error.message : String(error));
+            return c.json({ success: true, data: { cardStates: {} } });
+          }
+        },
+      },
+
+      // POST /api/test/email — test Resend email sending
+      {
+        path: '/api/test/email',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            const body = await c.req.json() as { to?: string; subject?: string };
+            const to = body.to || 'ricardo.soberanisr@gmail.com';
+            const result = await sendTicketNotification.execute?.(
+              {
+                to,
+                ticketTitle: body.subject || 'Triage email test',
+                severity: 'Low',
+                priority: 3,
+                summary: 'This is a direct test of the Resend email tool from /api/test/email.',
+                linearUrl: 'https://linear.app/agentic-engineering-agency',
+                assigneeName: 'Test Recipient',
+                linearIssueId: `test-${Date.now()}`,
+              } as never,
+              {} as never,
+            );
+            return c.json({ success: true, to, result });
+          } catch (error) {
+            console.error('[test/email] Error:', error);
+            return c.json({ success: false, error: error instanceof Error ? error.message : String(error) }, 500);
+          }
+        },
+      },
+
+      // POST /api/test/slack — test Slack message sending
+      {
+        path: '/api/test/slack',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            const body = await c.req.json();
+            const message = (body?.message as string) || '✅ Test message from triage-runtime';
+
+            // Call sendSlackMessage using the correct input format
+            const result = await sendSlackMessage.execute({
+              text: message,
+            }, {});
+
+            return c.json({
+              success: true,
+              message: 'Slack message sent',
+              result,
+            });
+          } catch (error) {
+            console.error('[test/slack] Error:', error);
+            return c.json({
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+            }, 500);
+          }
+        },
+      },
+
+      // POST /api/test/slack-agent — test Slack notification agent
+      {
+        path: '/api/test/slack-agent',
+        method: 'POST' as const,
+        handler: async (c: Context) => {
+          try {
+            const body = await c.req.json();
+            const ticketData = body?.ticketData || {
+              ticketTitle: 'Test Ticket — Slack Notification Agent',
+              severity: 'High',
+              summary: 'This is a test notification from the Slack notification agent.',
+              linearUrl: 'https://linear.app/test',
+              assigneeName: 'Ricardo',
+              linearIssueId: 'TEST-001',
+            };
+
+            // Thread projectId through requestContext so the agent's dynamic
+            // model resolver can pick up per-tenant keys. Falls back to env
+            // when no projectId is provided — matches the workflow behaviour.
+            const projectId = typeof body?.projectId === 'string' ? body.projectId : undefined;
+            const requestContext = new RequestContext();
+            if (projectId) requestContext.set('projectId', projectId);
+
+            // Run the agent with ticket data
+            const result = await slackNotificationAgent.generate(
+              `Format and send this ticket notification to Slack: ${JSON.stringify(ticketData)}`,
+              { requestContext },
+            );
+
+            return c.json({
+              success: true,
+              message: 'Slack notification agent executed',
+              result: result.text,
+            });
+          } catch (error) {
+            console.error('[test/slack-agent] Error:', error);
+            return c.json({
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+            }, 500);
+          }
+        },
+      },
+
+      // Project management, integrations, webhook, and scoped routes
       ...projectRoutes,
+      ...integrationRoutes,
+      ...scopedRoutes,
       ...webhookRoutes,
+      ...observabilityRoutes,
     ],
   },
 });
+
+// Initialize Linear sync on startup (non-blocking)
+initLinearSync();

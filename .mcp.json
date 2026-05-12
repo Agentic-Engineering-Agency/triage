@@ -8,6 +8,10 @@
         "@mastra/mcp-docs-server@latest"
       ],
       "env": {}
+    },
+    "linear": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://mcp.linear.app/mcp"]
     }
   }
 }

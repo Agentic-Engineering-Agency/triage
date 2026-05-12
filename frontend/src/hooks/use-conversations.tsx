@@ -70,6 +70,15 @@ export function ConversationProvider({ children }: { children: ReactNode }) {
   const startNewConversation = useCallback(() => {
     const id = newConversationId()
     setActiveThreadId(id)
+
+    // Initialize memory context for this thread
+    // This stores LINEAR_CONSTANTS in memory to avoid repeating in system prompt
+    fetch(`/api/memory/init/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => {
+      // Silent fail — conversation still works without memory initialization
+    })
   }, [setActiveThreadId])
 
   const deleteConversation = useCallback(

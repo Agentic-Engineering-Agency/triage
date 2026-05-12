@@ -1,14 +1,17 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, useNavigate } from "@tanstack/react-router"
 import { useChat } from "@ai-sdk/react"
 import { DefaultChatTransport } from "ai"
 import { useRef, useState, useCallback, useEffect, useMemo } from "react"
-import { Send, Paperclip, X, ZoomIn, FileText, FileCode, File as FileIcon, Brain, ChevronDown } from "lucide-react"
+import { Send, Paperclip, X, ZoomIn, FileText, FileCode, File as FileIcon, Brain, ChevronDown, FolderGit2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { toolComponents, DuplicatePrompt } from "@/components/tool-registry"
 import { TriageCard } from "@/components/triage-card"
 import { getDraft, saveDraft, clearDraft } from "@/lib/chat-draft"
 import { useAuth } from "@/hooks/use-auth"
 import { useConversations } from "@/hooks/use-conversations"
+import { useCurrentProjectId } from "@/components/project-selector"
+import { apiFetch } from "@/lib/api"
+import { getConfig } from "@/lib/config"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -35,16 +38,32 @@ interface Attachment {
 }
 
 function ChatPage() {
-  const { user } = useAuth()
+  const { user, isLoading: authLoading } = useAuth()
+  const [currentProjectId] = useCurrentProjectId()
+  const navigate = useNavigate()
+
   const { activeThreadId, updateTitle, ensureConversation, refreshConversations } = useConversations()
 
   const threadIdRef = useRef(activeThreadId)
   threadIdRef.current = activeThreadId
 
+  const projectIdRef = useRef(currentProjectId)
+  projectIdRef.current = currentProjectId
+
   const transport = useMemo(() => new DefaultChatTransport({
     api: "/chat",
     credentials: "include",
+    // Server middleware reads `x-project-id` and sets it on Mastra's
+    // requestContext so the orchestrator's dynamic instructions + tools
+    // can scope to the active project. Keep it in the body too for
+    // backward compat with any code path that still inspects request JSON.
+    headers: () => {
+      const h: Record<string, string> = {}
+      if (projectIdRef.current) h["x-project-id"] = projectIdRef.current
+      return h
+    },
     body: () => ({
+      projectId: projectIdRef.current,
       memory: {
         thread: threadIdRef.current,
         resource: user?.id ?? "anonymous",
@@ -57,17 +76,37 @@ function ChatPage() {
     id: activeThreadId,
   })
 
-  // Load messages from server when switching threads
+  // Load messages from server when mounting or switching threads.
+  // We intentionally refetch on every mount (not just when activeThreadId
+  // changes) so navigating away (/board) and back restores the conversation
+  // instead of showing an empty chat until the user manually switches.
+  // Streaming protection: skip refetch only while useChat is actively streaming.
   const prevThreadRef = useRef<string | null>(null)
   useEffect(() => {
-    // Skip if we're staying on the same thread (avoids re-fetch during streaming)
-    if (prevThreadRef.current === activeThreadId) return
+    if (prevThreadRef.current === activeThreadId && (status === 'streaming' || status === 'submitted')) return
     prevThreadRef.current = activeThreadId
 
     const controller = new AbortController()
-    fetch(`/api/memory/threads/${activeThreadId}/messages?agentId=orchestrator`, { credentials: "include", signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { messages?: Array<Record<string, unknown>> } | null) => {
+
+    // Fetch messages and persisted card states in parallel
+    const messagesP = fetch(`/memory/threads/${activeThreadId}/messages?agentId=orchestrator`, { credentials: "include", signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null)) as Promise<{ messages?: Array<Record<string, unknown>> } | null>
+
+    const cardStatesP = apiFetch<{ cardStates: Record<string, { state: string; linearUrl?: string }> }>(`/memory/card-states/${activeThreadId}`)
+      .catch(() => ({ cardStates: {} as Record<string, { state: string; linearUrl?: string }> }))
+
+    Promise.all([messagesP, cardStatesP]).then(([data, persistedCards]) => {
+        // Restore persisted card states into React state
+        if (persistedCards.cardStates && Object.keys(persistedCards.cardStates).length > 0) {
+          const restored: Record<string, { state: "submitting" | "confirmed" | "error"; errorMessage?: string }> = {}
+          for (const [key, val] of Object.entries(persistedCards.cardStates)) {
+            restored[key] = { state: val.state as "confirmed" | "error" }
+          }
+          setCardStates(restored)
+        } else {
+          setCardStates({})
+        }
+
         if (!data?.messages?.length) {
           // New thread with no messages — clear any stale UI messages
           setMessages([])
@@ -121,6 +160,7 @@ function ChatPage() {
       })
       .catch(() => { /* thread doesn't exist yet — that's fine */ })
     return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeThreadId, setMessages])
 
   // Auto-title from first user message + refresh thread list after response completes
@@ -306,22 +346,227 @@ function ChatPage() {
   )
 
   // ---- Ticket actions ----
-  // When user clicks "Create Ticket" on the triage card, send a message
-  // to the agent so it creates the Linear issue with full context.
-  const handleCreateTicket = (_triageData: Record<string, unknown>, cardKey: string) => {
-    setCardStates((prev) => ({ ...prev, [cardKey]: { state: "confirmed" } }))
-    sendMessage({ text: "Confirmed. Create the Linear ticket with the details above." })
+  // When user clicks "Create Ticket" on the triage card, stream workflow progress via SSE
+  // into a single WorkflowTimeline component that updates in-place as events arrive.
+  const handleCreateTicket = async (triageData: Record<string, unknown>, cardKey: string) => {
+    const reporterEmail = user?.email
+    if (!reporterEmail) return
+    setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'submitting' } }))
+
+    // Steps accumulated in one assistant message rendered as WorkflowTimeline.
+    type TStep = { step: string; status: 'running' | 'completed' | 'error' | 'suspended'; message?: string; data?: Record<string, unknown> }
+    const timelineMessageId = `workflow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const collectedSteps: TStep[] = []
+    let active = true
+
+    const renderTimeline = () => {
+      const timelinePart = {
+        type: 'tool-workflowTimeline',
+        state: 'output-available',
+        output: { steps: [...collectedSteps], active },
+      }
+      setMessages((prev) => {
+        const arr = prev as unknown as Array<{ id: string; role: string; parts: unknown[]; createdAt?: Date }>
+        const existingIdx = arr.findIndex((m) => m.id === timelineMessageId)
+        if (existingIdx >= 0) {
+          const next = arr.slice()
+          next[existingIdx] = { ...arr[existingIdx], parts: [timelinePart] }
+          return next as any
+        }
+        return [
+          ...arr,
+          { id: timelineMessageId, role: 'assistant', parts: [timelinePart], createdAt: new Date() },
+        ] as any
+      })
+    }
+
+    const addStep = (s: TStep) => {
+      // Replace any 'running' entry for the same stepId instead of duplicating
+      const existingRunningIdx = collectedSteps.findIndex((x) => x.step === s.step && x.status === 'running')
+      if (existingRunningIdx >= 0 && s.status !== 'running') {
+        collectedSteps[existingRunningIdx] = s
+      } else if (!collectedSteps.some((x) => x.step === s.step && x.status === s.status)) {
+        collectedSteps.push(s)
+      }
+      renderTimeline()
+    }
+
+    // Seed with an initial running step so the timeline shows immediately
+    addStep({ step: 'intake', status: 'running', message: 'Analyzing incident' })
+
+    let linearUrl = ''
+
+    try {
+      const config = await getConfig()
+      const response = await fetch(`${config.apiUrl}/workflows/triage-workflow/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          description: triageData.summary ?? '',
+          reporterEmail,
+          repository: 'Agentic-Engineering-Agency/triage',
+          threadId: activeThreadId,
+          assigneeId: triageData.assigneeId,
+          assigneeEmail: triageData.assigneeEmail,
+          assigneeName: triageData.assigneeName,
+          cycleId: triageData.cycleId,
+          dueDate: triageData.dueDate,
+        }),
+      })
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Stream request failed: ${response.status}`)
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const event = JSON.parse(line.slice(6)) as TStep & { step: string }
+
+            // Track ticket metadata for persistence & link rendering
+            if (event.data?.issueUrl) linearUrl = event.data.issueUrl as string
+
+            // Skip the "done" synthetic event — it just marks stream end
+            if (event.step === 'done') continue
+
+            addStep(event)
+          } catch {
+            // Ignore malformed SSE lines
+          }
+        }
+      }
+
+      active = false
+      renderTimeline()
+
+      setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'confirmed' } }))
+
+      // Persist card state so it survives page reload
+      const [messageId, toolIndexStr] = cardKey.split(/-(?=[^-]*$)/)
+      apiFetch('/memory/card-state', {
+        method: 'POST',
+        body: JSON.stringify({
+          threadId: activeThreadId,
+          messageId,
+          toolIndex: Number(toolIndexStr),
+          state: 'confirmed',
+          linearUrl: linearUrl || ((triageData.linearUrl as string) ?? undefined),
+        }),
+      }).catch((err) => console.error('[chat] Failed to persist card state:', err))
+
+      // Persist the WorkflowTimeline tool invocation so reloads reconstruct
+      // the same visual. Stored as a tool-invocation part in the Mastra
+      // message store; the thread-load effect converts it back to tool-*.
+      apiFetch('/memory/save-message', {
+        method: 'POST',
+        body: JSON.stringify({
+          threadId: activeThreadId,
+          role: 'assistant',
+          parts: [
+            {
+              type: 'tool-invocation',
+              toolInvocation: {
+                toolName: 'workflowTimeline',
+                state: 'result',
+                result: { steps: collectedSteps, active: false },
+              },
+            },
+          ],
+        }),
+      }).catch((err) => console.error('[chat] Failed to persist workflow timeline:', err))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to create ticket'
+      active = false
+      addStep({ step: 'error', status: 'error', message })
+      setCardStates((prev) => ({ ...prev, [cardKey]: { state: 'error', errorMessage: message } }))
+    }
   }
 
-  const handleUpdateExisting = (dupData: Record<string, unknown>) => {
-    sendMessage({ text: `Update the existing ticket: ${dupData.existingTicketTitle ?? ""}` })
+  const handleUpdateExisting = async (dupData: Record<string, unknown>) => {
+    const reporterEmail = user?.email
+    if (!reporterEmail) return
+    try {
+      await apiFetch('/workflows/triage-workflow/trigger', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: `Update existing ticket: ${dupData.existingTicketTitle ?? ''}`,
+          reporterEmail,
+          repository: 'Agentic-Engineering-Agency/triage',
+        }),
+      })
+      console.log('[chat] Update existing triggered')
+    } catch (error) {
+      console.error('[chat] Update existing failed:', error)
+    }
   }
 
-  const handleCreateNew = (_dupData: Record<string, unknown>) => {
-    sendMessage({ text: "Ignore the duplicate, create a new ticket with the triage details above." })
+  const handleCreateNew = async (_dupData: Record<string, unknown>) => {
+    const reporterEmail = user?.email
+    if (!reporterEmail) return
+    try {
+      await apiFetch('/workflows/triage-workflow/trigger', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: _dupData.summary ?? '',
+          reporterEmail,
+          repository: 'Agentic-Engineering-Agency/triage',
+        }),
+      })
+      console.log('[chat] Create new triggered')
+    } catch (error) {
+      console.error('[chat] Create new failed:', error)
+    }
   }
 
   const hasMessages = messages.length > 0
+
+  // Guard: don't render chat UI until auth is verified.
+  if (authLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    )
+  }
+
+  // Gate: require a project to be selected.
+  if (!currentProjectId) {
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="max-w-md text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <FolderGit2 className="h-6 w-6" />
+          </div>
+          <h2 className="font-heading text-lg font-semibold mb-2">
+            Select or create a project to start triaging
+          </h2>
+          <p className="text-muted-foreground text-sm mb-4">
+            A project is required before you can use the chat.
+          </p>
+          <button
+            onClick={() => navigate({ to: "/projects" })}
+            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-neu-sm hover:opacity-90 transition-opacity"
+          >
+            <FolderGit2 className="h-4 w-4" />
+            Go to Projects
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-full flex-col">

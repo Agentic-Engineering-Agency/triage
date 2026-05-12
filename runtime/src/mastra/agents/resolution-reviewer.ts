@@ -1,11 +1,7 @@
 import { Agent } from '@mastra/core/agent';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { MODELS } from '../../lib/config';
+import { resolveOpenRouterFromContext } from '../../lib/tenant-openrouter';
 import { queryWikiTool, getLinearIssueTool } from '../tools/index';
-
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
 
 /**
  * Resolution Reviewer — verifies that a deployed fix actually resolves the incident.
@@ -47,7 +43,10 @@ Produce a structured verification result:
 - If the fix touches different files than the original root cause analysis suggested, flag it
 - If you can't determine whether the fix is correct (e.g., no diff info), recommend "monitor"
 - Always explain your reasoning in the analysis field`,
-  model: openrouter(MODELS.mercury),
+  model: async ({ requestContext }) => {
+    const openrouter = await resolveOpenRouterFromContext({ requestContext });
+    return openrouter(MODELS.mercury);
+  },
   tools: {
     queryWikiTool,
     getLinearIssueTool,

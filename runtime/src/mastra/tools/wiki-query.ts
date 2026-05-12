@@ -34,10 +34,18 @@ export const queryWikiTool = createTool({
       .describe('Number of top results to return'),
   }),
   outputSchema: wikiQueryResultSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: { requestContext?: { get: (key: string) => unknown } },
+  ) => {
     const ctx = (input?.context ?? input) as Record<string, unknown>;
     const query = ctx.query as string;
-    const projectId = ctx.projectId as string | undefined;
+    // Fall back to requestContext.projectId when the LLM forgets to pass it —
+    // guarantees per-project scoping in multi-project setups even if the
+    // system prompt's projectId hint gets stripped or ignored.
+    const explicitProjectId = ctx.projectId as string | undefined;
+    const contextProjectId = toolCtx?.requestContext?.get('projectId') as string | undefined;
+    const projectId = explicitProjectId ?? contextProjectId;
     const topK = (ctx.topK as number) || 10;
 
     try {

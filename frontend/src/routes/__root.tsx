@@ -1,20 +1,14 @@
 import { createRootRoute, Link, Navigate, Outlet, useLocation, useNavigate } from "@tanstack/react-router"
 import { TanStackRouterDevtools } from "@tanstack/router-devtools"
-import { MessageSquare, LayoutGrid, Settings, Sun, Moon, FolderGit2, LogOut, Plus, Trash2, Activity } from "lucide-react"
+import { MessageSquare, LayoutGrid, Sun, Moon, FolderGit2, LogOut, Plus, Trash2, Activity, KeyRound } from "lucide-react"
 import { useAuth, signOut } from "@/hooks/use-auth"
 import { useTheme } from "@/components/theme-provider"
 import { ConversationProvider, useConversations } from "@/hooks/use-conversations"
+import { ProjectSelector } from "@/components/project-selector"
 
 export const Route = createRootRoute({
   component: RootLayout,
 })
-
-// Observability URL is configurable at build time via VITE_OBSERVABILITY_URL.
-// Defaults to http://localhost:3000 for local demo/dev (see rationale near the
-// Observability link below).
-const OBSERVABILITY_URL =
-  (import.meta.env.VITE_OBSERVABILITY_URL as string | undefined) ||
-  "http://localhost:3000"
 
 function RootLayout() {
   const { isAuthenticated, isLoading } = useAuth()
@@ -92,6 +86,14 @@ function AuthenticatedLayout() {
         {/* Divider */}
         <div className="mx-4 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
 
+        {/* Project selector */}
+        <div className="pt-3">
+          <ProjectSelector />
+        </div>
+
+        {/* Divider */}
+        <div className="mx-4 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+
         {/* Navigation */}
         <nav className="flex flex-col gap-1.5 p-3 pt-4">
           {/* New Chat button */}
@@ -108,28 +110,13 @@ function AuthenticatedLayout() {
           <NavLink to="/projects" icon={<FolderGit2 className="h-4 w-4" />}>
             Projects
           </NavLink>
-          <NavLink to="/settings" icon={<Settings className="h-4 w-4" />}>
-            Settings
+          <NavLink to="/integrations" icon={<KeyRound className="h-4 w-4" />}>
+            Integrations
           </NavLink>
 
-          {/*
-            Observability points at localhost:3000 for local demo/dev use.
-            The Cloudflare tunnel URL works for OpenRouter broadcast
-            ingestion but breaks Auth.js interactive login because the
-            tunnel ingress rewrites the HTTP Host header to the origin
-            service name. Flip back to https://langfuse.agenticengineering.lat
-            once the tunnel's Public Hostname "HTTP Host Header" is set
-            to langfuse.agenticengineering.lat in the Zero Trust dashboard.
-          */}
-          <a
-            href={OBSERVABILITY_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-all hover:text-foreground hover:bg-muted/30"
-          >
-            <Activity className="h-4 w-4" />
+          <NavLink to="/observability" icon={<Activity className="h-4 w-4" />}>
             Observability
-          </a>
+          </NavLink>
         </nav>
 
         {/* Divider */}

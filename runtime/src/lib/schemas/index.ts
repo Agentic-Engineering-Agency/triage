@@ -94,3 +94,6 @@ export * from './display';
 
 // GitHub schemas and types
 export * from './github';
+
+// Integration schemas and types (BYO per-tenant keys)
+export * from './integrations';
