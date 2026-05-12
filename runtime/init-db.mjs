@@ -378,6 +378,7 @@ try {
       'updated_at',
     ].filter((c) => presentCols.has(c));
     const colList = keepCols.join(', ');
+    await client.execute('BEGIN');
     await client.execute(`CREATE TABLE projects_new (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES auth_user(id) ON DELETE CASCADE,
@@ -404,9 +405,11 @@ try {
     await client.execute(
       `CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`,
     );
+    await client.execute('COMMIT');
     console.log('[init-db] projects plaintext column drop complete');
   }
 } catch (err) {
+  try { await client.execute('ROLLBACK'); } catch {}
   const msg = err instanceof Error ? err.message : String(err);
   console.warn('[init-db] projects plaintext column drop skipped:', msg);
 }

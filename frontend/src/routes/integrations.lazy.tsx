@@ -90,7 +90,7 @@ function IntegrationsContent({ projectId }: { projectId: string }) {
             </p>
           </div>
         </div>
-        <WizardCta byProvider={byProvider} />
+        <WizardCta projectId={projectId} byProvider={byProvider} />
       </div>
 
       {/* Content */}
@@ -141,15 +141,42 @@ function IntegrationsContent({ projectId }: { projectId: string }) {
   )
 }
 
+interface ProjectForGithub {
+  id: string
+  name: string
+  repositoryUrl: string
+  status: string
+}
+
+function parseGithubRepo(url: string): { owner: string; repo: string; full: string } | null {
+  if (!url) return null
+  const m =
+    /^(?:https?|ssh):\/\/(?:[^@]+@)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url.trim()) ??
+    /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url.trim())
+  if (!m) return null
+  return { owner: m[1], repo: m[2], full: `${m[1]}/${m[2]}` }
+}
+
 function WizardCta({
+  projectId,
   byProvider,
 }: {
+  projectId: string
   byProvider: Partial<Record<Provider, IntegrationSummary>>
 }) {
+  const { data: project } = useQuery<ProjectForGithub>({
+    queryKey: ["project", projectId],
+    queryFn: () => apiFetch<ProjectForGithub>(`/projects/${projectId}`),
+  })
+  const needsGithub = project ? parseGithubRepo(project.repositoryUrl) !== null : true
+
   // Treat openrouter / linear / github as the required-for-triage trio.
   // Slack + Resend are nice-to-have notifications; not counted here so the
   // CTA stays focused on what blocks the core workflow.
-  const required: ReadonlyArray<Provider> = ["openrouter", "linear", "github"]
+  // GitHub is only required when the project repo is actually on GitHub.
+  const required: ReadonlyArray<Provider> = needsGithub
+    ? ["openrouter", "linear", "github"]
+    : ["openrouter", "linear"]
   const remaining = required.filter(
     (p) => byProvider[p]?.status !== "active",
   ).length
@@ -1113,26 +1140,6 @@ function ResendCard({
   )
 }
 
-interface ProjectForGithub {
-  id: string
-  name: string
-  repositoryUrl: string
-  status: string
-}
-
-/**
- * Simple github.com URL parser — mirrors the backend helper so the card can
- * pre-empt a "project repo isn't on GitHub" error and render a friendlier
- * disabled state up-front. Backend still enforces authoritatively.
- */
-function parseGithubRepo(url: string): { owner: string; repo: string; full: string } | null {
-  if (!url) return null
-  const m =
-    /^(?:https?|ssh):\/\/(?:[^@]+@)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url.trim()) ??
-    /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url.trim())
-  if (!m) return null
-  return { owner: m[1], repo: m[2], full: `${m[1]}/${m[2]}` }
-}
 
 function GitHubCard({
   projectId,

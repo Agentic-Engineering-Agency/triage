@@ -162,7 +162,7 @@ POST /projects
 
 # 2. Configure Linear integration
 PUT /projects/:projectId/integrations/linear
-{ "key": "lin_api_...", "meta": { "teamId": "...", "teamName": "...", "teamKey": "..." } }
+{ "apiKey": "lin_api_...", "meta": { "teamId": "...", "teamName": "...", "teamKey": "..." } }
 
 # 3. Configure assignee & reporter
 # (Assume Linear team already set up)
