@@ -376,4 +376,58 @@ describe('scoped-routes', () => {
       expect(vi.mocked(wikiRag.generateWiki)).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('status consolidation (TRI-65)', () => {
+    it('wiki/generate writes to canonical projects.status (not legacy wiki_status)', async () => {
+      await scoped.generateProjectWikiRoute.handler(
+        makeCtx({ params: { projectId: 'proj-owned' } }),
+      );
+
+      const r = await client.execute({
+        sql: 'SELECT status, wiki_status FROM projects WHERE id = ?',
+        args: ['proj-owned'],
+      });
+      expect(r.rows[0].status).toBe('processing');
+      // wiki_status was untouched — backfill is one-way (legacy → canonical)
+      expect(r.rows[0].wiki_status).toBeNull();
+    });
+
+    it('wiki/status reads status (not wiki_status) and wiki_error (not error)', async () => {
+      await client.execute({
+        sql: "UPDATE projects SET status = 'error', wiki_error = 'clone failed' WHERE id = ?",
+        args: ['proj-owned'],
+      });
+
+      const res = (await scoped.getProjectWikiStatusRoute.handler(
+        makeCtx({ params: { projectId: 'proj-owned' } }),
+      )) as unknown as JsonRes;
+
+      expect(res.status).toBe(200);
+      const body = res.body as { data: { status: string; error: string; done: boolean } };
+      expect(body.data.status).toBe('error');
+      expect(body.data.error).toBe('clone failed');
+      expect(body.data.done).toBe(true);
+    });
+
+    it('wiki/status returns done=true for ready and error, false otherwise', async () => {
+      const cases = [
+        { status: 'pending', done: false },
+        { status: 'processing', done: false },
+        { status: 'ready', done: true },
+        { status: 'error', done: true },
+        { status: 'needs_auth', done: false },
+      ];
+      for (const { status, done } of cases) {
+        await client.execute({
+          sql: 'UPDATE projects SET status = ? WHERE id = ?',
+          args: [status, 'proj-owned'],
+        });
+        const res = (await scoped.getProjectWikiStatusRoute.handler(
+          makeCtx({ params: { projectId: 'proj-owned' } }),
+        )) as unknown as JsonRes;
+        const body = res.body as { data: { done: boolean } };
+        expect(body.data.done, `status=${status}`).toBe(done);
+      }
+    });
+  });
 });

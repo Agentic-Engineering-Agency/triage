@@ -271,7 +271,7 @@ export const generateProjectWikiRoute = registerApiRoute('/projects/:projectId/w
 
       // Update project status to processing
       await db.execute(
-        'UPDATE projects SET wiki_status = ?, updated_at = ? WHERE id = ?',
+        'UPDATE projects SET status = ?, updated_at = ? WHERE id = ?',
         ['processing', now, projectId],
       );
 
@@ -319,7 +319,7 @@ export const getProjectWikiStatusRoute = registerApiRoute('/projects/:projectId/
 
       const docCount = Number(docsResult.rows[0]?.count ?? 0);
       const chunkCount = Number(chunksResult.rows[0]?.count ?? 0);
-      const done = project.wiki_status === 'ready' || project.wiki_status === 'error';
+      const done = project.status === 'ready' || project.status === 'error';
 
       return c.json({
         success: true,
@@ -327,7 +327,7 @@ export const getProjectWikiStatusRoute = registerApiRoute('/projects/:projectId/
           total: docCount + chunkCount,
           processed: chunkCount,
           done,
-          status: project.wiki_status,
+          status: project.status,
           error: project.wiki_error || undefined,
           documents: docCount,
           chunks: chunkCount,

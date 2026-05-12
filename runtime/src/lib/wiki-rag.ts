@@ -334,7 +334,7 @@ export async function generateWiki(
     console.error(`[wiki-rag] Pipeline error: ${errorMsg}`);
 
     await db.execute({
-      sql: `UPDATE projects SET status = 'error', error = ?, updated_at = ? WHERE id = ?`,
+      sql: `UPDATE projects SET status = 'error', wiki_error = ?, updated_at = ? WHERE id = ?`,
       args: [errorMsg.slice(0, 500), Date.now(), projectId],
     }).catch(() => {});
 

@@ -176,11 +176,13 @@ const tables = [
     created_at INTEGER NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS webhook_secrets (
-    provider TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    project_id TEXT NOT NULL DEFAULT '_global_',
     webhook_id TEXT,
     secret TEXT NOT NULL,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (provider, project_id)
   )`,
   `CREATE TABLE IF NOT EXISTS project_integrations (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -268,6 +270,73 @@ for (const a of alters) {
       console.warn('[init-db] ALTER skipped', { table: a.table, col: a.col, error: msg });
     }
   }
+}
+
+// One-shot migration: webhook_secrets PK from (provider) to (provider, project_id).
+// SQLite can't ALTER the primary key in place, so we detect the old shape via
+// PRAGMA, build a new table with the composite PK, copy rows under the
+// '_global_' sentinel, and swap. Idempotent because the post-migration table
+// already has the project_id column.
+try {
+  const info = await client.execute('PRAGMA table_info(webhook_secrets)');
+  const hasProjectId = info.rows.some((r) => r.name === 'project_id');
+  if (!hasProjectId) {
+    console.log('[init-db] Migrating webhook_secrets to composite PK (provider, project_id)');
+    await client.execute(`CREATE TABLE webhook_secrets_new (
+      provider TEXT NOT NULL,
+      project_id TEXT NOT NULL DEFAULT '_global_',
+      webhook_id TEXT,
+      secret TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (provider, project_id)
+    )`);
+    await client.execute(`INSERT INTO webhook_secrets_new
+        (provider, project_id, webhook_id, secret, created_at, updated_at)
+      SELECT provider, '_global_', webhook_id, secret, created_at, updated_at
+      FROM webhook_secrets`);
+    await client.execute('DROP TABLE webhook_secrets');
+    await client.execute('ALTER TABLE webhook_secrets_new RENAME TO webhook_secrets');
+    console.log('[init-db] webhook_secrets migration complete');
+  } else {
+    console.log('[init-db] webhook_secrets PK already composite (skip)');
+  }
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.warn('[init-db] webhook_secrets PK migration skipped:', msg);
+}
+
+// One-shot backfill: collapse legacy projects.wiki_status / projects.error onto
+// the canonical projects.status / projects.wiki_error.
+//
+//   wiki_status was the old name for the same field; rows seeded under the
+//   legacy schema only have wiki_status populated. `status` defaults to
+//   'pending' in fresh schemas, so we only backfill rows where the legacy
+//   column has a value the new one doesn't.
+//
+//   `error` is wiki-rag.ts's old write target. Readers (GET /projects, GET
+//   /projects/:id) only return `wiki_error`, so errors from the old code path
+//   never reached the UI. Migrate them now so historical failures surface.
+//
+// Columns are left in place (nullable) — drop them in a dedicated migration
+// once a release cycle proves nothing else reads them.
+try {
+  await client.execute(
+    `UPDATE projects
+       SET status = wiki_status
+     WHERE wiki_status IS NOT NULL AND wiki_status != ''
+       AND (status IS NULL OR status = '' OR status = 'pending')`,
+  );
+  await client.execute(
+    `UPDATE projects
+       SET wiki_error = error
+     WHERE error IS NOT NULL AND error != ''
+       AND (wiki_error IS NULL OR wiki_error = '')`,
+  );
+  console.log('[init-db] projects status/error consolidation backfill complete');
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.warn('[init-db] projects status backfill skipped:', msg);
 }
 
 console.log('[init-db] All tables and indexes ready');
