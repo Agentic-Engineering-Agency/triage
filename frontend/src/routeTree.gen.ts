@@ -17,6 +17,7 @@ import { Route as ChatRouteImport } from './routes/chat'
 import { Route as IndexRouteImport } from './routes/index'
 
 const ProjectsLazyRouteImport = createFileRoute('/projects')()
+const OnboardingLazyRouteImport = createFileRoute('/onboarding')()
 const ObservabilityLazyRouteImport = createFileRoute('/observability')()
 const IntegrationsLazyRouteImport = createFileRoute('/integrations')()
 const BoardLazyRouteImport = createFileRoute('/board')()
@@ -26,6 +27,11 @@ const ProjectsLazyRoute = ProjectsLazyRouteImport.update({
   path: '/projects',
   getParentRoute: () => rootRouteImport,
 } as any).lazy(() => import('./routes/projects.lazy').then((d) => d.Route))
+const OnboardingLazyRoute = OnboardingLazyRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() => import('./routes/onboarding.lazy').then((d) => d.Route))
 const ObservabilityLazyRoute = ObservabilityLazyRouteImport.update({
   id: '/observability',
   path: '/observability',
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/board': typeof BoardLazyRoute
   '/integrations': typeof IntegrationsLazyRoute
   '/observability': typeof ObservabilityLazyRoute
+  '/onboarding': typeof OnboardingLazyRoute
   '/projects': typeof ProjectsLazyRoute
 }
 export interface FileRoutesByTo {
@@ -80,6 +87,7 @@ export interface FileRoutesByTo {
   '/board': typeof BoardLazyRoute
   '/integrations': typeof IntegrationsLazyRoute
   '/observability': typeof ObservabilityLazyRoute
+  '/onboarding': typeof OnboardingLazyRoute
   '/projects': typeof ProjectsLazyRoute
 }
 export interface FileRoutesById {
@@ -91,6 +99,7 @@ export interface FileRoutesById {
   '/board': typeof BoardLazyRoute
   '/integrations': typeof IntegrationsLazyRoute
   '/observability': typeof ObservabilityLazyRoute
+  '/onboarding': typeof OnboardingLazyRoute
   '/projects': typeof ProjectsLazyRoute
 }
 export interface FileRouteTypes {
@@ -103,6 +112,7 @@ export interface FileRouteTypes {
     | '/board'
     | '/integrations'
     | '/observability'
+    | '/onboarding'
     | '/projects'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -113,6 +123,7 @@ export interface FileRouteTypes {
     | '/board'
     | '/integrations'
     | '/observability'
+    | '/onboarding'
     | '/projects'
   id:
     | '__root__'
@@ -123,6 +134,7 @@ export interface FileRouteTypes {
     | '/board'
     | '/integrations'
     | '/observability'
+    | '/onboarding'
     | '/projects'
   fileRoutesById: FileRoutesById
 }
@@ -134,6 +146,7 @@ export interface RootRouteChildren {
   BoardLazyRoute: typeof BoardLazyRoute
   IntegrationsLazyRoute: typeof IntegrationsLazyRoute
   ObservabilityLazyRoute: typeof ObservabilityLazyRoute
+  OnboardingLazyRoute: typeof OnboardingLazyRoute
   ProjectsLazyRoute: typeof ProjectsLazyRoute
 }
 
@@ -144,6 +157,13 @@ declare module '@tanstack/react-router' {
       path: '/projects'
       fullPath: '/projects'
       preLoaderRoute: typeof ProjectsLazyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/onboarding': {
+      id: '/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof OnboardingLazyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/observability': {
@@ -206,6 +226,7 @@ const rootRouteChildren: RootRouteChildren = {
   BoardLazyRoute: BoardLazyRoute,
   IntegrationsLazyRoute: IntegrationsLazyRoute,
   ObservabilityLazyRoute: ObservabilityLazyRoute,
+  OnboardingLazyRoute: OnboardingLazyRoute,
   ProjectsLazyRoute: ProjectsLazyRoute,
 }
 export const routeTree = rootRouteImport
