@@ -122,9 +122,9 @@ export const initDefaultProjectRoute = registerApiRoute('/projects/init-default'
       const now = Date.now();
 
       await db.execute({
-        sql: `INSERT INTO projects (id, user_id, name, repo_url, repo_default_branch, wiki_status, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        args: [projectId, userId, 'Default Project', '', 'main', 'idle', now, now],
+        sql: `INSERT INTO projects (id, user_id, name, repo_url, repo_default_branch, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        args: [projectId, userId, 'Default Project', '', 'main', now, now],
       });
 
       return c.json(
@@ -405,10 +405,28 @@ export const updateProjectRoute = registerApiRoute('/projects/:id', {
       const updatedBranch = branch ?? row.repo_default_branch;
       const now = Date.now();
 
+      // If repo_url changed, any active GitHub integration's `meta.repoFullName`
+      // is now stale — invalidate it so the user must re-verify access against
+      // the new repo (PUT /integrations/github will re-probe and either flip
+      // back to 'active' with fresh meta, or surface REPO_ACCESS_DENIED).
+      // Server-side validation on every PAT use means a stale meta is not a
+      // security hole, but it's bad UX to keep the card showing the old repo.
+      const repoUrlChanged =
+        typeof repositoryUrl === 'string' && repositoryUrl !== row.repo_url;
+
       await db.execute({
         sql: `UPDATE projects SET name = ?, repo_url = ?, repo_default_branch = ?, updated_at = ? WHERE id = ?`,
         args: [updatedName, updatedUrl, updatedBranch, now, id],
       });
+
+      if (repoUrlChanged) {
+        await db.execute({
+          sql: `UPDATE project_integrations
+                SET status = 'invalid', updated_at = ?
+                WHERE project_id = ? AND provider = 'github' AND status = 'active'`,
+          args: [now, id],
+        });
+      }
 
       return c.json({
         success: true,
