@@ -1,4 +1,4 @@
-import { createLazyFileRoute, Link } from "@tanstack/react-router"
+import { createLazyFileRoute, Link, useNavigate } from "@tanstack/react-router"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import {
@@ -35,6 +35,7 @@ interface Project {
 
 function ProjectsPage() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState("")
@@ -84,7 +85,7 @@ function ProjectsPage() {
       })
       return (await res.json()) as { success: boolean; data?: Project }
     },
-    onSuccess: (response) => {
+    onSuccess: async (response) => {
       // Inject the server-returned project into the cache so it shows up
       // immediately — otherwise the UI waits on the invalidation refetch
       // and the list looks empty for a beat after create.
@@ -95,6 +96,35 @@ function ProjectsPage() {
           if (editingId) return old.map((p) => (p.id === editingId ? incoming : p))
           return [incoming, ...old]
         })
+        // If this is a brand-new project (not an edit) and it has no active
+        // integrations, redirect to the onboarding wizard so the user isn't
+        // left on an empty dashboard.
+        if (!editingId) {
+          try {
+            const intRes = await fetch(`/projects/${incoming.id}/integrations`, {
+              headers: { Accept: "application/json" },
+            })
+            const intJson = (await intRes.json()) as {
+              success: boolean
+              data?: Array<{ provider: string; status: string }>
+            }
+            const integrations = intJson.success ? intJson.data ?? [] : []
+            const activeProviders = new Set(
+              integrations.filter((i) => i.status === "active").map((i) => i.provider),
+            )
+            const needsGithub =
+              incoming.repositoryUrl &&
+              /github\.com/i.test(incoming.repositoryUrl)
+            const required: string[] = ["openrouter", "linear", ...(needsGithub ? ["github"] : [])]
+            const missing = required.filter((p) => !activeProviders.has(p))
+            if (missing.length > 0) {
+              navigate({ to: "/onboarding" })
+              return
+            }
+          } catch {
+            // Onboarding check is best-effort; don't block project creation.
+          }
+        }
       }
       queryClient.invalidateQueries({ queryKey: ["projects"] })
       resetForm()

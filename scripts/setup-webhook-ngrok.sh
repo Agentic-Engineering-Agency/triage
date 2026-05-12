@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 # setup-webhook-ngrok.sh — expose the local runtime via ngrok and register
-# the public URL as a Linear webhook for the configured team.
+# a per-project Linear webhook for this deployment.
 #
 # Prerequisites:
 #   1. ngrok installed: https://ngrok.com/download  (brew install ngrok)
 #   2. ngrok authenticated: ngrok config add-authtoken <token>
 #   3. Runtime running: docker compose up -d
-#   4. LINEAR_API_KEY set in .env
+#   4. Project has Linear integration configured in /integrations
 #
 # Usage:
-#   ./scripts/setup-webhook-ngrok.sh
+#   ./scripts/setup-webhook-ngrok.sh <project_id>
 #
 # What it does:
 #   1. Starts ngrok tunnel on port 3000
 #   2. Waits for the public URL
-#   3. Calls POST /api/linear/webhook/setup with the public URL
+#   3. Calls POST /projects/:projectId/linear/webhook/setup with the public URL
 #   4. Prints the webhook ID — save this, Linear doesn't let you list webhooks
 #      easily so you'll need it to delete/update later.
 #
 # To stop:
 #   Ctrl+C (kills ngrok tunnel; the Linear webhook remains registered)
-#   To delete the webhook, go to Linear → Settings → API → Webhooks
+#   To delete it: Linear → Settings → API → Webhooks
 
 set -euo pipefail
 
@@ -40,6 +40,15 @@ fi
 if ! curl -sf "$RUNTIME_URL/api/health" >/dev/null 2>&1; then
   echo "ERROR: Runtime not responding at $RUNTIME_URL"
   echo "Start it with: docker compose up -d"
+  exit 1
+fi
+
+# Resolve project id
+PROJECT_ID="${1:-${PROJECT_ID:-}}"
+if [ -z "$PROJECT_ID" ]; then
+  echo "ERROR: PROJECT_ID is required."
+  echo "Usage: ./scripts/setup-webhook-ngrok.sh <project_id>"
+  echo "   or: PROJECT_ID=<project_id> ./scripts/setup-webhook-ngrok.sh"
   exit 1
 fi
 
@@ -64,11 +73,11 @@ if [ -z "$PUBLIC_URL" ]; then
   exit 1
 fi
 
-WEBHOOK_URL="$PUBLIC_URL/api/webhooks/linear"
+WEBHOOK_URL="$PUBLIC_URL/api/webhooks/linear?projectId=$PROJECT_ID"
 echo "Tunnel ready: $PUBLIC_URL"
-echo "Registering webhook: $WEBHOOK_URL"
+echo "Registering webhook for project $PROJECT_ID: $WEBHOOK_URL"
 
-RESPONSE=$(curl -s -X POST "$RUNTIME_URL/api/linear/webhook/setup" \
+RESPONSE=$(curl -s -X POST "$RUNTIME_URL/projects/$PROJECT_ID/linear/webhook/setup" \
   -H "Content-Type: application/json" \
   -d "{\"url\": \"$WEBHOOK_URL\"}")
 

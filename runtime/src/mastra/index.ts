@@ -17,7 +17,7 @@ import { scopedRoutes } from '../lib/scoped-routes';
 import { observabilityRoutes } from '../lib/observability-routes';
 import { config, LINEAR_CONSTANTS, LINEAR_BASE_URL } from '../lib/config';
 import { getMemoryInitializationContext } from '../lib/memory-context-init';
-import { syncLinearIssues, getCachedIssues, getLastSyncedAt, isSyncInProgress, initLinearSync } from '../lib/linear-sync';
+import { initLinearSync } from '../lib/linear-sync';
 import { createClient } from '@libsql/client';
 import { getLinearIssueComments, updateLinearIssue } from './tools/linear';
 import { findGitHubEvidenceForIssueTool } from './tools/github';
@@ -122,114 +122,6 @@ export const mastra = new Mastra({
         },
       }),
 
-      // GET /api/linear/issues — serve from local cache (synced from Linear API)
-      // Falls back to a live sync if cache is empty
-      {
-        path: '/api/linear/issues',
-        method: 'GET' as const,
-        handler: async (c: Context) => {
-          try {
-            if (!linearClient) {
-              return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
-            }
-
-            // Try reading from cache first
-            let grouped = await getCachedIssues();
-
-            // If cache is empty, trigger a sync and wait for it
-            if (!grouped) {
-              console.log('[api/linear/issues] Cache empty, triggering sync...');
-              grouped = await syncLinearIssues();
-            }
-
-            return c.json({ success: true, data: grouped });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
-          }
-        },
-      },
-
-      // POST /api/linear/sync — trigger a manual sync from Linear API
-      {
-        path: '/api/linear/sync',
-        method: 'POST' as const,
-        handler: async (c: Context) => {
-          try {
-            if (!linearClient) {
-              return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
-            }
-
-            const grouped = await syncLinearIssues();
-            const totalIssues = Object.values(grouped).flat().length;
-
-            return c.json({
-              success: true,
-              data: {
-                issueCount: totalIssues,
-                syncedAt: getLastSyncedAt()?.toISOString() ?? null,
-              },
-            });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
-          }
-        },
-      },
-
-      // GET /api/linear/sync/status — check when data was last synced
-      {
-        path: '/api/linear/sync/status',
-        method: 'GET' as const,
-        handler: async (c: Context) => {
-          return c.json({
-            success: true,
-            data: {
-              lastSyncedAt: getLastSyncedAt()?.toISOString() ?? null,
-              syncInProgress: isSyncInProgress(),
-            },
-          });
-        },
-      },
-
-      // GET /api/linear/cycle/active — current active cycle with progress
-      {
-        path: '/api/linear/cycle/active',
-        method: 'GET' as const,
-        handler: async (c: Context) => {
-          try {
-            if (!linearClient) {
-              return c.json({ success: false, error: { code: 'NO_LINEAR_KEY', message: 'LINEAR_API_KEY not configured' } }, 500);
-            }
-
-            const team = await linearClient.team(LINEAR_CONSTANTS.TEAM_ID);
-            const cyclesConnection = await team.cycles({ filter: { isActive: { eq: true } }, first: 1 });
-            const activeCycle = cyclesConnection.nodes[0];
-
-            if (!activeCycle) {
-              return c.json({ success: true, data: null });
-            }
-
-            return c.json({
-              success: true,
-              data: {
-                id: activeCycle.id,
-                name: activeCycle.name ?? `Cycle ${activeCycle.number}`,
-                number: activeCycle.number,
-                startsAt: activeCycle.startsAt?.toISOString?.() ?? String(activeCycle.startsAt ?? ''),
-                endsAt: activeCycle.endsAt?.toISOString?.() ?? String(activeCycle.endsAt ?? ''),
-                progress: activeCycle.progress ?? 0,
-                scopeCount: (activeCycle as unknown as Record<string, unknown>).scopeCount ?? 0,
-                completedScopeCount: (activeCycle as unknown as Record<string, unknown>).completedScopeCount ?? 0,
-                startedScopeCount: (activeCycle as unknown as Record<string, unknown>).startedScopeCount ?? 0,
-              },
-            });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return c.json({ success: false, error: { code: 'LINEAR_ERROR', message } }, 500);
-          }
-        },
-      },
 
       // POST /api/linear/webhook/setup — register the Linear webhook for this deployment
       {
@@ -278,9 +170,10 @@ export const mastra = new Mastra({
               // ── Signature verification ──────────────────────────────────
               // Fail closed: reject unsigned or unverifiable webhooks before
               // parsing JSON, so a forged POST can't trigger workflow resume.
-              const secret = await getWebhookSecret(LINEAR_PROVIDER);
+              const projectId = c.req.query('projectId') ?? null;
+              const secret = await getWebhookSecret(LINEAR_PROVIDER, projectId ?? undefined);
               if (!secret) {
-                console.warn('[webhook/linear] No secret configured — rejecting. Call POST /api/linear/webhook/setup first.');
+                console.warn(`[webhook/linear] No secret configured${projectId ? ` for project ${projectId}` : ''} — rejecting. Call POST /projects/:id/linear/webhook/setup first.`);
                 return c.json(
                   { success: false, error: { code: 'SECRET_NOT_CONFIGURED', message: 'Webhook signing secret not registered' } },
                   503,
