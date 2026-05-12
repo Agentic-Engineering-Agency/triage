@@ -57,18 +57,6 @@ const tables = [
     description TEXT,
     repo_url TEXT NOT NULL,
     repo_default_branch TEXT DEFAULT 'main',
-    linear_token TEXT,
-    linear_team_id TEXT,
-    linear_webhook_id TEXT,
-    linear_webhook_url TEXT,
-    slack_enabled INTEGER DEFAULT 0,
-    slack_channel_id TEXT,
-    slack_webhook_url TEXT,
-    github_token TEXT,
-    github_repo_owner TEXT,
-    github_repo_name TEXT,
-    resend_api_key TEXT,
-    reporter_email TEXT,
     wiki_status TEXT DEFAULT 'idle',
     status TEXT NOT NULL DEFAULT 'pending',
     documents_count INTEGER NOT NULL DEFAULT 0,
@@ -337,6 +325,90 @@ try {
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
   console.warn('[init-db] projects status backfill skipped:', msg);
+}
+
+// One-shot migration: drop legacy plaintext integration columns from projects.
+// They were superseded by the encrypted `project_integrations` table (MT-03..05)
+// plus webhook_secrets (MT-01). Zero remaining readers across runtime/src.
+//
+// SQLite ≥ 3.35 supports `ALTER TABLE … DROP COLUMN`, but the libsql image we
+// ship is pinned to a version that has the feature; even so, we go the
+// table-rebuild route to stay idempotent and portable against older DBs that
+// might be mounted on upgrade.
+const droppedProjectCols = [
+  'linear_token',
+  'linear_team_id',
+  'linear_webhook_id',
+  'linear_webhook_url',
+  'slack_enabled',
+  'slack_channel_id',
+  'slack_webhook_url',
+  'github_token',
+  'github_repo_owner',
+  'github_repo_name',
+  'resend_api_key',
+  'reporter_email',
+];
+try {
+  const info = await client.execute('PRAGMA table_info(projects)');
+  const presentCols = new Set(info.rows.map((r) => r.name));
+  const stillThere = droppedProjectCols.filter((c) => presentCols.has(c));
+  if (stillThere.length === 0) {
+    console.log('[init-db] projects plaintext columns already dropped (skip)');
+  } else {
+    console.log(
+      `[init-db] Dropping ${stillThere.length} legacy plaintext column(s) from projects: ${stillThere.join(', ')}`,
+    );
+    // Keep the canonical column list in sync with the CREATE TABLE above.
+    const keepCols = [
+      'id',
+      'user_id',
+      'name',
+      'description',
+      'repo_url',
+      'repo_default_branch',
+      'wiki_status',
+      'status',
+      'documents_count',
+      'chunks_count',
+      'wiki_error',
+      'error',
+      'last_wiki_generated_at',
+      'created_at',
+      'updated_at',
+    ].filter((c) => presentCols.has(c));
+    const colList = keepCols.join(', ');
+    await client.execute(`CREATE TABLE projects_new (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES auth_user(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      repo_url TEXT NOT NULL,
+      repo_default_branch TEXT DEFAULT 'main',
+      wiki_status TEXT DEFAULT 'idle',
+      status TEXT NOT NULL DEFAULT 'pending',
+      documents_count INTEGER NOT NULL DEFAULT 0,
+      chunks_count INTEGER NOT NULL DEFAULT 0,
+      wiki_error TEXT,
+      error TEXT,
+      last_wiki_generated_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`);
+    await client.execute(
+      `INSERT INTO projects_new (${colList}) SELECT ${colList} FROM projects`,
+    );
+    await client.execute('DROP TABLE projects');
+    await client.execute('ALTER TABLE projects_new RENAME TO projects');
+    // Recreate the user_id index that the original CREATE INDEX statement set up.
+    await client.execute(
+      `CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`,
+    );
+    console.log('[init-db] projects plaintext column drop complete');
+  }
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.warn('[init-db] projects plaintext column drop skipped:', msg);
 }
 
 console.log('[init-db] All tables and indexes ready');

@@ -67,26 +67,6 @@ export const projects = sqliteTable('projects', {
   repoUrl: text('repo_url').notNull(),
   repoDefaultBranch: text('repo_default_branch').default('main'),
 
-  // Linear integration
-  linearToken: text('linear_token'),
-  linearTeamId: text('linear_team_id'),
-  linearWebhookId: text('linear_webhook_id'),
-  linearWebhookUrl: text('linear_webhook_url'),
-
-  // Slack integration
-  slackEnabled: integer('slack_enabled', { mode: 'boolean' }).default(false),
-  slackChannelId: text('slack_channel_id'),
-  slackWebhookUrl: text('slack_webhook_url'),
-
-  // GitHub integration
-  githubToken: text('github_token'),
-  githubRepoOwner: text('github_repo_owner'),
-  githubRepoName: text('github_repo_name'),
-
-  // Email
-  resendApiKey: text('resend_api_key'),
-  reporterEmail: text('reporter_email'),
-
   // Wiki/RAG
   wikiStatus: text('wiki_status').default('idle'),
   documentsCount: integer('documents_count').default(0),

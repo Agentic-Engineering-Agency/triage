@@ -63,8 +63,6 @@ async function seedDb(): Promise<Client> {
     error TEXT,
     documents_count INTEGER DEFAULT 0,
     chunks_count INTEGER DEFAULT 0,
-    linear_token TEXT,
-    linear_team_id TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
