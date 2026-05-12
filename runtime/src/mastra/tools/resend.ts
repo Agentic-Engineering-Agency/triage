@@ -1,6 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { Resend } from 'resend';
-import { config } from '../../lib/config';
+import { resolveKey } from '../../lib/tenant-keys';
 import { ticketNotificationSchema, resolutionNotificationSchema } from '../../lib/schemas/ticket';
 
 // HTML escape helper to prevent XSS in email templates (C3)
@@ -18,28 +18,48 @@ function safeHref(url: string): string {
 // PII masking helper – prevents logging raw email addresses
 const maskEmail = (e: string) => e.replace(/^(.)(.*)(@.*)$/, '$1***$3');
 
-// Module-level singleton (REQ-6)
-// Only instantiate if API key is configured (M5)
-const resendClient = config.RESEND_API_KEY ? new Resend(config.RESEND_API_KEY) : null;
+// Email subjects cannot contain CR/LF — Resend (and SMTP) rejects them.
+// Also cap length so markdown-heavy titles don't break the send.
+const sanitizeSubject = (s: string) => (s || '').replace(/[\r\n]+/g, ' ').slice(0, 200).trim();
 
-const FROM_EMAIL = config.RESEND_FROM_EMAIL || 'triage@agenticengineering.lat';
+type ToolCtx = { requestContext?: { get: (key: string) => unknown } } | undefined;
+
+const FALLBACK_FROM_EMAIL = 'triage@agenticengineering.lat';
+
+// Resolve a per-tenant Resend client. Reads projectId from requestContext,
+// then asks tenant-keys for the key + meta (DB → env fallback). The FROM
+// address precedence is: tenant meta.fromEmail > RESEND_FROM_EMAIL env >
+// hard-coded default.
+async function resolveResend(
+  toolCtx: ToolCtx,
+): Promise<{ client: Resend | null; from: string }> {
+  const projectId = toolCtx?.requestContext?.get('projectId') as string | undefined;
+  const { key, meta } = await resolveKey('resend', projectId);
+  const from = meta.fromEmail || process.env.RESEND_FROM_EMAIL || FALLBACK_FROM_EMAIL;
+  if (!key) return { client: null, from };
+  return { client: new Resend(key), from };
+}
 
 // ---------- Tool 6: sendTicketNotification ----------
 export const sendTicketNotification = createTool({
   id: 'send-ticket-notification',
   description: 'Send an email notification to the assigned engineer about a new triage ticket.',
   inputSchema: ticketNotificationSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input?.context ?? input) as Record<string, unknown>;
+    const { client: resendClient, from } = await resolveResend(toolCtx);
     if (!resendClient) {
       console.log(`[Resend] Skipping ticket notification to ${maskEmail(ctx.to as string)}: "${ctx.ticketTitle}" (RESEND_API_KEY not configured)`);
       return { success: true, skipped: true, to: ctx.to as string, assigneeName: ctx.assigneeName as string, reason: 'RESEND_API_KEY not configured' };
     }
     try {
       const { data, error } = await resendClient.emails.send({
-        from: `Triage <${FROM_EMAIL}>`,
+        from: `Triage <${from}>`,
         to: ctx.to as string,
-        subject: `[${ctx.severity}] New Triage Ticket: ${ctx.ticketTitle}`,
+        subject: sanitizeSubject(`[${ctx.severity}] New Triage Ticket: ${ctx.ticketTitle}`),
         html: renderTicketNotificationHtml(ctx as { assigneeName: string; ticketTitle: string; severity: string; priority: number; summary: string; linearUrl: string }),
         headers: {
           'Idempotency-Key': `ticket-notify/${ctx.linearIssueId}`,
@@ -64,8 +84,12 @@ export const sendResolutionNotification = createTool({
   id: 'send-resolution-notification',
   description: 'Send an email notification to reporter(s) that their issue has been resolved.',
   inputSchema: resolutionNotificationSchema,
-  execute: async (input: { context: Record<string, unknown> } | Record<string, unknown>) => {
+  execute: async (
+    input: { context: Record<string, unknown> } | Record<string, unknown>,
+    toolCtx?: ToolCtx,
+  ) => {
     const ctx = (input?.context ?? input) as Record<string, unknown>;
+    const { client: resendClient, from } = await resolveResend(toolCtx);
     if (!resendClient) {
       console.log(`[Resend] Skipping resolution notification to ${Array.isArray(ctx.to) ? (ctx.to as string[]).map(maskEmail).join(', ') : maskEmail(ctx.to as string)}: "${ctx.originalTitle}" (RESEND_API_KEY not configured)`);
       return { success: true };
@@ -73,9 +97,9 @@ export const sendResolutionNotification = createTool({
     try {
       const to = Array.isArray(ctx.to) ? ctx.to : [ctx.to];
       const { data, error } = await resendClient.emails.send({
-        from: `Triage <${FROM_EMAIL}>`,
+        from: `Triage <${from}>`,
         to,
-        subject: `[Resolved] ${ctx.originalTitle}`,
+        subject: sanitizeSubject(`[Resolved] ${ctx.originalTitle}`),
         html: renderResolutionNotificationHtml(ctx as { originalTitle: string; resolutionSummary: string; prLink?: string; linearUrl: string }),
         headers: {
           'Idempotency-Key': `resolution-notify/${ctx.linearIssueId}`,

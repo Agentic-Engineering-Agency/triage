@@ -25,12 +25,14 @@ import {
   wikiDocuments,
   wikiChunks,
   localTickets,
+  projectIntegrations,
   authUserRelations,
   authSessionRelations,
   authAccountRelations,
   wikiDocumentRelations,
   wikiChunkRelations,
   localTicketRelations,
+  projectIntegrationsRelations,
 } from './schema';
 
 // ---------------------------------------------------------------------------
@@ -260,6 +262,34 @@ describe('REQ-DB15: local_tickets columns', () => {
 
   it.each(expectedColumns)('has column "%s"', (col) => {
     expect(hasColumn(localTickets, col)).toBe(true);
+  });
+});
+
+// ============================================================================
+// project_integrations columns
+// ============================================================================
+describe('project_integrations columns', () => {
+  const expectedColumns = [
+    'projectId',
+    'provider',
+    'encryptedKey',
+    'meta',
+    'status',
+    'lastTestedAt',
+    'createdAt',
+    'updatedAt',
+  ];
+
+  it.each(expectedColumns)('has column "%s"', (col) => {
+    expect(hasColumn(projectIntegrations, col)).toBe(true);
+  });
+
+  it('table is named "project_integrations"', () => {
+    expect(getTableName(projectIntegrations)).toBe('project_integrations');
+  });
+
+  it('projectIntegrationsRelations is exported', () => {
+    expect(projectIntegrationsRelations).toBeDefined();
   });
 });
 

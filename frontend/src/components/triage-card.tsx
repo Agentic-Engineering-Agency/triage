@@ -7,6 +7,12 @@ import { Button } from "@/components/ui/button"
 
 export type TriageCardState = "loading" | "pending" | "confirmed" | "error"
 
+function formatDue(iso: string): string {
+  const d = new Date(iso)
+  if (!Number.isFinite(d.getTime())) return iso
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+}
+
 export interface TriageCardProps {
   state: TriageCardState
   title?: string
@@ -16,6 +22,12 @@ export interface TriageCardProps {
   fileReferences?: Array<{ filePath: string; lineNumber?: number }>
   proposedFix?: string
   linearUrl?: string
+  assigneeId?: string
+  assigneeName?: string
+  assigneeEmail?: string
+  dueDate?: string
+  cycleId?: string
+  cycleName?: string
   errorMessage?: string
   isSubmitting?: boolean
   onCreateTicket?: () => void
@@ -32,6 +44,9 @@ export function TriageCard({
   fileReferences,
   proposedFix,
   linearUrl,
+  assigneeName,
+  dueDate,
+  cycleName,
   errorMessage,
   isSubmitting = false,
   onCreateTicket,
@@ -82,6 +97,29 @@ export function TriageCard({
         {severity && <SeverityBadge severity={severity} />}
         {normalizedConfidence !== undefined && <ConfidenceScore score={normalizedConfidence} />}
       </div>
+
+      {/* Assignee */}
+      {assigneeName && (
+        <div className="mb-2 text-xs text-muted-foreground">
+          Assigned to: <span className="font-medium text-foreground">{assigneeName}</span>
+        </div>
+      )}
+
+      {/* Cycle + due date */}
+      {(cycleName || dueDate) && (
+        <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          {cycleName && (
+            <span>
+              Cycle: <span className="font-medium text-foreground">{cycleName}</span>
+            </span>
+          )}
+          {dueDate && (
+            <span>
+              Due: <span className="font-medium text-foreground">{formatDue(dueDate)}</span>
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Title */}
       {title && (

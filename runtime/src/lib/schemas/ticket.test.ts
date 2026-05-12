@@ -115,22 +115,14 @@ describe('Zod Schemas — ticket.ts', () => {
       expect(() => ticketCreateSchema.parse(noTeamId)).not.toThrow();
     });
 
-    it('rejects invalid teamId (not UUID)', () => {
-      expect(() => ticketCreateSchema.parse({ ...validInput, teamId: 'not-a-uuid' })).toThrow();
-    });
-
     it('rejects priority out of range', () => {
       expect(() => ticketCreateSchema.parse({ ...validInput, priority: 5 })).toThrow();
       expect(() => ticketCreateSchema.parse({ ...validInput, priority: -1 })).toThrow();
     });
 
-    it('rejects invalid assigneeId (not UUID)', () => {
-      expect(() => ticketCreateSchema.parse({ ...validInput, assigneeId: 'not-uuid' })).toThrow();
-    });
-
-    it('rejects invalid labelIds (not UUID array)', () => {
-      expect(() => ticketCreateSchema.parse({ ...validInput, labelIds: ['not-uuid'] })).toThrow();
-    });
+    // teamId/assigneeId/labelIds are intentionally permissive z.string().optional()
+    // — Mastra sometimes sends non-UUID identifiers and we let Linear's API reject
+    // them downstream rather than gate at the schema layer.
   });
 
   // =====================================================================

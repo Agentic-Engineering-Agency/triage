@@ -1,61 +1,3 @@
-x-langfuse-worker-env: &langfuse-worker-env
-  # Auth.js v5 (NextAuth) vars. Langfuse 3.x uses Auth.js v5 which reads
-  # AUTH_URL, not the legacy NEXTAUTH_URL. When running behind a reverse
-  # proxy (our cloudflared tunnel), AUTH_TRUST_HOST=true is mandatory —
-  # without it Auth.js refuses to trust the forwarded Host header and
-  # every callback URL falls back to the container's internal hostname,
-  # which breaks login from the public URL. NEXTAUTH_URL is retained
-  # for backward compatibility with any code path that still reads it.
-  AUTH_URL: ${NEXTAUTH_URL}
-  # AUTH_TRUST_HOST=false is deliberate: our Cloudflare Tunnel ingress
-  # rewrites the incoming HTTP Host header to the origin service name
-  # (langfuse-web:3000) before it reaches the container. With TRUST_HOST
-  # on, Auth.js v5 uses that forwarded Host and builds callback URLs
-  # pointing at an unreachable internal hostname, which breaks login
-  # completely. Turning it off forces Auth.js to derive everything
-  # from AUTH_URL, which is the public tunnel URL.
-  AUTH_TRUST_HOST: "false"
-  NEXTAUTH_URL: ${NEXTAUTH_URL}
-  DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@langfuse-postgres:5432/${POSTGRES_DB:-langfuse}
-  SALT: ${SALT}
-  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-  TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-true}
-  LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
-  # ClickHouse
-  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
-  CLICKHOUSE_URL: http://clickhouse:8123
-  CLICKHOUSE_USER: default
-  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
-  CLICKHOUSE_CLUSTER_ENABLED: "false"
-  # Redis
-  REDIS_HOST: redis
-  REDIS_PORT: 6379
-  REDIS_AUTH: ${REDIS_AUTH}
-  # MinIO/S3
-  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
-  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
-  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
-  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
-  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
-  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY}
-  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: true
-  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
-  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
-  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
-  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
-  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
-  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY}
-  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: true
-  # S3 Batch Export
-  LANGFUSE_S3_BATCH_EXPORT_ENABLED: ${LANGFUSE_S3_BATCH_EXPORT_ENABLED:-false}
-  LANGFUSE_S3_BATCH_EXPORT_BUCKET: langfuse
-  LANGFUSE_S3_BATCH_EXPORT_PREFIX: exports/
-  LANGFUSE_S3_BATCH_EXPORT_REGION: auto
-  LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://minio:9000
-  LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
-  LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY}
-  LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: true
-
 services:
   frontend:
     build:
@@ -66,6 +8,8 @@ services:
     depends_on:
       runtime:
         condition: service_healthy
+    env_file:
+      - .env
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3001"]
       interval: 10s
@@ -97,7 +41,6 @@ services:
     restart: always
     networks:
       - app
-      - langfuse
 
   libsql:
     image: ghcr.io/tursodatabase/libsql-server:v0.24.32
@@ -121,167 +64,6 @@ services:
     networks:
       - app
 
-  langfuse-web:
-    image: langfuse/langfuse:3.167.0
-    ports:
-      - "127.0.0.1:3000:3000"
-    depends_on:
-      langfuse-postgres:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    environment:
-      <<: *langfuse-worker-env
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
-      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID}
-      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME}
-      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID}
-      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME}
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY}
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY}
-      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL}
-      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME}
-      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD}
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://$$(hostname):3000/api/public/health || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 180s
-    restart: always
-    networks:
-      - langfuse
-
-  langfuse-worker:
-    image: langfuse/langfuse-worker:3.167.0
-    ports:
-      - "127.0.0.1:3030:3030"
-    depends_on:
-      langfuse-postgres:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    environment:
-      <<: *langfuse-worker-env
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://$$(hostname):3030/api/health || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 180s
-    restart: always
-    networks:
-      - langfuse
-
-  clickhouse:
-    image: clickhouse/clickhouse-server:24.8.9.95
-    ports:
-      - "127.0.0.1:8123:8123"
-      - "127.0.0.1:9000:9000"
-    environment:
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "http://127.0.0.1:8123/ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    volumes:
-      - /var/lib/clickhouse
-      - /var/log/clickhouse-server
-    restart: always
-    networks:
-      - langfuse
-
-  redis:
-    image: redis:7.4-alpine
-    ports:
-      - "127.0.0.1:6379:6379"
-    command: redis-server --requirepass ${REDIS_AUTH} --maxmemory-policy noeviction
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_AUTH}", "--no-auth-warning", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    volumes:
-      - /data
-    restart: always
-    networks:
-      - langfuse
-
-  minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
-    entrypoint: /bin/sh
-    command: -c "mkdir -p /data/langfuse && minio server --address ':9000' --console-address ':9001' /data"
-    ports:
-      - "127.0.0.1:9090:9000"
-      - "127.0.0.1:9091:9001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    volumes:
-      - /data
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    restart: always
-    networks:
-      - langfuse
-
-  langfuse-postgres:
-    image: postgres:17.9-alpine
-    ports:
-      - "127.0.0.1:5432:5432"
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    volumes:
-      - langfuse_postgres_data:/var/lib/postgresql/data
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-langfuse}
-      TZ: UTC
-      PGTZ: UTC
-    restart: always
-    networks:
-      - langfuse
-
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    command: tunnel --protocol http2 run
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
-    depends_on:
-      langfuse-web:
-        condition: service_healthy
-    restart: always
-    networks:
-      - langfuse
-
 networks:
   app:
     driver: bridge
-  langfuse:
-    driver: bridge
-
-volumes:
-  # Langfuse Postgres data: holds users, orgs, projects, API keys, traces
-  # metadata. Langfuse headless init only runs on a fresh DB, so keeping
-  # this volume across restarts avoids reseeding the admin user on every
-  # up/down cycle (and ensures traces captured during a demo persist for
-  # replay). Wipe with `docker compose down -v` + `docker volume rm
-  # triage_langfuse_postgres_data` only when you actually want a reset.
-  langfuse_postgres_data:

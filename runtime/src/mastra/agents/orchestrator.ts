@@ -1,27 +1,21 @@
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { LibSQLStore } from '@mastra/libsql';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { MODELS, MODEL_CHAINS, LINEAR_BASE_URL, LINEAR_CONSTANTS } from '../../lib/config';
+import { createClient } from '@libsql/client';
+import { MODELS } from '../../lib/config';
+import { resolveOpenRouterFromContext } from '../../lib/tenant-openrouter';
+import { listIntegrations } from '../../lib/integration-keys';
 
 // Explicit storage for memory — ensures persistence to the shared LibSQL container
 const memoryStorage = new LibSQLStore({
   id: 'memory-store',
   url: process.env.LIBSQL_URL || 'http://libsql:8080',
 });
-import { codeReviewAgent } from './code-review-agent';
 import {
-  createLinearIssueTool,
-  updateLinearIssueTool,
   getLinearIssueTool,
   listLinearIssuesTool,
   getTeamMembersTool,
   listLinearCyclesTool,
-  sendTicketEmailTool,
-  sendResolutionEmailTool,
-  sendSlackTicketNotificationTool,
-  sendSlackResolutionNotificationTool,
-  sendSlackMessageTool,
   queryWikiTool,
   generateWikiTool,
   processAttachmentsTool,
@@ -29,9 +23,98 @@ import {
   displayDuplicateTool,
 } from '../tools/index';
 
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
+// ─── Base prompt (project-agnostic) ──────────────────────────────
+// Kept as a constant so the dynamic `instructions` can reuse it and
+// append per-request project context without duplication.
+const BASE_INSTRUCTIONS = `You are Triage, an SRE incident triage assistant.
+
+## Your ONE Job
+Analyze incident reports and display a triage card. That's it. You gather info, classify, and show the card.
+
+## How You Work
+1. If files are attached, call process-attachments first to extract their content.
+2. Search existing Linear tickets with list-linear-issues to check for duplicates.
+   - If you find a likely duplicate (>70% keyword overlap), call displayDuplicateTool instead.
+3. Classify the incident: severity (P0-P4), confidence score, root cause, suggested files, proposed fix.
+4. Call displayTriageTool with your classification. The card IS your response — do NOT repeat the same info as text.
+5. After displaying the card, tell the user: "Click **Create Ticket** when ready." Nothing else.
+
+### Resolving the assignee
+When the user mentions a person (e.g., "para Koki", "asigna a Fernando"), call get-linear-team-members first. Match the name against the list (case-insensitive, partial match) and include assigneeId, assigneeName, assigneeEmail in displayTriageTool. If no one is mentioned, leave those fields blank.
+
+### Resolving the cycle
+ALWAYS call list-linear-cycles (no filter, so active + upcoming cycles come back). Then:
+1. If the user mentioned a deadline — explicit ("entrega 20 abril", "for April 20", "due next Friday") or implicit (a date-like phrase) — parse it into ISO (YYYY-MM-DD) and put it in dueDate. Pick the cycle whose startsAt <= dueDate <= endsAt.
+2. If dueDate falls AFTER the last known cycle's endsAt (too far out), use the currently-active cycle (isActive: true) and keep dueDate as-is so the card still shows it.
+3. If dueDate falls BEFORE the first known cycle's startsAt (already past), use the active cycle.
+4. If the user did NOT mention any deadline, leave dueDate blank and use the active cycle.
+5. Always include cycleId and cycleName in displayTriageTool. Include dueDate only when the user provided one.
+
+Today's date for resolving relative phrases like "next Friday": use the current date at the time of the triage.
+
+## When the user says "create", "hazlo", "confirmed", etc.
+They want to create the ticket. Respond: "Click the **Create Ticket** button on the card to start the workflow."
+The button triggers the full pipeline (Linear issue → email → Slack → wait for resolution) automatically.
+
+## Workflow Status Updates
+When the workflow reports progress back to this chat (issue created, email sent, waiting for resolution), you will see those updates as system context. Acknowledge them naturally:
+- Issue created → "Done! Issue [ID] created. [link]"
+- Email sent → "Notification sent to [email]."
+- Waiting → "Workflow paused — waiting for the assignee to resolve the issue."
+- Resolved → "Issue resolved! Check your email for the resolution summary."
+
+## Style
+- Concise, technical, actionable. No fluff.
+- Always use displayTriageTool/displayDuplicateTool for visual output — never repeat card data as text.
+- For non-triage questions, respond in plain text.
+- Respond in the same language the user writes in.`;
+
+// Per-request project lookup — cheap single-row SELECT against the shared
+// LibSQL container. Runs at instruction-render time, which is once per agent
+// invocation. Keeping this inline (instead of a cached helper) so stale data
+// can't leak across project switches inside the same process.
+/**
+ * Looks up the Linear integration meta for this Triage project and renders a
+ * single line the prompt can embed. Returns "" when Linear isn't configured
+ * so the instruction block stays clean.
+ */
+async function resolveLinearTeamLine(projectId: string): Promise<string> {
+  try {
+    const rows = await listIntegrations(projectId);
+    const linear = rows.find((r) => r.provider === 'linear');
+    if (!linear) return '';
+    const teamName = linear.meta.teamName;
+    const teamKey = linear.meta.teamKey;
+    if (!teamName) return '';
+    const label = teamKey ? `${teamName} (${teamKey})` : teamName;
+    return `Linear team for ticket creation: **${label}**. This is where \`displayTriageTool\` → Create Ticket will file the issue. It is a Linear team, separate from the Triage project above.`;
+  } catch {
+    return '';
+  }
+}
+
+async function resolveProjectContext(projectId: string | null | undefined) {
+  if (!projectId) return null;
+  try {
+    const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+    const r = await db.execute({
+      sql: 'SELECT id, name, status, documents_count, chunks_count FROM projects WHERE id = ? LIMIT 1',
+      args: [projectId],
+    });
+    const row = r.rows[0];
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      status: String(row.status),
+      documentsCount: Number(row.documents_count ?? 0),
+      chunksCount: Number(row.chunks_count ?? 0),
+    };
+  } catch (err) {
+    console.warn('[orchestrator] project context lookup failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
 
 /**
  * Orchestrator agent — the main entry point for all user interactions.
@@ -46,84 +129,36 @@ const openrouter = createOpenRouter({
 export const orchestrator = new Agent({
   id: 'orchestrator',
   name: 'orchestrator',
-  instructions: `You are Triage, an AI-powered SRE incident triage assistant for e-commerce platforms (Solidus/Rails stack).
+  instructions: async ({ requestContext }) => {
+    const projectId = requestContext?.get('projectId') as string | undefined;
+    const project = await resolveProjectContext(projectId);
 
-## Your Role
-You help engineers investigate, classify, and resolve production incidents. You are the first point of contact — you analyze incident reports, query the codebase wiki for relevant context, and present triage results to the user for confirmation before creating tickets.
+    if (!project) {
+      return `${BASE_INSTRUCTIONS}
 
-## Ticket Creation Flow
-When a user asks to create a ticket or describes an incident:
-1. **Process Attachments**: If the message includes file attachments (images, PDFs, logs), call the process-attachments tool FIRST to extract their content.
-2. **Query Wiki**: Call query-wiki with the enriched description to find relevant codebase context.
-3. **Check for Duplicates**: Call list-linear-issues to search for existing similar tickets.
-4. **Evaluate Similarity**:
-   - If similarity > 0.85: Call displayDuplicate with the existing ticket info. Set the primary action to "Update Existing".
-   - If similarity 0.70-0.85: Call displayDuplicate with a warning "looks similar". Set the primary action to "Create New".
-   - If similarity < 0.70: Proceed to triage.
-5. **Get Cycle Info**: Call list-linear-cycles to find the active cycle. Ask the user which cycle to assign the issue to if there are multiple.
-6. **Present Triage Card**: Call displayTriage with state="pending", title, severity (Critical/High/Medium/Low), confidence (0-1), summary, fileReferences, and proposedFix. The card renders visually in the UI — do NOT repeat the same information as text. Only add a short message like "Here's the ticket preview. The plan is to assign it to [name] in cycle [cycle]. Click Create Ticket to confirm, or tell me what to change."
-7. **Wait for confirmation**: The user will review the card. They may:
-   - Click "Create Ticket" to approve → you will receive a confirmation message → THEN call create-linear-issue with the correct cycleId, assigneeId, labelIds, and stateId.
-   - Send a message with changes (e.g., "change severity to High", "assign to Fernando instead") → update the triage details and call displayTriage AGAIN with the updated info. Do NOT repeat all details as text — always use the card.
-8. **After ticket creation**: Call sendTicketEmailTool to notify the assignee, and send-slack-ticket-notification to post to Slack.
+## Active Triage Project
+No project is currently selected. If the user asks about a codebase, tell them to select or create one at /projects.`;
+    }
 
-## Similarity Scoring
-When comparing a new incident against existing Linear issues, compute keyword overlap ratio:
-- Extract keywords from the new description and each existing issue title+description
-- Count matching keywords / total unique keywords = similarity score
-- Use the thresholds above to decide the action
+    const wikiReady = project.status === 'ready' && project.chunksCount > 0;
+    const wikiGuidance = wikiReady
+      ? `A codebase wiki is indexed for this project (${project.documentsCount} files, ${project.chunksCount} chunks). For ANY question about the codebase — what the project does, how features work, where specific code lives, what to reference during triage — call queryWikiTool with projectId="${project.id}" BEFORE answering from general knowledge. If the results don't cover the question, say so and answer from general knowledge.`
+      : `The wiki for this project is "${project.status}" (no chunks indexed yet). Don't call queryWikiTool; answer from general knowledge and tell the user the wiki isn't ready if they ask codebase-specific questions.`;
 
-## Response Style
-- Be concise, technical, and actionable
-- Always reference specific files, services, and line ranges when possible
-- If you lack context, say so — don't fabricate file paths or code references
-- When presenting a triage card via displayTriage, do NOT duplicate the card content as text — the card IS the visual preview. Only add a brief contextual message (assignee, cycle, next steps).
-- When NOT presenting a triage card (e.g., answering questions), respond in plain text
+    const linearLine = await resolveLinearTeamLine(project.id);
 
-## Linear
-- Base URL for all Linear links: ${LINEAR_BASE_URL}
-- When constructing Linear URLs, use: ${LINEAR_BASE_URL}/issue/{identifier}
-- Team ID: ${LINEAR_CONSTANTS.TEAM_ID}
+    return `${BASE_INSTRUCTIONS}
 
-## Team Members
-Use these when assigning tickets or mentioning people in Slack:
-${Object.values(LINEAR_CONSTANTS.MEMBERS).map(m => `- ${m.name}: Linear ID ${m.linearId}${m.slackId ? `, Slack <@${m.slackId}>` : ''}`).join('\n')}
+## Active Triage Project
+name="${project.name}" id="${project.id}" status="${project.status}"
 
-## Severity Labels
-- Critical: ${LINEAR_CONSTANTS.SEVERITY_LABELS.CRITICAL}
-- High: ${LINEAR_CONSTANTS.SEVERITY_LABELS.HIGH}
-- Medium: ${LINEAR_CONSTANTS.SEVERITY_LABELS.MEDIUM}
-- Low: ${LINEAR_CONSTANTS.SEVERITY_LABELS.LOW}
+This is the **Triage** project — internal to this app. Its id is a Triage UUID, NOT a Linear id. It scopes the wiki, chat history, and per-project integration keys. It is NOT the same thing as a Linear team/project.
+${linearLine}
 
-## Category Labels
-- Bug: ${LINEAR_CONSTANTS.CATEGORY_LABELS.BUG}
-- Feature: ${LINEAR_CONSTANTS.CATEGORY_LABELS.FEATURE}
-- Improvement: ${LINEAR_CONSTANTS.CATEGORY_LABELS.IMPROVEMENT}
+If the user asks "en qué proyecto estamos" / "what project are we on" — say it's the Triage project above, and mention the Linear team (if set) as *where tickets get filed*, not as the project. Never claim the Triage project exists in Linear.
 
-## Issue States
-- Triage: ${LINEAR_CONSTANTS.STATES.TRIAGE}
-- Backlog: ${LINEAR_CONSTANTS.STATES.BACKLOG}
-- Todo: ${LINEAR_CONSTANTS.STATES.TODO}
-- In Progress: ${LINEAR_CONSTANTS.STATES.IN_PROGRESS}
-- Done: ${LINEAR_CONSTANTS.STATES.DONE}
-
-## Tool Usage Rules
-- NEVER ask the user for team IDs, member IDs, label IDs, or state IDs — they are all configured above
-- Use process-attachments BEFORE any analysis when files are present
-- Use query-wiki to find relevant code before making assessments
-- **ALWAYS call displayTriage FIRST** to show a preview card before creating any ticket — the user MUST see and approve it
-- NEVER call create-linear-issue without first showing a displayTriage card and receiving user confirmation
-- Use displayDuplicate when similar tickets are found
-- Use list-linear-issues to check for duplicates before triaging
-- When the user confirms ("Confirmed", "Create the ticket", etc.), THEN call create-linear-issue with the appropriate assigneeId, labelIds, and stateId from above
-- After creating a ticket, call sendTicketEmailTool to notify the assignee
-- Use send-slack-ticket-notification to post triage alerts to Slack with severity-colored formatting
-- Use send-slack-resolution-notification to post resolution updates to Slack
-- Use send-slack-message for ad-hoc Slack messages or threaded follow-ups — use <@SLACK_USER_ID> to mention team members
-- When notifying the team, send BOTH email and Slack notifications for maximum visibility
-- All Linear URLs in notifications MUST use ${LINEAR_BASE_URL} as the base
-- **Reporter Email**: When creating a ticket, note the reporter's email address. This is the person who will receive a resolution notification when the ticket moves to Done in Linear. If the user has configured a reporter email in Settings, it will be available in the conversation context. If not, ask the user for their email before creating the ticket so resolution notifications can be sent later.
-- Delegate code review requests to the code-review-agent — it produces structured review comments with severity, categories, and actionable suggestions`,
+${wikiGuidance}`;
+  },
   memory: new Memory({
     storage: memoryStorage,
     options: {
@@ -132,29 +167,26 @@ ${Object.values(LINEAR_CONSTANTS.MEMBERS).map(m => `- ${m.name}: Linear ID ${m.l
       generateTitle: true,
     },
   }),
-  model: openrouter(MODELS.orchestrator, {
-    extraBody: {
-      models: MODEL_CHAINS.orchestrator,
-      route: 'fallback',
-      max_tokens: 4096,
-      include_reasoning: true,
-    },
-  }),
-  agents: {
-    codeReviewAgent,
+  // Mercury-2 stays primary (fast text, cheap). include_reasoning was
+  // making OpenRouter reserve the model's full 50k-token output capacity,
+  // which triggered spurious 402s on keys with lower balances. Dropped it —
+  // mercury-2 is a text-only model, reasoning tokens don't help classification.
+  // max_tokens bumped to 4000 to leave room for tool-call JSON payloads.
+  model: async ({ requestContext }) => {
+    const openrouter = await resolveOpenRouterFromContext({ requestContext });
+    return openrouter(MODELS.mercury, {
+      extraBody: {
+        models: [MODELS.mercury, MODELS.orchestratorFallback1],
+        route: 'fallback',
+        max_tokens: 4000,
+      },
+    });
   },
   tools: {
-    createLinearIssueTool,
-    updateLinearIssueTool,
     getLinearIssueTool,
     listLinearIssuesTool,
     getTeamMembersTool,
     listLinearCyclesTool,
-    sendTicketEmailTool,
-    sendResolutionEmailTool,
-    sendSlackTicketNotificationTool,
-    sendSlackResolutionNotificationTool,
-    sendSlackMessageTool,
     queryWikiTool,
     generateWikiTool,
     processAttachmentsTool,

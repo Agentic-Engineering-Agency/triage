@@ -1,12 +1,62 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows';
+import { RequestContext } from '@mastra/core/request-context';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { createClient } from '@libsql/client';
 import { queryWiki } from '../../lib/wiki-rag';
-import { createLinearIssue, searchLinearIssues } from '../tools/linear';
-import { sendTicketNotification, sendResolutionNotification } from '../tools/resend';
+import { triageAgent } from '../agents/triage-agent';
+import { resolutionReviewer } from '../agents/resolution-reviewer';
+import { codeReviewAgent } from '../agents/code-review-agent';
+import { slackNotificationAgent } from '../agents/slack-notification-agent';
+import {
+  createLinearIssue,
+  updateLinearIssue,
+  getLinearIssue,
+  searchLinearIssues,
+  listLinearCycles,
+  sendTicketNotification,
+  sendResolutionNotification,
+  commentOnGitHubPRTool,
+} from '../tools/index';
 import { sendSlackTicketNotification, sendSlackResolutionNotification } from '../tools/slack';
-import { LINEAR_CONSTANTS, LINEAR_BASE_URL } from '../../lib/config';
+import { LINEAR_CONSTANTS } from '../../lib/config';
+import { resolveStateId, resolveLabelId } from '../tools/linear-state-resolver';
+import { resolveKey } from '../../lib/tenant-keys';
+
+// Helper to call tool.execute safely.
+// Tools inside the normal agent path receive `toolCtx.requestContext` with the
+// active projectId (populated by the x-project-id middleware). Workflow steps
+// bypass the HTTP middleware, so we forge a minimal requestContext here so
+// tenant-aware tools (tenant-keys resolver) can still scope to the project.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function callTool(
+  tool: { execute?: (...args: any[]) => Promise<any> },
+  input: Record<string, unknown>,
+  ctx?: { projectId?: string },
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  if (!tool.execute) return null;
+  const runtimeContext = ctx?.projectId
+    ? {
+        requestContext: {
+          get: (key: string) => (key === 'projectId' ? ctx.projectId : undefined),
+        },
+      }
+    : {};
+  // Mastra v1.4+ passes tool args at top level, not wrapped in { context }.
+  // Pass both shapes for compatibility — tools read from whichever is present.
+  return tool.execute({ ...input, context: input }, runtimeContext);
+}
+
+// Build a RequestContext carrying the active projectId so agents invoked from
+// workflow steps (slackNotificationAgent, resolutionReviewer, codeReviewAgent)
+// can resolve per-tenant keys via their dynamic `model:` function. Without
+// this, Mastra constructs an empty context and the agents fall back to env.
+function tenantContext(projectId: string | undefined): RequestContext {
+  const rc = new RequestContext();
+  if (projectId) rc.set('projectId', projectId);
+  return rc;
+}
 
 // ---------------------------------------------------------------------------
 // Shared schemas
@@ -23,6 +73,16 @@ const incidentReportSchema = z.object({
   repository: z.string().optional().describe('GitHub org/repo for codebase wiki lookup'),
   /** Optional project ID (from local projects table) for evidence lookup later */
   projectId: z.string().uuid().optional().describe('Local project ID for later GitHub evidence lookup'),
+  /** Optional Linear user ID of the assignee (resolved by orchestrator) */
+  assigneeId: z.string().optional().describe('Linear user ID of the assignee'),
+  /** Optional email of the assignee for notification */
+  assigneeEmail: z.string().optional().describe('Email of the assignee for notification'),
+  /** Optional display name of the assignee */
+  assigneeName: z.string().optional().describe('Display name of the assignee'),
+  /** Optional Linear cycle ID (resolved by orchestrator from user-provided deadline) */
+  cycleId: z.string().optional().describe('Linear cycle ID to assign the issue to'),
+  /** Optional deadline the user mentioned, ISO date (YYYY-MM-DD) */
+  dueDate: z.string().optional().describe('Deadline extracted from user message'),
 });
 
 // ---------------------------------------------------------------------------
@@ -45,6 +105,11 @@ const intakeStep = createStep({
     repository: z.string().optional(),
     projectId: z.string().optional(),
     hasImages: z.boolean(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     // Image processing is handled by the orchestrator agent via chat.
@@ -57,6 +122,11 @@ const intakeStep = createStep({
       repository: inputData.repository,
       projectId: inputData.projectId,
       hasImages: (inputData.images?.length ?? 0) > 0,
+      assigneeId: inputData.assigneeId,
+      assigneeEmail: inputData.assigneeEmail,
+      assigneeName: inputData.assigneeName,
+      cycleId: inputData.cycleId,
+      dueDate: inputData.dueDate,
     };
   },
 });
@@ -80,6 +150,11 @@ const triageStep = createStep({
     repository: z.string().optional(),
     projectId: z.string().optional(),
     hasImages: z.boolean(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   outputSchema: z.object({
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']).describe('Incident severity'),
@@ -90,18 +165,47 @@ const triageStep = createStep({
     reporterEmail: z.string(),
     repository: z.string().optional(),
     projectId: z.string().optional(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     // 1. Query wiki RAG for relevant code context, scoped to the project
     // when one is provided. Without the projectId filter, once more than one
     // project is indexed the search can ground triage on the wrong codebase
     // and produce misattributed root causes.
+    //
+    // Skip the query entirely when the project's wiki isn't ready yet —
+    // running it anyway bills an embedding call for a guaranteed-empty
+    // result set and clutters logs with "Wiki RAG returned 0 results".
     let wikiResults: Awaited<ReturnType<typeof queryWiki>> | null = null;
-    try {
-      wikiResults = await queryWiki(inputData.enrichedDescription, inputData.projectId ?? undefined);
-      console.log(`[triage] Wiki RAG returned ${wikiResults.totalResults} results${inputData.projectId ? ` (scoped to project ${inputData.projectId})` : ' (global)'}`);
-    } catch (err) {
-      console.error('[triage] Wiki RAG query failed, continuing with heuristic triage:', err instanceof Error ? err.message : err);
+    let wikiReady = !inputData.projectId;
+    if (inputData.projectId) {
+      try {
+        const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
+        const r = await db.execute({
+          sql: 'SELECT status, chunks_count FROM projects WHERE id = ? LIMIT 1',
+          args: [inputData.projectId],
+        });
+        const row = r.rows[0];
+        wikiReady = row ? row.status === 'ready' && Number(row.chunks_count ?? 0) > 0 : false;
+        if (!wikiReady) {
+          console.log(`[triage] Skipping Wiki RAG — project ${inputData.projectId} wiki_status="${row?.status ?? 'missing'}" chunks=${row?.chunks_count ?? 0}`);
+        }
+      } catch (err) {
+        console.warn('[triage] Could not check project wiki status, will attempt query anyway:', err instanceof Error ? err.message : err);
+        wikiReady = true;
+      }
+    }
+    if (wikiReady) {
+      try {
+        wikiResults = await queryWiki(inputData.enrichedDescription, inputData.projectId ?? undefined);
+        console.log(`[triage] Wiki RAG returned ${wikiResults.totalResults} results${inputData.projectId ? ` (scoped to project ${inputData.projectId})` : ' (global)'}`);
+      } catch (err) {
+        console.error('[triage] Wiki RAG query failed, continuing with heuristic triage:', err instanceof Error ? err.message : err);
+      }
     }
 
     // 2. Determine severity from description keywords (heuristic)
@@ -157,6 +261,11 @@ const triageStep = createStep({
       reporterEmail: inputData.reporterEmail,
       repository: inputData.repository,
       projectId: inputData.projectId,
+      assigneeId: inputData.assigneeId,
+      assigneeEmail: inputData.assigneeEmail,
+      assigneeName: inputData.assigneeName,
+      cycleId: inputData.cycleId,
+      dueDate: inputData.dueDate,
     };
   },
 });
@@ -183,6 +292,11 @@ const dedupStep = createStep({
     reporterEmail: z.string(),
     repository: z.string().optional(),
     projectId: z.string().optional(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   outputSchema: z.object({
     isDuplicate: z.boolean(),
@@ -198,6 +312,11 @@ const dedupStep = createStep({
     reporterEmail: z.string(),
     repository: z.string().optional(),
     projectId: z.string().optional(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     let isDuplicate = false;
@@ -256,6 +375,11 @@ const dedupStep = createStep({
       reporterEmail: inputData.reporterEmail,
       repository: inputData.repository,
       projectId: inputData.projectId,
+      assigneeId: inputData.assigneeId,
+      assigneeEmail: inputData.assigneeEmail,
+      assigneeName: inputData.assigneeName,
+      cycleId: inputData.cycleId,
+      dueDate: inputData.dueDate,
     };
   },
 });
@@ -286,6 +410,11 @@ const ticketStep = createStep({
     reporterEmail: z.string(),
     repository: z.string().optional(),
     projectId: z.string().optional(),
+    assigneeId: z.string().optional(),
+    assigneeEmail: z.string().optional(),
+    assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
   }),
   outputSchema: z.object({
     issueId: z.string().describe('Linear issue identifier'),
@@ -297,9 +426,10 @@ const ticketStep = createStep({
     reporterEmail: z.string(),
     assigneeEmail: z.string().optional().describe('Email of the Linear assignee, if assigned'),
     assigneeName: z.string().optional().describe('Display name of the Linear assignee'),
+    projectId: z.string().optional().describe('Carries the tenant project id through the rest of the pipeline for per-tenant key resolution'),
   }),
   execute: async ({ inputData }) => {
-    // If duplicate, return existing issue info
+    // If duplicate, return existing issue info and persist a local_tickets row
     if (inputData.isDuplicate && inputData.existingIssueId) {
       console.log(`[ticket] Duplicate detected — returning existing issue ${inputData.existingIssueId}`);
 
@@ -307,8 +437,7 @@ const ticketStep = createStep({
       // Linear issues (created before Phase 2b) otherwise have no local row,
       // leaving the In Review evidence-check handler without reporter email
       // or project context to bounce them back. Best-effort: a DB failure
-      // here must not block the workflow. status='duplicate_detected' lets
-      // downstream queries distinguish these from fresh ticket creations.
+      // here must not block the workflow.
       try {
         const priorityMap: Record<string, number> = { P0: 1, P1: 1, P2: 2, P3: 3, P4: 4 };
         const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
@@ -325,7 +454,7 @@ const ticketStep = createStep({
             inputData.severity,
             priorityMap[inputData.severity] ?? 3,
             'duplicate_detected',
-            null,
+            inputData.assigneeId ?? null,
             inputData.projectId ?? null,
             inputData.reporterEmail,
             now,
@@ -339,12 +468,15 @@ const ticketStep = createStep({
 
       return {
         issueId: inputData.existingIssueId,
-        issueUrl: inputData.existingIssueUrl ?? `${LINEAR_BASE_URL}/issue/${inputData.existingIssueId}`,
+        issueUrl: inputData.existingIssueUrl ?? '',
         wasUpdated: true,
         severity: inputData.severity,
         rootCause: inputData.rootCause,
         triageSummary: inputData.triageSummary,
         reporterEmail: inputData.reporterEmail,
+        assigneeEmail: inputData.assigneeEmail,
+        assigneeName: inputData.assigneeName,
+        projectId: inputData.projectId,
       };
     }
 
@@ -352,39 +484,72 @@ const ticketStep = createStep({
     const severityToPriority: Record<string, number> = { P0: 1, P1: 1, P2: 2, P3: 3, P4: 4 };
     const priority = severityToPriority[inputData.severity] ?? 3;
 
-    // Map severity to label IDs
-    const severityToLabel: Record<string, string> = {
-      P0: LINEAR_CONSTANTS.SEVERITY_LABELS.CRITICAL,
-      P1: LINEAR_CONSTANTS.SEVERITY_LABELS.HIGH,
-      P2: LINEAR_CONSTANTS.SEVERITY_LABELS.MEDIUM,
-      P3: LINEAR_CONSTANTS.SEVERITY_LABELS.LOW,
-      P4: LINEAR_CONSTANTS.SEVERITY_LABELS.LOW,
-    };
-    const labelIds = [severityToLabel[inputData.severity]].filter(Boolean);
-
     // Build ticket title from description
     const title = `[${inputData.severity}] ${inputData.enrichedDescription.slice(0, 100)}`;
 
     try {
-      const result = await createLinearIssue.execute?.(
-        {
-          teamId: LINEAR_CONSTANTS.TEAM_ID,
-          title,
-          description: inputData.triageSummary,
-          priority,
-          labelIds,
-          stateId: LINEAR_CONSTANTS.STATES.TRIAGE,
-        },
-        {} as never,
-      );
+      // Resolve the Linear key for this tenant up front — used by state/label
+      // resolvers below. Fallback to env when the project has no tenant key.
+      const { key: linearApiKey } = await resolveKey('linear', inputData.projectId);
 
-      if (result && typeof result === 'object' && 'success' in result && result.success) {
-        const data = (result as { success: true; data: { id: string; identifier: string; url: string; title: string } }).data;
-        console.log(`[ticket] Created Linear issue: ${data.identifier}`);
+      // Resolve state + label IDs dynamically from the current team.
+      // IMPORTANT: Linear defaults new issues to the "Triage" state when
+      // stateId is not specified, which hides them from the main board. We
+      // must explicitly target "Todo" (or "Backlog" as fallback) so issues
+      // show up on the board immediately for the assignee.
+      const todoStateId = (await resolveStateId('TODO', linearApiKey ?? undefined))
+        || (await resolveStateId('BACKLOG', linearApiKey ?? undefined));
+
+      // Cycle resolution: prefer the cycleId the orchestrator chose (based on
+      // the user-provided deadline). Fall back to the currently-active cycle
+      // only when the orchestrator didn't pick one — preserves the legacy
+      // behaviour for flows that don't propagate a cycleId.
+      let activeCycleId: string | undefined = inputData.cycleId;
+      if (!activeCycleId) {
+        try {
+          const cyclesResult = await callTool(listLinearCycles, {}, { projectId: inputData.projectId });
+          const cyclesData = (cyclesResult as { data?: { cycles?: Array<{ id: string }> } } | undefined)?.data;
+          if (cyclesData?.cycles && cyclesData.cycles.length > 0) {
+            activeCycleId = cyclesData.cycles[0].id;
+          }
+        } catch (cycleErr) {
+          console.warn('[ticket] Failed to resolve active cycle:', cycleErr instanceof Error ? cycleErr.message : cycleErr);
+        }
+      }
+
+      const severityToLabelName: Record<string, string> = {
+        P0: 'CRITICAL',
+        P1: 'HIGH',
+        P2: 'MEDIUM',
+        P3: 'LOW',
+        P4: 'LOW',
+      };
+      const severityLabelId = await resolveLabelId(severityToLabelName[inputData.severity], linearApiKey ?? undefined);
+      const bugLabelId = await resolveLabelId('BUG', linearApiKey ?? undefined);
+      const labelIds = [severityLabelId, bugLabelId].filter(Boolean);
+
+      const createArgs: Record<string, unknown> = {
+        teamId: LINEAR_CONSTANTS.TEAM_ID,
+        title,
+        description: `## Root Cause\n${inputData.rootCause}\n\n## Details\n${inputData.enrichedDescription}\n\n## Suggested Files\n${inputData.suggestedFiles.join('\n')}\n\n---\n*Reporter: ${inputData.reporterEmail}*`,
+        priority,
+      };
+      if (labelIds.length > 0) createArgs.labelIds = labelIds;
+      if (inputData.assigneeId) createArgs.assigneeId = inputData.assigneeId;
+      if (todoStateId) createArgs.stateId = todoStateId;
+      if (activeCycleId) createArgs.cycleId = activeCycleId;
+
+      const result = await callTool(createLinearIssue, createArgs, { projectId: inputData.projectId });
+
+      const created = result && typeof result === 'object' && 'data' in result
+        ? (result as Record<string, unknown>).data as { id?: string; identifier?: string; url?: string } | undefined
+        : undefined;
+
+      if (created?.id) {
+        console.log(`[ticket] Created Linear issue: ${created.identifier ?? created.id}`);
 
         // Persist a local_tickets row so the In Review webhook handler can
-        // recover the reporter email + project context later. Best-effort:
-        // a failure here must NOT block the workflow.
+        // recover the reporter email + project context later. Best-effort.
         try {
           const db = createClient({ url: process.env.LIBSQL_URL || 'http://libsql:8080' });
           const now = Date.now();
@@ -394,47 +559,60 @@ const ticketStep = createStep({
                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             args: [
               crypto.randomUUID(),
-              data.id,
+              created.id,
               title,
               inputData.triageSummary,
               inputData.severity,
               priority,
               'in_triage',
-              null,
+              inputData.assigneeId ?? null,
               inputData.projectId ?? null,
               inputData.reporterEmail,
               now,
               now,
             ],
           });
-          console.log(`[ticket] Persisted local_tickets row for ${data.identifier}`);
+          console.log(`[ticket] Persisted local_tickets row for ${created.identifier ?? created.id}`);
         } catch (dbErr) {
           console.error('[ticket] local_tickets insert failed (non-fatal):', dbErr instanceof Error ? dbErr.message : dbErr);
         }
 
+        // Prefer assignee info propagated from the orchestrator's triage card.
+        // If missing, fall back to fetching it from the just-created Linear issue
+        // (e.g., when an auto-assignment rule kicked in).
+        let assigneeEmail: string | undefined = inputData.assigneeEmail;
+        let assigneeName: string | undefined = inputData.assigneeName;
+        if (!assigneeEmail || !assigneeName) {
+          const issueDetails = await callTool(getLinearIssue, { issueId: created.id }, { projectId: inputData.projectId }).catch(() => null);
+          const details = (issueDetails as Record<string, unknown>)?.data as { assignee?: { email: string; name: string } | null } | undefined;
+          if (details?.assignee) {
+            assigneeEmail = assigneeEmail ?? details.assignee.email;
+            assigneeName = assigneeName ?? details.assignee.name;
+          }
+        }
+
         return {
-          issueId: data.id,
-          issueUrl: data.url,
+          issueId: created.id,
+          issueUrl: created.url ?? '',
           wasUpdated: false,
           severity: inputData.severity,
           rootCause: inputData.rootCause,
           triageSummary: inputData.triageSummary,
           reporterEmail: inputData.reporterEmail,
+          assigneeEmail,
+          assigneeName,
+          projectId: inputData.projectId,
         };
       }
 
-      // Linear call returned but was unsuccessful — fall through to the
-      // fail-closed throw below so debug context is preserved.
+      // Linear call returned but was unsuccessful
       console.error('[ticket] Linear createIssue returned unsuccessful:', result);
     } catch (err) {
       console.error('[ticket] Linear createIssue failed:', err instanceof Error ? err.message : err);
     }
 
     // Linear creation failed. We cannot proceed with the notify+suspend
-    // flow because there is no Linear webhook to resume on. Fail the
-    // workflow step so the caller sees the real error instead of a fake
-    // 'local-*' ID that the downstream notify/verify steps would cheerfully
-    // broadcast to users.
+    // flow because there is no Linear webhook to resume on.
     throw new Error(
       `[ticket] Linear createIssue failed — cannot proceed without a real Linear issue. Last error above.`,
     );
@@ -463,6 +641,9 @@ const notifyStep = createStep({
     reporterEmail: z.string(),
     assigneeEmail: z.string().optional(),
     assigneeName: z.string().optional(),
+    cycleId: z.string().optional(),
+    dueDate: z.string().optional(),
+    projectId: z.string().optional(),
   }),
   outputSchema: z.object({
     notificationSent: z.boolean(),
@@ -471,6 +652,8 @@ const notifyStep = createStep({
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     rootCause: z.string(),
     reporterEmail: z.string(),
+    notifiedEmail: z.string().optional().describe('Actual email recipient (assignee or reporter fallback)'),
+    projectId: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     // Map P0-P4 to notification severity labels
@@ -483,71 +666,57 @@ const notifyStep = createStep({
     const priorityMap: Record<string, number> = { P0: 1, P1: 1, P2: 2, P3: 3, P4: 4 };
     const priority = priorityMap[inputData.severity] ?? 3;
 
-    // Route to the assignee when one is set, otherwise fall back to the
-    // reporter. The current ticket step doesn't pass assigneeId through to
-    // createLinearIssue (the orchestrator agent picks assignees, not the
-    // workflow), so these fields are undefined in practice — but threading
-    // the fallback means future code that DOES populate assigneeEmail will
-    // notify the right person without further plumbing.
-    const notifyTo = inputData.assigneeEmail ?? inputData.reporterEmail;
-    const notifyName = inputData.assigneeName ?? 'On-Call Engineer';
-
     let emailSent = false;
     let slackSent = false;
+    const notifyEmail = inputData.assigneeEmail ?? inputData.reporterEmail;
 
-    // Send email notification via Resend
+    // Send email notification via Resend.
+    // Target the ASSIGNEE (the person who must resolve the issue). Falls back
+    // to reporterEmail only if no assignee was resolved (degraded mode).
     try {
-      const emailResult = await sendTicketNotification.execute?.(
-        {
-          to: notifyTo,
-          ticketTitle: inputData.triageSummary.slice(0, 100),
-          severity,
-          priority,
-          summary: inputData.triageSummary,
-          linearUrl: inputData.issueUrl,
-          assigneeName: notifyName,
-          linearIssueId: inputData.issueId,
-        },
-        {} as never,
-      );
-      emailSent = !!emailResult
-        && typeof emailResult === 'object'
-        && 'success' in emailResult
-        && (emailResult as { success: unknown }).success === true;
-      if (emailSent) {
-        console.log(`[notify] Email notification sent to ${notifyTo}`);
+      const notifyName = inputData.assigneeName ?? 'Team';
+
+      const emailResult = await callTool(sendTicketNotification, {
+        to: notifyEmail,
+        ticketTitle: inputData.triageSummary.slice(0, 120),
+        severity,
+        priority,
+        summary: inputData.triageSummary,
+        linearUrl: inputData.issueUrl,
+        assigneeName: notifyName,
+        linearIssueId: inputData.issueId,
+      }, { projectId: inputData.projectId });
+      // Validate the tool reported success — Resend may have rejected the
+      // subject or rate-limited, in which case we must not claim "sent".
+      if (emailResult && typeof emailResult === 'object' && 'success' in emailResult && (emailResult as { success: boolean }).success) {
+        emailSent = true;
+        console.log(`[notify] Email notification sent to ${notifyEmail}`);
       } else {
-        console.error('[notify] Email notification returned unsuccessful:', emailResult);
+        const errMsg = (emailResult as { error?: string })?.error ?? 'unknown error';
+        console.error(`[notify] Email send returned failure for ${notifyEmail}: ${errMsg}`);
       }
     } catch (err) {
       console.error('[notify] Email notification failed:', err instanceof Error ? err.message : err);
     }
 
-    // Send Slack notification
+    // Send Slack notification via agent
     try {
-      const slackResult = await sendSlackTicketNotification.execute?.(
-        {
-          ticketTitle: inputData.triageSummary.slice(0, 100),
-          severity,
-          priority,
-          summary: inputData.triageSummary,
-          linearUrl: inputData.issueUrl,
-          assigneeName: notifyName,
-          linearIssueId: inputData.issueId,
-        },
-        {} as never,
+      const ticketData = {
+        ticketTitle: inputData.triageSummary.slice(0, 120),
+        severity,
+        summary: inputData.triageSummary,
+        linearUrl: inputData.issueUrl,
+        assigneeName: inputData.assigneeName ?? 'On-Call Engineer',
+        linearIssueId: inputData.issueId,
+      };
+      await slackNotificationAgent.generate(
+        `Format and send this ticket notification to Slack: ${JSON.stringify(ticketData)}`,
+        { requestContext: tenantContext(inputData.projectId) },
       );
-      slackSent = !!slackResult
-        && typeof slackResult === 'object'
-        && 'success' in slackResult
-        && (slackResult as { success: unknown }).success === true;
-      if (slackSent) {
-        console.log(`[notify] Slack notification sent`);
-      } else {
-        console.error('[notify] Slack notification returned unsuccessful:', slackResult);
-      }
-    } catch (err) {
-      console.error('[notify] Slack notification failed:', err instanceof Error ? err.message : err);
+      slackSent = true;
+      console.log('[notify] Slack notification sent via agent');
+    } catch (slackErr) {
+      console.error('[notify] Slack notification failed (non-blocking):', slackErr instanceof Error ? slackErr.message : slackErr);
     }
 
     return {
@@ -557,6 +726,8 @@ const notifyStep = createStep({
       severity: inputData.severity,
       rootCause: inputData.rootCause,
       reporterEmail: inputData.reporterEmail,
+      notifiedEmail: emailSent ? notifyEmail : undefined,
+      projectId: inputData.projectId,
     };
   },
 });
@@ -586,6 +757,7 @@ const suspendStep = createStep({
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     rootCause: z.string(),
     reporterEmail: z.string(),
+    projectId: z.string().optional(),
   }),
   outputSchema: z.object({
     issueId: z.string(),
@@ -593,6 +765,7 @@ const suspendStep = createStep({
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     rootCause: z.string(),
     reporterEmail: z.string(),
+    projectId: z.string().optional(),
     webhookPayload: z.object({
       newStatus: z.string(),
       updatedAt: z.string(),
@@ -627,6 +800,7 @@ const suspendStep = createStep({
       severity: inputData.severity,
       rootCause: inputData.rootCause,
       reporterEmail: inputData.reporterEmail,
+      projectId: inputData.projectId,
       webhookPayload: {
         newStatus: resumeData.newStatus,
         updatedAt: resumeData.updatedAt,
@@ -644,7 +818,8 @@ const suspendStep = createStep({
  * **verify** – Run resolution verification after the fix is deployed.
  *
  * Checks the webhook payload status to determine if the fix was deployed
- * and produces a verification verdict.
+ * and produces a verification verdict. Uses resolution-reviewer and
+ * code-review-agent for PR analysis when available.
  */
 const verifyStep = createStep({
   id: 'verify',
@@ -655,6 +830,7 @@ const verifyStep = createStep({
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     rootCause: z.string(),
     reporterEmail: z.string(),
+    projectId: z.string().optional(),
     webhookPayload: z.object({
       newStatus: z.string(),
       updatedAt: z.string(),
@@ -668,46 +844,105 @@ const verifyStep = createStep({
     issueUrl: z.string(),
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     reporterEmail: z.string(),
+    projectId: z.string().optional(),
   }),
   execute: async ({ inputData }) => {
     const { webhookPayload } = inputData;
     const newStatus = webhookPayload.newStatus.toLowerCase();
 
-    // Evidence gate: a ticket can only be marked fully resolved if at least
-    // one concrete artefact points at a landed fix. Otherwise a manual status
-    // flip in Linear would fire a premature "fixed!" notification to the
-    // reporter. Check for a GitHub PR URL either on the webhook payload's
-    // deployUrl field or inside the triage rootCause text.
-    //
-    // The comprehensive evidence check — querying Linear comments and
-    // GitHub commits/branches — runs earlier in the In Review webhook
-    // branch in runtime/src/mastra/index.ts; this is a minimal status-only
-    // gate for the workflow's post-Done verify step.
-    const PR_URL_RE = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/i;
-    const prUrlFromDeploy = webhookPayload.deployUrl && PR_URL_RE.test(webhookPayload.deployUrl)
-      ? webhookPayload.deployUrl
-      : null;
-    const prUrlFromRootCause = inputData.rootCause.match(PR_URL_RE)?.[0] ?? null;
-    const prUrl = prUrlFromDeploy ?? prUrlFromRootCause;
-
-    // Determine verdict based on the Linear status change + evidence gate
+    // Determine verdict based on the Linear status change
     let verdict: 'resolved' | 'partially_resolved' | 'unresolved';
     let verificationNotes: string;
 
-    if (newStatus === 'done' || newStatus === 'deployed' || newStatus === 'completed') {
-      if (prUrl) {
-        verdict = 'resolved';
-        verificationNotes = `Issue marked as "${webhookPayload.newStatus}" at ${webhookPayload.updatedAt}. Resolution evidence: ${prUrl}. Root cause was: "${inputData.rootCause}"`;
-      } else {
-        verdict = 'partially_resolved';
-        verificationNotes = `Issue marked as "${webhookPayload.newStatus}" at ${webhookPayload.updatedAt} but no GitHub PR URL was found in the deploy metadata or root-cause notes. Marking as partially resolved pending manual verification. Root cause was: "${inputData.rootCause}"`;
+    try {
+      // 1. Fetch issue details for context
+      const issueResult = await callTool(getLinearIssue, { issueId: inputData.issueId }, { projectId: inputData.projectId });
+      const issueData = issueResult && typeof issueResult === 'object' && 'data' in issueResult
+        ? (issueResult as Record<string, unknown>).data as Record<string, unknown> | undefined
+        : undefined;
+      const description = String(issueData?.description ?? '');
+
+      // 2. Check for PR links in the issue description
+      const prUrlMatch = description.match(/https:\/\/github\.com\/[^\s)]+\/pull\/\d+/);
+
+      if (!prUrlMatch) {
+        // No PR found — use resolution-reviewer for verdict
+        const resolutionResult = await resolutionReviewer.generate(
+          `The Linear issue was moved to "${inputData.webhookPayload.newStatus}".\n` +
+          `Original root cause: ${inputData.rootCause}\n` +
+          `Issue description:\n${description.slice(0, 2000)}\n\n` +
+          `Based on the status change, provide a resolution summary.`,
+          { requestContext: tenantContext(inputData.projectId) },
+        );
+
+        return {
+          verdict: 'resolved' as const,
+          verificationNotes: resolutionResult.text?.slice(0, 1000) ?? `Issue marked as ${inputData.webhookPayload.newStatus}.`,
+          issueId: inputData.issueId,
+          issueUrl: inputData.issueUrl,
+          severity: inputData.severity,
+          reporterEmail: inputData.reporterEmail,
+          projectId: inputData.projectId,
+        };
       }
-    } else if (newStatus === 'in review' || newStatus === 'in progress') {
-      verdict = 'partially_resolved';
-      verificationNotes = `Issue is "${webhookPayload.newStatus}" — fix is in progress but not yet verified. Root cause: "${inputData.rootCause}"`;
-    } else {
-      verdict = 'unresolved';
-      verificationNotes = `Issue status changed to "${webhookPayload.newStatus}" — does not indicate resolution. Root cause: "${inputData.rootCause}"`;
+
+      // 3. Run resolution-reviewer and code-review-agent in parallel
+      const prUrl = prUrlMatch[0];
+      const rc = tenantContext(inputData.projectId);
+      const [resolutionResult, codeReviewResult] = await Promise.all([
+        resolutionReviewer.generate(
+          `Verify if this fix resolves the incident.\nOriginal root cause: ${inputData.rootCause}\nPR: ${prUrl}\nIssue: ${inputData.issueUrl}`,
+          { requestContext: rc },
+        ),
+        codeReviewAgent.generate(
+          `Review the code changes in this PR for quality and correctness.\nPR: ${prUrl}\nContext: This PR should fix: ${inputData.rootCause}`,
+          { requestContext: rc },
+        ),
+      ]);
+
+      const hasIssues = codeReviewResult.text?.toLowerCase().includes('request-changes') ||
+        codeReviewResult.text?.toLowerCase().includes('critical') ||
+        codeReviewResult.text?.toLowerCase().includes('major');
+
+      if (hasIssues) {
+        await callTool(commentOnGitHubPRTool, {
+          prUrl,
+          body: `## Automated Code Review\n\n${codeReviewResult.text}\n\n---\n*Review by Triage SRE Agent*`,
+        }, { projectId: inputData.projectId });
+        const { key: linearApiKey } = await resolveKey('linear', inputData.projectId);
+        const inReviewStateId = await resolveStateId('IN_REVIEW', linearApiKey ?? undefined);
+        if (inReviewStateId) {
+          await callTool(updateLinearIssue, {
+            issueId: inputData.issueId,
+            stateId: inReviewStateId,
+          }, { projectId: inputData.projectId });
+        }
+        return {
+          verdict: 'partially_resolved' as const,
+          verificationNotes: `Code review found issues. PR: ${prUrl}. ${resolutionResult.text?.slice(0, 500) ?? ''}`,
+          issueId: inputData.issueId,
+          issueUrl: inputData.issueUrl,
+          severity: inputData.severity,
+          reporterEmail: inputData.reporterEmail,
+          projectId: inputData.projectId,
+        };
+      }
+
+      verdict = 'resolved';
+      verificationNotes = `Fix verified. ${resolutionResult.text?.slice(0, 500) ?? ''}`;
+    } catch (error) {
+      console.error('[verify] Error:', error);
+      // Fall back to status-based verdict
+      if (newStatus === 'done' || newStatus === 'deployed' || newStatus === 'completed') {
+        verdict = 'resolved';
+        verificationNotes = `Issue marked as "${webhookPayload.newStatus}" at ${webhookPayload.updatedAt}. Root cause was: "${inputData.rootCause}"`;
+      } else if (newStatus === 'in review' || newStatus === 'in progress') {
+        verdict = 'partially_resolved';
+        verificationNotes = `Issue is "${webhookPayload.newStatus}" — fix is in progress but not yet verified. Root cause: "${inputData.rootCause}"`;
+      } else {
+        verdict = 'unresolved';
+        verificationNotes = `Issue status changed to "${webhookPayload.newStatus}" — does not indicate resolution. Root cause: "${inputData.rootCause}"`;
+      }
     }
 
     console.log(`[verify] Verdict: ${verdict} (status: ${webhookPayload.newStatus})`);
@@ -719,6 +954,7 @@ const verifyStep = createStep({
       issueUrl: inputData.issueUrl,
       severity: inputData.severity,
       reporterEmail: inputData.reporterEmail,
+      projectId: inputData.projectId,
     };
   },
 });
@@ -743,6 +979,7 @@ const notifyResolutionStep = createStep({
     issueUrl: z.string(),
     severity: z.enum(['P0', 'P1', 'P2', 'P3', 'P4']),
     reporterEmail: z.string(),
+    projectId: z.string().optional(),
   }),
   outputSchema: z.object({
     notificationSent: z.boolean(),
@@ -757,54 +994,55 @@ const notifyResolutionStep = createStep({
     let emailSent = false;
     let slackSent = false;
 
-    // Send resolution email via Resend
+    // Send resolution email via Resend.
+    // sendResolutionNotification returns { success: false, error } on failure
+    // instead of throwing — so check result.success explicitly. Otherwise a
+    // silently-failed send would still log "Resolution email sent".
+    // Use callTool() (the same helper notifyStep uses for sendTicketNotification)
+    // so the args reach Mastra in BOTH shapes (top-level + context) and the
+    // runtimeContext second arg is provided. Calling .execute() directly with a
+    // single { context } arg silently fails inside Mastra v1.4 and returns
+    // { success: false, error: true } instead of actually invoking Resend.
     try {
-      const emailResult = await sendResolutionNotification.execute?.(
-        {
-          to: inputData.reporterEmail,
-          originalTitle: ticketTitle,
-          resolutionSummary,
-          linearUrl: inputData.issueUrl,
-          linearIssueId: inputData.issueId,
-        },
-        {} as never,
-      );
-      emailSent = !!emailResult
-        && typeof emailResult === 'object'
-        && 'success' in emailResult
-        && (emailResult as { success: unknown }).success === true;
-      if (emailSent) {
+      const emailResult = await callTool(sendResolutionNotification, {
+        to: inputData.reporterEmail,
+        originalTitle: ticketTitle,
+        resolutionSummary,
+        linearUrl: inputData.issueUrl,
+        linearIssueId: inputData.issueId,
+      }, { projectId: inputData.projectId });
+      if (emailResult && typeof emailResult === 'object' && 'success' in emailResult && (emailResult as { success: boolean }).success) {
+        emailSent = true;
         console.log(`[notify-resolution] Resolution email sent to ${inputData.reporterEmail}`);
       } else {
-        console.error('[notify-resolution] Resolution email returned unsuccessful:', emailResult);
+        const errMsg = (emailResult as { error?: string })?.error ?? 'unknown error';
+        console.error(`[notify-resolution] Email send returned failure for ${inputData.reporterEmail}: ${errMsg}`);
       }
     } catch (err) {
       console.error('[notify-resolution] Email notification failed:', err instanceof Error ? err.message : err);
     }
 
-    // Send resolution Slack notification
+    // Send resolution Slack notification via agent.
+    // agent.generate() can throw on LLM errors (credit limit, timeout) — we
+    // keep catching those — but there's no boolean to verify delivery, so we
+    // rely solely on the absence of an exception.
     try {
-      const slackResult = await sendSlackResolutionNotification.execute?.(
-        {
-          originalTitle: ticketTitle,
-          resolutionSummary,
-          verdict: inputData.verdict,
-          linearUrl: inputData.issueUrl,
-          linearIssueId: inputData.issueId,
-        },
-        {} as never,
+      const resolutionData = {
+        ticketTitle: `Issue ${inputData.issueId}`,
+        severity: 'Resolved',
+        summary: `Resolution: ${resolutionSummary}\n\nVerdict: ${inputData.verdict}`,
+        linearUrl: inputData.issueUrl,
+        assigneeName: 'Triage SRE',
+        linearIssueId: inputData.issueId,
+      };
+      await slackNotificationAgent.generate(
+        `Format and send this resolution notification to Slack: ${JSON.stringify(resolutionData)}`,
+        { requestContext: tenantContext(inputData.projectId) },
       );
-      slackSent = !!slackResult
-        && typeof slackResult === 'object'
-        && 'success' in slackResult
-        && (slackResult as { success: unknown }).success === true;
-      if (slackSent) {
-        console.log(`[notify-resolution] Slack resolution notification sent`);
-      } else {
-        console.error('[notify-resolution] Slack resolution notification returned unsuccessful:', slackResult);
-      }
+      slackSent = true;
+      console.log('[notify-resolution] Slack notification sent via agent');
     } catch (err) {
-      console.error('[notify-resolution] Slack notification failed:', err instanceof Error ? err.message : err);
+      console.error('[notify-resolution] Slack failed (non-blocking):', err instanceof Error ? err.message : err);
     }
 
     return {

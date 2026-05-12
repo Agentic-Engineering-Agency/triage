@@ -82,6 +82,32 @@ Open [http://localhost:3000](http://localhost:3000) for the Langfuse observabili
 
 See [`.env.example`](./.env.example) for all 58 documented variables. See [`QUICKGUIDE.md`](./QUICKGUIDE.md) for detailed setup and troubleshooting.
 
+## Testing the webhook flow
+
+After a Linear ticket is created, the triage workflow suspends until Linear POSTs an update — moving the ticket to **Done** resumes it (email to reporter), and **In Review** runs an evidence check. Incoming webhooks are verified with HMAC-SHA256 + a ±60s replay window; unsigned or tampered payloads are rejected 401, and if no secret is registered the endpoint returns 503 (fail-closed).
+
+Two ways to exercise the flow locally:
+
+**A) Simulate without Linear** — no public URL required:
+
+```bash
+export WEBHOOK_SECRET=dev-only-not-a-real-secret
+./scripts/simulate-webhook.sh <linear_issue_uuid> done       # resumes workflow
+./scripts/simulate-webhook.sh <linear_issue_uuid> in-review  # triggers evidence check
+```
+
+The script signs the payload with your `WEBHOOK_SECRET` before POSTing to `/api/webhooks/linear`. Find a UUID in `workflow_runs` after creating a ticket through chat.
+
+**B) Real webhook from Linear** — requires a public URL (deploy, or tunnel `:4111` with ngrok / Cloudflare Tunnel):
+
+```bash
+curl -X POST https://<public-url>/api/linear/webhook/setup \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://<public-url>/api/webhooks/linear"}'
+```
+
+The endpoint calls Linear's `createWebhook`, captures the signing secret Linear returns (one-time), and persists it in the `webhook_secrets` table. Subsequent real Linear events verify against that stored secret automatically.
+
 ## Tech Stack
 
 | Layer | Technology | Purpose |

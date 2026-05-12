@@ -9,9 +9,15 @@ import { createClient } from '@libsql/client';
 import { LibSQLVector } from '@mastra/libsql';
 import { MDocument } from '@mastra/rag';
 import { embed, embedMany } from 'ai';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { resolveOpenRouterFromProjectId } from './tenant-openrouter';
+import { resolveKey } from './tenant-keys';
+import {
+  parseGithubRepoUrl,
+  buildAuthenticatedCloneUrl,
+  scrubPatFromString,
+} from './github-repo';
 import { execFileSync } from 'child_process';
-import { readFileSync, readdirSync, statSync, existsSync, rmSync } from 'fs';
+import { readFileSync, readdirSync, lstatSync, existsSync, rmSync } from 'fs';
 import { join, extname, relative } from 'path';
 import crypto from 'crypto';
 
@@ -66,10 +72,25 @@ function scanFiles(dir: string, base: string): { path: string; relativePath: str
   const results: { path: string; relativePath: string }[] = [];
 
   function walk(current: string) {
-    const entries = readdirSync(current);
+    let entries: string[];
+    try {
+      entries = readdirSync(current);
+    } catch (err) {
+      console.warn(`[wiki-rag] Skipping unreadable dir ${current}: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
     for (const entry of entries) {
       const full = join(current, entry);
-      const stat = statSync(full);
+      let stat;
+      try {
+        // lstat (not stat) so broken symlinks don't throw ENOENT and symlinks
+        // that could escape the clone aren't followed into arbitrary targets.
+        stat = lstatSync(full);
+      } catch {
+        continue;
+      }
+
+      if (stat.isSymbolicLink()) continue;
 
       if (stat.isDirectory()) {
         if (!SKIP_DIRS.has(entry)) walk(full);
@@ -122,6 +143,41 @@ export async function generateWiki(
   const vectorStore = getVectorStore();
   const tmpDir = `/tmp/wiki-clone-${projectId}`;
 
+  // Resolve a GitHub PAT for this project if one exists, so private repos
+  // clone. Non-GitHub URLs skip the auth-injection path entirely — resolveKey
+  // still runs (cheap), but the URL rewrite is gated on parseGithubRepoUrl.
+  // Held in `cloneSecret` so we can scrub it from error messages below.
+  const parsedRepo = parseGithubRepoUrl(repositoryUrl);
+  let cloneUrl = repositoryUrl;
+  let cloneSecret: string | null = null;
+  if (parsedRepo) {
+    const resolved = await resolveKey('github', projectId);
+    if (resolved.key) {
+      cloneSecret = resolved.key;
+      cloneUrl = buildAuthenticatedCloneUrl(parsedRepo.owner, parsedRepo.repo, resolved.key);
+    }
+  }
+
+  // Defense-in-depth: if this project was flagged needs_auth and we still
+  // have no PAT, bail out instead of re-attempting a public clone that'll
+  // fail again. The row stays in needs_auth; PUT /integrations/github is the
+  // path that clears it.
+  if (!cloneSecret && parsedRepo) {
+    const statusRow = await db.execute({
+      sql: `SELECT status FROM projects WHERE id = ?`,
+      args: [projectId],
+    });
+    if (statusRow.rows[0]?.status === 'needs_auth') {
+      return {
+        projectId,
+        documentsProcessed: 0,
+        chunksCreated: 0,
+        success: false,
+        error: 'needs_auth',
+      };
+    }
+  }
+
   try {
     // Update project status
     await db.execute({
@@ -133,7 +189,7 @@ export async function generateWiki(
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
     const gitArgs = ['clone', '--depth', '1'];
     if (branch) gitArgs.push('--branch', branch);
-    gitArgs.push(repositoryUrl, tmpDir);
+    gitArgs.push(cloneUrl, tmpDir);
     execFileSync('git', gitArgs, { timeout: 60_000, stdio: 'pipe' });
 
     // Scan source files
@@ -200,12 +256,17 @@ export async function generateWiki(
           });
         }
       } catch (err) {
-        console.warn(`[wiki-rag] Skipping ${file.relativePath}: ${err instanceof Error ? err.message : 'unknown error'}`);
+        const rawMsg = err instanceof Error ? err.message : 'unknown error';
+        console.warn(
+          `[wiki-rag] Skipping ${file.relativePath}: ${scrubPatFromString(rawMsg, cloneSecret ?? undefined)}`,
+        );
       }
     }
 
-    // Batch embed and store chunks
-    const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
+    // Batch embed and store chunks. OpenRouter client resolves per-tenant
+    // via the project_integrations table (fallback to env when not
+    // configured for this project).
+    const openrouter = await resolveOpenRouterFromProjectId(projectId);
 
     for (let i = 0; i < allChunks.length; i += BATCH_SIZE) {
       const batch = allChunks.slice(i, i + BATCH_SIZE);
@@ -250,7 +311,10 @@ export async function generateWiki(
         totalChunks += batch.length;
         console.log(`[wiki-rag] Embedded batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(allChunks.length / BATCH_SIZE)} (${totalChunks}/${allChunks.length} chunks)`);
       } catch (err) {
-        console.error(`[wiki-rag] Embedding batch error: ${err instanceof Error ? err.message : 'unknown'}`);
+        const rawMsg = err instanceof Error ? err.message : 'unknown';
+        console.error(
+          `[wiki-rag] Embedding batch error: ${scrubPatFromString(rawMsg, cloneSecret ?? undefined)}`,
+        );
       }
     }
 
@@ -262,11 +326,15 @@ export async function generateWiki(
 
     return { projectId, documentsProcessed: totalDocs, chunksCreated: totalChunks, success: true };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+    const rawMsg = err instanceof Error ? err.message : 'Unknown error';
+    // Scrub BEFORE logging or persisting — git stderr routinely echoes the
+    // clone URL, which includes x-access-token:<pat>@. We must not write
+    // the PAT to the logs or to the projects.error column.
+    const errorMsg = scrubPatFromString(rawMsg, cloneSecret ?? undefined);
     console.error(`[wiki-rag] Pipeline error: ${errorMsg}`);
 
     await db.execute({
-      sql: `UPDATE projects SET status = 'error', error = ?, updated_at = ? WHERE id = ?`,
+      sql: `UPDATE projects SET status = 'error', wiki_error = ?, updated_at = ? WHERE id = ?`,
       args: [errorMsg.slice(0, 500), Date.now(), projectId],
     }).catch(() => {});
 
@@ -302,7 +370,21 @@ export async function queryWiki(
   topK = 10,
 ): Promise<WikiQueryResult> {
   const vectorStore = getVectorStore();
-  const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
+
+  // Short-circuit before embedding if no index exists yet. The index is
+  // created lazily by generateWiki on the write path; running a query before
+  // any project has been indexed would otherwise hit "no such table:
+  // wiki_vectors" and bill an embedding call for nothing.
+  const indexes = await vectorStore.listIndexes();
+  if (!indexes.includes(VECTOR_INDEX)) {
+    console.log(`[wiki-rag] queryWiki: index "${VECTOR_INDEX}" not yet created — returning empty results`);
+    return { results: [], query, totalResults: 0 };
+  }
+
+  // Query-side embedding uses the same per-tenant resolver; when projectId is
+  // undefined (global search path, currently unused) resolveKey falls back to
+  // env so this matches pre-tenant behaviour for callers that pass no scope.
+  const openrouter = await resolveOpenRouterFromProjectId(projectId ?? null);
 
   // Generate query embedding
   const { embedding: queryVector } = await embed({

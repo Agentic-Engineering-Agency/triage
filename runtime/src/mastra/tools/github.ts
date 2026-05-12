@@ -1,13 +1,16 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import { resolveKey } from '../../lib/tenant-keys';
 import { githubPrCommentInputSchema, githubPrCommentOutputSchema } from '../../lib/schemas';
+
+type ToolCtx = { requestContext?: { get: (key: string) => unknown } } | undefined;
 
 export const commentOnGitHubPRTool = createTool({
   id: 'comment-on-github-pr',
   description: 'Posts a code review comment on a GitHub pull request. Used after resolution verification to flag issues found by the code review agent.',
   inputSchema: githubPrCommentInputSchema,
   outputSchema: githubPrCommentOutputSchema,
-  execute: async (input) => {
+  execute: async (input, toolCtx?: ToolCtx) => {
     try {
       const { prUrl, body } = input;
 
@@ -19,7 +22,8 @@ export const commentOnGitHubPRTool = createTool({
       }
 
       const [, owner, repo, pullNumber] = match;
-      const token = process.env.GITHUB_TOKEN;
+      const projectId = toolCtx?.requestContext?.get('projectId') as string | undefined;
+      const { key: token } = await resolveKey('github', projectId);
 
       if (!token) {
         return { success: false, error: 'GITHUB_TOKEN environment variable is not set' };
@@ -71,8 +75,7 @@ export const commentOnGitHubPRTool = createTool({
 // anchored, bounded lengths, single-pass — no catastrophic backtracking.
 const IDENTIFIER_RE = /^[A-Z]{2,10}-[0-9]{1,8}$/;
 
-function scrubToken(msg: string): string {
-  const token = process.env.GITHUB_TOKEN;
+function scrubToken(msg: string, token?: string | null): string {
   if (token && msg.includes(token)) {
     return msg.replace(new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '[REDACTED]');
   }
@@ -87,13 +90,14 @@ export const findGitHubEvidenceForIssueTool = createTool({
     repo: z.string().min(1).max(100),
     identifier: z.string().min(3).max(30).describe('Linear issue identifier like SOL-123'),
   }),
-  execute: async (input) => {
+  execute: async (input, toolCtx?: ToolCtx) => {
     const { owner, repo, identifier } = input;
     if (!IDENTIFIER_RE.test(identifier)) {
       return { success: false, error: 'Invalid identifier format (expected TEAM-NUMBER)' };
     }
 
-    const token = process.env.GITHUB_TOKEN;
+    const projectId = toolCtx?.requestContext?.get('projectId') as string | undefined;
+    const { key: token } = await resolveKey('github', projectId);
     if (!token) {
       return {
         success: false,
@@ -188,7 +192,7 @@ export const findGitHubEvidenceForIssueTool = createTool({
         },
       };
     } catch (error) {
-      const message = scrubToken(error instanceof Error ? error.message : String(error));
+      const message = scrubToken(error instanceof Error ? error.message : String(error), token);
       return { success: false, error: `GitHub evidence lookup failed: ${message.slice(0, 200)}` };
     }
   },

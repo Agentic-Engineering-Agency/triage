@@ -52,13 +52,58 @@ const tables = [
   )`,
   `CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES auth_user(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    repository_url TEXT NOT NULL,
-    branch TEXT DEFAULT 'main',
+    description TEXT,
+    repo_url TEXT NOT NULL,
+    repo_default_branch TEXT DEFAULT 'main',
+    linear_token TEXT,
+    linear_team_id TEXT,
+    linear_webhook_id TEXT,
+    linear_webhook_url TEXT,
+    slack_enabled INTEGER DEFAULT 0,
+    slack_channel_id TEXT,
+    slack_webhook_url TEXT,
+    github_token TEXT,
+    github_repo_owner TEXT,
+    github_repo_name TEXT,
+    resend_api_key TEXT,
+    reporter_email TEXT,
+    wiki_status TEXT DEFAULT 'idle',
     status TEXT NOT NULL DEFAULT 'pending',
     documents_count INTEGER NOT NULL DEFAULT 0,
     chunks_count INTEGER NOT NULL DEFAULT 0,
+    wiki_error TEXT,
     error TEXT,
+    last_wiki_generated_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES auth_user(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS linear_issues (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    linear_id TEXT NOT NULL,
+    identifier TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    status TEXT,
+    priority INTEGER,
+    estimate INTEGER,
+    assignee_id TEXT,
+    labels TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
@@ -79,8 +124,15 @@ const tables = [
     embedding F32_BLOB(1536),
     created_at INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS linear_sync_cache (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    team_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    synced_at INTEGER NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS local_tickets (
     id TEXT PRIMARY KEY,
+    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
     linear_issue_id TEXT,
     title TEXT NOT NULL,
     description TEXT NOT NULL,
@@ -88,17 +140,90 @@ const tables = [
     priority INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'triage',
     assignee_id TEXT REFERENCES auth_user(id),
-    project_id TEXT REFERENCES projects(id),
     reporter_email TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     synced_at INTEGER
+  )`,
+  `CREATE TABLE IF NOT EXISTS workflow_runs (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL UNIQUE,
+    thread_id TEXT NOT NULL,
+    issue_id TEXT,
+    issue_url TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS card_states (
+    id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    tool_index INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'confirmed',
+    linear_url TEXT,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS llm_usage (
+    id TEXT PRIMARY KEY,
+    project_id TEXT,
+    agent_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    duration_ms INTEGER,
+    thread_id TEXT,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS webhook_secrets (
+    provider TEXT NOT NULL,
+    project_id TEXT NOT NULL DEFAULT '_global_',
+    webhook_id TEXT,
+    secret TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (provider, project_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS project_integrations (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    encrypted_key BLOB NOT NULL,
+    meta TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'active',
+    last_tested_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (project_id, provider)
   )`,
 ];
 
 for (const sql of tables) {
   const name = sql.match(/CREATE TABLE IF NOT EXISTS (\w+)/)[1];
   await client.execute(sql);
+  console.log(`[init-db] ${name} OK`);
+}
+
+// Create indexes for query performance
+const indexes = [
+  `CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_conversations_project_user ON conversations(project_id, user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_linear_issues_project_id ON linear_issues(project_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_linear_issues_identifier ON linear_issues(identifier)`,
+  `CREATE INDEX IF NOT EXISTS idx_wiki_documents_project_id ON wiki_documents(project_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_wiki_chunks_document_id ON wiki_chunks(document_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_local_tickets_project_id ON local_tickets(project_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_card_states_thread_id ON card_states(thread_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_workflow_runs_run_id ON workflow_runs(run_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_workflow_runs_issue_id ON workflow_runs(issue_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_llm_usage_project_id ON llm_usage(project_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_llm_usage_created_at ON llm_usage(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_project_integrations_project_id ON project_integrations(project_id)`,
+];
+
+for (const sql of indexes) {
+  await client.execute(sql);
+  const name = sql.match(/idx_(\w+)/)[1];
   console.log(`[init-db] ${name} OK`);
 }
 
@@ -114,6 +239,17 @@ const alters = [
   // are no preexisting rows to worry about.
   { table: 'local_tickets', col: 'project_id', sql: `ALTER TABLE local_tickets ADD COLUMN project_id TEXT REFERENCES projects(id)` },
   { table: 'wiki_documents', col: 'project_id', sql: `ALTER TABLE wiki_documents ADD COLUMN project_id TEXT` },
+  // projects table columns added on the upgrade path
+  { table: 'projects', col: 'status', sql: `ALTER TABLE projects ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'` },
+  { table: 'projects', col: 'wiki_error', sql: `ALTER TABLE projects ADD COLUMN wiki_error TEXT` },
+  // wiki-rag.ts writes to projects.error when generateWiki fails; without
+  // this ALTER the error-handler itself throws and the failure is swallowed
+  // by the outer .catch(() => {}), leaving the project stuck in 'pending'.
+  { table: 'projects', col: 'error', sql: `ALTER TABLE projects ADD COLUMN error TEXT` },
+  { table: 'projects', col: 'documents_count', sql: `ALTER TABLE projects ADD COLUMN documents_count INTEGER DEFAULT 0` },
+  { table: 'projects', col: 'chunks_count', sql: `ALTER TABLE projects ADD COLUMN chunks_count INTEGER DEFAULT 0` },
+  { table: 'projects', col: 'repo_url', sql: `ALTER TABLE projects ADD COLUMN repo_url TEXT` },
+  { table: 'projects', col: 'repo_default_branch', sql: `ALTER TABLE projects ADD COLUMN repo_default_branch TEXT DEFAULT 'main'` },
 ];
 for (const a of alters) {
   try {
@@ -136,4 +272,71 @@ for (const a of alters) {
   }
 }
 
-console.log('[init-db] All tables ready');
+// One-shot migration: webhook_secrets PK from (provider) to (provider, project_id).
+// SQLite can't ALTER the primary key in place, so we detect the old shape via
+// PRAGMA, build a new table with the composite PK, copy rows under the
+// '_global_' sentinel, and swap. Idempotent because the post-migration table
+// already has the project_id column.
+try {
+  const info = await client.execute('PRAGMA table_info(webhook_secrets)');
+  const hasProjectId = info.rows.some((r) => r.name === 'project_id');
+  if (!hasProjectId) {
+    console.log('[init-db] Migrating webhook_secrets to composite PK (provider, project_id)');
+    await client.execute(`CREATE TABLE webhook_secrets_new (
+      provider TEXT NOT NULL,
+      project_id TEXT NOT NULL DEFAULT '_global_',
+      webhook_id TEXT,
+      secret TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (provider, project_id)
+    )`);
+    await client.execute(`INSERT INTO webhook_secrets_new
+        (provider, project_id, webhook_id, secret, created_at, updated_at)
+      SELECT provider, '_global_', webhook_id, secret, created_at, updated_at
+      FROM webhook_secrets`);
+    await client.execute('DROP TABLE webhook_secrets');
+    await client.execute('ALTER TABLE webhook_secrets_new RENAME TO webhook_secrets');
+    console.log('[init-db] webhook_secrets migration complete');
+  } else {
+    console.log('[init-db] webhook_secrets PK already composite (skip)');
+  }
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.warn('[init-db] webhook_secrets PK migration skipped:', msg);
+}
+
+// One-shot backfill: collapse legacy projects.wiki_status / projects.error onto
+// the canonical projects.status / projects.wiki_error.
+//
+//   wiki_status was the old name for the same field; rows seeded under the
+//   legacy schema only have wiki_status populated. `status` defaults to
+//   'pending' in fresh schemas, so we only backfill rows where the legacy
+//   column has a value the new one doesn't.
+//
+//   `error` is wiki-rag.ts's old write target. Readers (GET /projects, GET
+//   /projects/:id) only return `wiki_error`, so errors from the old code path
+//   never reached the UI. Migrate them now so historical failures surface.
+//
+// Columns are left in place (nullable) — drop them in a dedicated migration
+// once a release cycle proves nothing else reads them.
+try {
+  await client.execute(
+    `UPDATE projects
+       SET status = wiki_status
+     WHERE wiki_status IS NOT NULL AND wiki_status != ''
+       AND (status IS NULL OR status = '' OR status = 'pending')`,
+  );
+  await client.execute(
+    `UPDATE projects
+       SET wiki_error = error
+     WHERE error IS NOT NULL AND error != ''
+       AND (wiki_error IS NULL OR wiki_error = '')`,
+  );
+  console.log('[init-db] projects status/error consolidation backfill complete');
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.warn('[init-db] projects status backfill skipped:', msg);
+}
+
+console.log('[init-db] All tables and indexes ready');
