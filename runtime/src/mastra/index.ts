@@ -1042,10 +1042,12 @@ export const mastra = new Mastra({
             const message = (body?.message as string) || '✅ Test message from triage-runtime';
 
             // Call sendSlackMessage using the correct input format
+            if (!sendSlackMessage.execute) {
+              return c.json({ success: false, error: { code: 'TOOL_UNAVAILABLE', message: 'Slack tool not configured' } }, 503)
+            }
             const result = await sendSlackMessage.execute({
               text: message,
-            }, {});
-
+            }, {})
             return c.json({
               success: true,
               message: 'Slack message sent',

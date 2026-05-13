@@ -167,9 +167,9 @@ export const getProjectCycleRoute = registerApiRoute('/projects/:projectId/linea
           startsAt: activeCycle.startsAt?.toISOString?.() ?? String(activeCycle.startsAt ?? ''),
           endsAt: activeCycle.endsAt?.toISOString?.() ?? String(activeCycle.endsAt ?? ''),
           progress: activeCycle.progress ?? 0,
-          scopeCount: (activeCycle as Record<string, unknown>).scopeCount ?? 0,
-          completedScopeCount: (activeCycle as Record<string, unknown>).completedScopeCount ?? 0,
-          startedScopeCount: (activeCycle as Record<string, unknown>).startedScopeCount ?? 0,
+          scopeCount: (activeCycle as unknown as Record<string, unknown>).scopeCount ?? 0,
+          completedScopeCount: (activeCycle as unknown as Record<string, unknown>).completedScopeCount ?? 0,
+          startedScopeCount: (activeCycle as unknown as Record<string, unknown>).startedScopeCount ?? 0,
         },
       });
     } catch (error) {
