@@ -1,10 +1,16 @@
 # MVP Pipeline Design — Triage SRE Agent
 
-**Date:** 2026-04-08  
-**Authors:** Lalo, Koki
-**Session:** planning  
-**Status:** Approved for implementation
+> **DEPRECATED — Historical reference only (2026-04-08)**
+> Updated 2026-05-12 to reflect what was actually built:
+> - All global endpoints (`/api/linear/*`, `/api/wiki/*`) were replaced by per-project scoped routes (`/projects/:id/linear/*`, `/projects/:id/wiki/*`) in TRI-61.
+> - The `/settings` page was replaced by `/integrations` + `/onboarding` in TRI-61.
+> - Webhook setup moved from global `/api/linear/webhook/setup` to per-project `/projects/:id/linear/webhook/setup` in TRI-67.
+> - Board data fetching migrated from `/api/linear/issues` to `/projects/:id/linear/issues` in TRI-66.
 
+**Date:** 2026-04-08
+**Authors:** Lalo, Koki
+**Session:** planning
+**Status:** Approved for implementation
 ---
 
 ## 1. Scope
@@ -100,28 +106,27 @@ const orchestratorModel = openrouter(MODELS.orchestrator, {
 
 ## 3. First-time Onboarding
 
-### Settings page (`/settings`)
-
-Fields:
-- **Linear API Token** — text input, validated by calling `GET /api/linear/members` on save. Badge: "Connected" / "Invalid token".
-- **GitHub Repo URL** — text input (public repos only for MVP). Button: "Import & Generate Wiki".
-- **Team Members** — "Sync from Linear" button → fetches and displays list with name + email.
+> ### Onboarding wizard (`/onboarding`) — reemplazó `/settings` en TRI-61
+> Campos por provider en wizard de 5 pasos:
+> - **OpenRouter** — API key, test con `GET /models`.
+> - **Linear** — PAT, test con `viewer { teams { nodes { id name key } } }`, picker de team → save con `meta.teamId/teamName/teamKey`.
+> - **GitHub** — PAT, auto-skipped si repo no es github.com, probe con `GET /user` + `GET /repos/:owner/:repo`.
+> - **Slack** — webhook URL, test con `auth.test` + `conversations.list`, picker de channel.
+> - **Resend** — API key, test con `GET /domains`, input de `fromEmail`.
+> Todo vive en `frontend/src/routes/onboarding.lazy.tsx` (~870 líneas).
 
 ### Wiki generation endpoint
+> **Actualizado TRI-61:** `POST /projects/:id/wiki/generate` — per-project Hono route.
+`POST /projects/:id/wiki/generate` — Hono route en el servidor Mastra (per-project):
 
-`POST /api/wiki/generate` — new Hono route on the Mastra server:
-
-1. Accept `{ repoUrl: string }` in request body
+1. Accept `{ repoUrl: string }` in request body (reads from project's `repository_url`)
 2. `git clone --depth 3 <repoUrl> /tmp/wiki-repo-<timestamp>`
 3. Walk the cloned repo (ignore `node_modules`, `.git`, binary files)
-4. For each file: call `generateWikiTool` with file content → LLM produces a structured summary (purpose, key functions, dependencies)
-5. Chunk summaries → embed → store in LibSQL `wiki_chunks` table with DiskANN index
-6. Update progress counter in a simple in-memory or LibSQL status row
+4. For each file: call `generateWikiTool` with file content → LLM produces a structured summary
+5. Chunk summaries → embed → store in LibSQL `wiki_chunks` table
+6. Update `projects.status` and `projects.documents_count/chunks_count`
 
-`GET /api/wiki/status` — returns `{ total: number, processed: number, done: boolean }`.
-
-Frontend polls every 2 seconds while wiki is generating; shows progress bar.
-
+`GET /projects/:id/wiki/status` — returns `{ total: number, processed: number, done: boolean }` (per-project).
 **Graphify (separate, demo only):** Run `graphify` CLI on the same cloned repo to produce `graph.html` for the interactive knowledge graph visualization in the demo video. Not part of the runtime query pipeline.
 
 ---
@@ -372,39 +377,41 @@ If `verdict === 'approve'` (no issues found): **do not post** a comment. Only po
 
 ---
 
-## 8. Frontend: Kanban Board
+> ## 8. Frontend: Kanban Board
+> **Actualizado TRI-66:** Todos los endpoints ahora son per-project.
 
-### New runtime endpoint: `GET /api/linear/issues`
+> ### Endpoint per-project: `GET /projects/:id/linear/issues`
+> Hono route en Mastra server (per-project):
+> - Resuelve API key + teamId desde `project_integrations` (no más `LINEAR_CONSTANTS.TEAM_ID` global)
+> - Llama `linearClient.issues({ filter: { team: { id: { eq: teamId } } }, first: 50 })`
+> - Groups by `state.name`
+> - Returns grouped issues
 
-Hono route in Mastra server:
-- Calls `linearClient.issues({ filter: { team: { id: { eq: LINEAR_CONSTANTS.TEAM_ID } } }, first: 50 })`
-- Groups by `state.name`
-- Returns `{ backlog: Issue[], todo: Issue[], inProgress: Issue[], inReview: Issue[], done: Issue[] }`
+> ### `board.lazy.tsx`
+> - TanStack Query: `useQuery({ queryKey: ['linear-issues', projectId], queryFn: () => apiFetch('/projects/\${projectId}/linear/issues') })`
+> - Sync: `POST /projects/\${projectId}/linear/sync`
+> - Cycle: `GET /projects/\${projectId}/linear/cycle`
+> - Render each column with real issue cards
+> - Issue card: title, severity label badge, assignee initials avatar, Linear URL link
 
-### `board.lazy.tsx` update
+> ---
+>
+> ## 9. Frontend: Integrations Page
+> **Actualizado TRI-61:** `/settings` fue reemplazado por `/integrations` + `/onboarding`.
 
-- TanStack Query: `useQuery({ queryKey: ['linear-issues'], queryFn: () => apiFetch('/api/linear/issues'), refetchInterval: 30_000 })`
-- Render each column with real issue cards
-- Issue card: title, severity label badge, assignee initials avatar, Linear URL link
+> ### Endpoints per-project disponibles
+> - `GET /projects/:id/linear/members` — proxies `getLinearTeamMembers` para el team del proyecto
+> - `POST /projects/:id/wiki/generate` — triggers wiki generation
+> - `GET /projects/:id/wiki/status` — returns generation progress
+> - `POST /projects/:id/linear/webhook/setup` — registers per-project Linear webhook (TRI-67)
+> - `POST /projects/:id/linear/sync` — manual sync (TRI-66)
+> - `GET /projects/:id/linear/sync/status` — sync progress (TRI-66)
 
----
-
-## 9. Frontend: Settings Page
-
-### New runtime endpoints
-
-- `GET /api/linear/members` — proxies `getLinearTeamMembers` for the configured team
-- `POST /api/wiki/generate` — triggers wiki generation (see §3)
-- `GET /api/wiki/status` — returns generation progress
-
-### `settings.lazy.tsx` update
-
-Three sections:
-1. **Integrations** — Linear token input + validation badge, GitHub repo URL input + "Generate Wiki" button
-2. **Wiki** — progress bar (polling `/api/wiki/status`), "last generated" timestamp, file count
-3. **Team Members** — "Sync from Linear" button + member list (name, email, displayName)
-
----
+> ### `integrations.lazy.tsx`
+> - Cards por provider: OpenRouter, Linear, GitHub, Slack, Resend
+> - Cada card: test → save → reconfigure/delete
+> - `WizardCta` redirige a `/onboarding` si faltan integraciones requeridas
+> - `onboarding.lazy.tsx`: wizard de 5 pasos con auto-skip de GitHub para repos no-github
 
 ## 10. Multiple Issues (MVP vs Stretch)
 
@@ -463,8 +470,8 @@ Note: Minimax via OpenRouter uses `OPENROUTER_API_KEY` — no separate key neede
 | `commentOnGitHubPRTool` | `runtime/src/mastra/tools/github.ts` | TODO |
 | Update orchestrator (model + tools) | `runtime/src/mastra/agents/orchestrator.ts` | TODO |
 | Wire all 8 workflow steps | `runtime/src/mastra/workflows/triage-workflow.ts` | TODO |
-| Hono routes: /api/linear/issues, /api/linear/members, /api/wiki/generate, /api/wiki/status | `runtime/src/mastra/index.ts` | TODO |
-| Workflow trigger endpoint | Mastra v1.24 exposes `POST /api/workflows/:id/trigger` by default — verify at runtime startup; if not present, add custom Hono route that calls `mastra.getWorkflow('triage-workflow').createRun().start(input)` | TODO |
-| `onCreateTicket` in chat.tsx | `frontend/src/routes/chat.tsx` | TODO |
-| Kanban data in board.lazy.tsx | `frontend/src/routes/board.lazy.tsx` | TODO |
-| Settings page | `frontend/src/routes/settings.lazy.tsx` | TODO |
+|| Hono routes per-project: `/projects/:id/linear/{issues,cycle,members,sync,sync/status,webhook/setup}`, `/projects/:id/wiki/{generate,status}` | `runtime/src/lib/scoped-routes.ts` | ✅ DONE (TRI-61/TRI-66) |
+|| Workflow trigger endpoint | `POST /api/workflows/triage-workflow/trigger` expuesto por Mastra | ✅ DONE |
+|| `onCreateTicket` in chat.tsx | `frontend/src/routes/chat.tsx` | ✅ DONE |
+|| Kanban data in board.lazy.tsx — per-project endpoints | `frontend/src/routes/board.lazy.tsx` | ✅ DONE (TRI-66) |
+|| Integrations page + onboarding wizard | `frontend/src/routes/integrations.lazy.tsx` + `onboarding.lazy.tsx` | ✅ DONE (TRI-61) |

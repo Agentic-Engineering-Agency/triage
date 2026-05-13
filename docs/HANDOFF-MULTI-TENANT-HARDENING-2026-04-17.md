@@ -313,10 +313,15 @@ Aterrizó la card de Linear + cleanup del `/settings` legacy + flip del `scoped-
 - **Resend card**: `fromEmail` como input manual (la API no tiene `/me`); test probando `GET /domains`. Meta = `{ fromEmail }`. Migrar `reporter_email` de `localStorage` (hoy en `chat.tsx:352,498,515`) a `meta.defaultReporterEmail`.
 - **Slack card**: `auth.test` + `conversations.list` → picker de channel → guardar `channelId` + `channelName` en meta.
 - **GitHub card**: `GET /user` + owner/repo como 2do paso (picker tipo GitHub App, o input manual con validación contra `GET /repos/:owner/:repo`).
-- **Borrar endpoints legacy del runtime**: `/api/config/status`, `/api/linear/members` (global), `/api/linear/webhook/setup` + la ruta `/settings` completa + los imports en `mastra/index.ts`. Hacerlo después de los 3 cards arriba.
-- **`webhook_secrets` refactor a PK compuesta**: sigue global. Cuando Linear card agregue "Register webhook" (dentro de #5c o slice dedicado), migrar a `(project_id, provider)` con `setWebhookSecret(projectId, provider, secret)`. Incluye cambio en el handler `/webhooks/linear` para lookup por project.
-- **Drop columnas plaintext en `projects`**: `linear_token`, `linear_webhook_id/url`, `github_token`, `github_repo_owner/name`, `slack_enabled`, `slack_channel_id`, `slack_webhook_url`, `resend_api_key`, `linear_team_id` (leído solo por env-fallback hoy; una vez que todos los projects migren, se puede dropear). Después del cleanup de endpoints.
+> **COMPLETADO en TRI-61 / TRI-66-68 (2026-05-12)**: Los endpoints legacy fueron eliminados:
+> - `/api/config/status`, `/api/linear/members` (global), `POST /api/wiki/generate`, `GET /api/wiki/status`
+> - `/api/linear/issues`, `/api/linear/sync`, `/api/linear/sync/status`, `/api/linear/cycle/active`
+> - Ruta frontend `/settings` eliminada
+> - Webhook per-tenant implementado en `/projects/:id/linear/webhook/setup`
 
+- **Borrar endpoints legacy del runtime**: ✅ HECHO en TRI-61/TRI-66 (ver arriba).
+- **`webhook_secrets` refactor a PK compuesta**: ✅ HECHO en TRI-67. `setWebhookSecret` ahora acepta `projectId`; el handler `/webhooks/linear` lee `?projectId=` del query string.
+- **Drop columnas plaintext en `projects`**: ✅ HECHO en TRI-61.
 ### 5c. UI BYO keys — Slack/Resend/GitHub ✅ DONE (2026-04-22)
 
 Cerró el bucle de 5 providers en `/integrations`. 2 commits: `d3d9c7c` (backend) + `4a350be` (frontend).

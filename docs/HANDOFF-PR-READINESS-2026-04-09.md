@@ -130,21 +130,21 @@ curl -s --max-time 15 -N http://127.0.0.1:4111/api/agents/orchestrator/stream \
 ```
 ✅ Must return `text-delta` events with actual text content.
 
-2. **Linear issues endpoint**:
+2. **Linear issues endpoint** (per-project since TRI-66):
 ```bash
-curl -s http://127.0.0.1:4111/api/linear/issues | python3 -m json.tool | head -20
+curl -s http://127.0.0.1:4111/projects/{projectId}/linear/issues | python3 -m json.tool | head -20
 ```
-✅ Must return `{"success":true,"data":{...}}` with grouped issues (already works, verified).
+✅ Must return `{"success":true,"data":{...}}` with grouped issues.
 
-3. **Linear members endpoint**:
+3. **Linear members endpoint** (per-project since TRI-66):
 ```bash
-curl -s http://127.0.0.1:4111/api/linear/members | python3 -m json.tool
+curl -s http://127.0.0.1:4111/projects/{projectId}/linear/members | python3 -m json.tool
 ```
-✅ Must return team members array.
+✅ Must return team members array for the project's Linear team.
 
-4. **Wiki status endpoint** (stub):
+4. **Wiki status endpoint** (per-project since TRI-61):
 ```bash
-curl -s http://127.0.0.1:4111/api/wiki/status
+curl -s http://127.0.0.1:4111/projects/{projectId}/wiki/status
 ```
 ✅ Must return `{"success":true,"data":{"total":0,"processed":0,"done":true}}`.
 
@@ -181,17 +181,17 @@ curl -s http://127.0.0.1:4111/health
    - Issues should populate from Linear API
    - If LINEAR_API_KEY is missing, should show error gracefully (not crash)
 
-10. **Settings page** — open `http://localhost:3001/settings`:
-    - Team members section should list Linear team members
-    - Wiki generation form should be present
-    - Token validation UI should work
+10. **Settings page** — was replaced by `/integrations` and `/onboarding` (TRI-61):
+    - Go to `http://localhost:3001/integrations` to manage per-project API keys
+    - Go to `http://localhost:3001/onboarding` for the setup wizard
 
 11. **Routing through Caddy** — verify all these return 200:
 ```bash
 curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/           # SPA
 curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/chat       # SPA route
 curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/board      # SPA route
-curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/settings   # SPA route
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/onboarding # SPA route
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/integrations # SPA route
 curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/config.json # Config
 curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/health     # Proxy
 ```
@@ -265,8 +265,9 @@ Body should include:
 ```
 Frontend (Caddy :3001)
 ├── /chat          → POST /chat → runtime:4111/chat (SSE stream)
-├── /board         → GET /api/linear/issues → runtime:4111/api/linear/issues
-├── /settings      → GET /api/linear/members, POST /api/wiki/generate
+├── /board         → GET /projects/:id/linear/issues → runtime:4111/projects/:id/linear/issues
+├── /onboarding    → Setup wizard for per-project integrations
+├── /integrations  → Per-project API key management
 └── /config.json   → {"apiUrl": "/api"}
 
 Runtime (Mastra/Hono :4111)
@@ -284,14 +285,19 @@ Runtime (Mastra/Hono :4111)
 │   └── GitHub: commentOnGitHubPR
 ├── Workflows
 │   └── triage-workflow (8 steps: intake→triage→dedup→ticket→notify→suspend→verify→notify-resolution)
-├── API Routes (custom Hono)
-│   ├── GET  /api/linear/issues
-│   ├── GET  /api/linear/members
-│   ├── POST /api/wiki/generate (stub)
-│   ├── GET  /api/wiki/status (stub)
-│   ├── POST /api/webhooks/linear (stub)
+├── API Routes (custom Hono) — all per-project since TRI-61/TRI-66
+│   ├── GET  /projects/:id/linear/issues
+│   ├── GET  /projects/:id/linear/cycle
+│   ├── GET  /projects/:id/linear/members
+│   ├── POST /projects/:id/linear/sync
+│   ├── GET  /projects/:id/linear/sync/status
+│   ├── POST /projects/:id/linear/webhook/setup
+│   ├── POST /projects/:id/wiki/generate
+│   ├── GET  /projects/:id/wiki/status
+│   ├── POST /api/webhooks/linear
 │   └── POST /api/workflows/triage-workflow/trigger
 └── Storage: LibSQL (libsql:8080)
+```
 
 Langfuse (6 containers, observability)
 ├── langfuse-web :3000
