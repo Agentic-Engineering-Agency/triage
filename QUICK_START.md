@@ -121,7 +121,9 @@ curl http://localhost:4111/health
 
 ### Check Database
 ```bash
-curl http://localhost:4111/api/linear/issues
+```bash
+# Replace {projectId} with your project's id
+curl http://localhost:4111/projects/{projectId}/linear/issues
 # Should return grouped issues (or empty list if no issues yet)
 ```
 
