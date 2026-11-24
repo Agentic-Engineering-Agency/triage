@@ -223,7 +223,7 @@ Once containers start, you can access Langfuse at http://localhost:3000.
 
 **Initial login:**
 - Email: `admin@example.com`
-- Password: `REDACTED`
+- Password: the `LANGFUSE_INIT_USER_PASSWORD` value from your `.env`
 
 This organization, project, and user are created automatically when the Langfuse containers start (from env vars in `.env`).
 

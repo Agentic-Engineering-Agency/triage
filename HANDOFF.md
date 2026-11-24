@@ -242,7 +242,7 @@ curl -X POST http://localhost:8080/execute -d "SELECT * FROM conversations"
 ```bash
 # Via tunnel: https://langfuse.agenticengineering.lat
 # Or locally: http://localhost:3000
-# Login: admin@example.com / REDACTED (from .env)
+# Login: admin@example.com / $LANGFUSE_INIT_USER_PASSWORD (from .env)
 ```
 
 ## Disk Storage Management ⚠️
